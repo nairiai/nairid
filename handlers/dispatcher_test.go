@@ -604,7 +604,13 @@ func TestMultipleJobsProcessInParallel(t *testing.T) {
 		t.Logf("Warning: Expected 2 jobs processing in parallel, got %d (timing-sensitive)", currentProcessing)
 	}
 
-	// Mark both jobs as completed
+	// Wait for first messages to be fully processed (50ms work + margin)
+	time.Sleep(100 * time.Millisecond)
+
+	// Mark both jobs as completed, then send final messages to trigger exit.
+	// Order matters: mark completed first, then send. The goroutines are blocked
+	// on `range ch` after processing the first message, so the channel is open.
+	// When they receive the next message, they'll see the completed status and exit.
 	for _, jobID := range []string{"job-1", "job-2"} {
 		err := appState.UpdateJobData(jobID, models.JobData{
 			JobID:  jobID,
