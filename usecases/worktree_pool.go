@@ -193,6 +193,7 @@ func (p *WorktreePool) replenisherLoop(ctx context.Context) {
 	log.Info("🔄 Worktree pool: starting initial fill (target size: %d)", p.targetSize)
 	p.fillToTarget(ctx)
 	log.Info("✅ Worktree pool: initial fill complete (pool size: %d)", p.GetPoolSize())
+	close(p.initialFillDone)
 
 	for {
 		select {
