@@ -1,3 +1,11 @@
+## [v0.0.68] - 2026-02-09
+
+### Bugfixes
+
+- Fix git index.lock race condition between worktree pool fill and job recovery on startup ([#152](https://github.com/eksecai/eksecd/pull/152))
+  - Added WaitForInitialFill() to serialize pool initialization before job recovery
+  - Prevents concurrent git reset --hard operations competing for .git/index.lock
+
 ## [v0.0.67] - 2026-02-08
 
 ### Changes
