@@ -1,3 +1,11 @@
+## [v0.0.70] - 2026-02-09
+
+### Bugfixes
+
+- Fix file edits being reverted on session exit in self-hosted mode ([#154](https://github.com/eksecai/eksecd/pull/154))
+  - Use `--dangerously-skip-permissions` instead of `--permission-mode bypassPermissions` for Claude CLI
+  - The latter caused Claude Code to revert all file edits when the process exited, resulting in empty worktrees and no PRs
+
 ## [v0.0.69] - 2026-02-09
 
 ### Bugfixes
