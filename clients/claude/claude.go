@@ -23,12 +23,12 @@ func NewClaudeClient(permissionMode string) *ClaudeClient {
 
 func (c *ClaudeClient) StartNewSession(prompt string, options *clients.ClaudeOptions) (string, error) {
 	log.Info("📋 Starting to create new Claude session")
-	args := []string{
-		"--permission-mode", c.permissionMode,
+	args := c.buildPermissionArgs()
+	args = append(args,
 		"--verbose",
 		"--output-format", "stream-json",
 		"-p", prompt,
-	}
+	)
 
 	if options != nil {
 		if options.Model != "" {
@@ -75,13 +75,13 @@ func (c *ClaudeClient) StartNewSession(prompt string, options *clients.ClaudeOpt
 
 func (c *ClaudeClient) ContinueSession(sessionID, prompt string, options *clients.ClaudeOptions) (string, error) {
 	log.Info("📋 Starting to continue Claude session: %s", sessionID)
-	args := []string{
-		"--permission-mode", c.permissionMode,
+	args := c.buildPermissionArgs()
+	args = append(args,
 		"--verbose",
 		"--output-format", "stream-json",
 		"--resume", sessionID,
 		"-p", prompt,
-	}
+	)
 
 	if options != nil {
 		if options.Model != "" {
@@ -124,6 +124,17 @@ func (c *ClaudeClient) ContinueSession(sessionID, prompt string, options *client
 	log.Info("Claude command completed successfully, outputLength: %d", len(result))
 	log.Info("📋 Completed successfully - continued Claude session")
 	return result, nil
+}
+
+// buildPermissionArgs returns the CLI args for the configured permission mode.
+// When bypassPermissions is set, we use --dangerously-skip-permissions instead of
+// --permission-mode bypassPermissions because the latter causes Claude Code to
+// revert file edits on session exit.
+func (c *ClaudeClient) buildPermissionArgs() []string {
+	if c.permissionMode == "bypassPermissions" {
+		return []string{"--dangerously-skip-permissions"}
+	}
+	return []string{"--permission-mode", c.permissionMode}
 }
 
 // buildCommand creates the appropriate exec.Cmd with context based on options
