@@ -2,6 +2,7 @@ package usecases
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -276,6 +277,62 @@ func TestAcquire_FromPool(t *testing.T) {
 
 	// Stop pool
 	pool.Stop()
+}
+
+func TestAcquire_InvalidWorktree(t *testing.T) {
+	mainRepo, worktreeBase, cleanup := setupTestGitRepoWithRemote(t)
+	defer cleanup()
+
+	gitClient := clients.NewGitClient()
+	gitClient.SetRepoPathProvider(func() string { return mainRepo })
+
+	pool := NewWorktreePool(gitClient, worktreeBase, 3)
+
+	// Manually inject a pooled worktree that points to a directory that exists
+	// but is NOT a valid git worktree (simulates container restart where
+	// .git/worktrees/ entries are lost but the volume directory persists)
+	fakePath := filepath.Join(worktreeBase, "pool-fake12345")
+	if err := os.MkdirAll(fakePath, 0755); err != nil {
+		t.Fatalf("Failed to create fake pool dir: %v", err)
+	}
+	// Write a .git file pointing to a non-existent gitdir
+	gitFilePath := filepath.Join(fakePath, ".git")
+	if err := os.WriteFile(gitFilePath, []byte("gitdir: /nonexistent/.git/worktrees/fake"), 0644); err != nil {
+		t.Fatalf("Failed to create fake .git file: %v", err)
+	}
+
+	pool.mutex.Lock()
+	pool.ready = append(pool.ready, PooledWorktree{
+		Path:       fakePath,
+		BranchName: "eksecd/pool-ready-fake12345",
+		BaseCommit: "abc123",
+		CreatedAt:  time.Now(),
+	})
+	pool.mutex.Unlock()
+
+	if pool.GetPoolSize() != 1 {
+		t.Fatalf("Expected pool size 1, got %d", pool.GetPoolSize())
+	}
+
+	// Acquire should return ErrWorktreeInvalid instead of a generic move error
+	_, err := pool.Acquire("job-test-invalid", "eksecd/test-branch")
+	if err == nil {
+		t.Fatal("Expected error when acquiring invalid worktree, got nil")
+	}
+
+	if !errors.Is(err, ErrWorktreeInvalid) {
+		t.Errorf("Expected ErrWorktreeInvalid, got: %v", err)
+	}
+
+	// Pool should now be empty (invalid entry was discarded)
+	if pool.GetPoolSize() != 0 {
+		t.Errorf("Expected pool to be empty after invalid acquire, got size %d", pool.GetPoolSize())
+	}
+
+	// The fake directory should have been cleaned up
+	if _, err := os.Stat(fakePath); !os.IsNotExist(err) {
+		t.Error("Expected fake pool directory to be cleaned up")
+	}
 }
 
 func TestConcurrentAcquire(t *testing.T) {

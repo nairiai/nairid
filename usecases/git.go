@@ -1231,11 +1231,15 @@ func (g *GitUseCase) PrepareForNewConversationWithWorktree(jobID, conversationHi
 			log.Info("🏊 Acquired worktree from pool: %s", worktreePath)
 			return branchName, worktreePath, nil
 		}
-		if !errors.Is(err, ErrPoolEmpty) {
+		if !errors.Is(err, ErrPoolEmpty) && !errors.Is(err, ErrWorktreeInvalid) {
 			// Unexpected error - fail fast
 			return "", "", fmt.Errorf("pool acquire failed: %w", err)
 		}
-		log.Info("ℹ️ Pool empty, creating worktree synchronously")
+		if errors.Is(err, ErrWorktreeInvalid) {
+			log.Warn("⚠️ Pool worktree was invalid (likely stale after container restart), falling back to sync creation")
+		} else {
+			log.Info("ℹ️ Pool empty, creating worktree synchronously")
+		}
 	}
 
 	// Fallback: create synchronously (existing logic)

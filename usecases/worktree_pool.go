@@ -23,6 +23,11 @@ var ErrPoolEmpty = errors.New("pool is empty")
 // ErrPoolStopping is returned when the pool is being shut down.
 var ErrPoolStopping = errors.New("pool is stopping")
 
+// ErrWorktreeInvalid is returned when a pooled worktree is no longer a valid git worktree.
+// This can happen when containers restart and the main repo's .git/worktrees/ entries are lost.
+// Callers should fall back to synchronous worktree creation.
+var ErrWorktreeInvalid = errors.New("pooled worktree is no longer valid")
+
 // PooledWorktree represents a pre-created worktree ready for use
 type PooledWorktree struct {
 	Path       string // e.g., ~/.eksec_worktrees/pool-{uuid}
@@ -144,6 +149,15 @@ func (p *WorktreePool) Acquire(jobID, branchName string) (string, error) {
 			log.Warn("⚠️ Failed to refresh stale worktree: %v", err)
 			// Continue anyway - it might still work
 		}
+	}
+
+	// Validate the worktree is still registered with git before attempting to move.
+	// After container restarts, the pool directory may persist on the volume but the
+	// main repo's .git/worktrees/ entries get recreated fresh, breaking the git link.
+	if !p.gitClient.WorktreeExists(pooledWT.Path) {
+		log.Warn("⚠️ Pool worktree %s is no longer a valid git worktree, discarding", pooledWT.Path)
+		p.cleanupFailedWorktree(pooledWT.Path, pooledWT.BranchName)
+		return "", ErrWorktreeInvalid
 	}
 
 	// Move worktree: pool-{uuid} -> {jobID}
@@ -412,9 +426,15 @@ func (p *WorktreePool) resetMainRepoToDefaultBranch() error {
 
 // cleanupFailedWorktree attempts to clean up a worktree that failed during acquisition.
 func (p *WorktreePool) cleanupFailedWorktree(wtPath, branchName string) {
-	// Try to remove the worktree
+	// Try to remove the worktree via git first
 	if err := p.gitClient.RemoveWorktree(wtPath); err != nil {
-		log.Warn("⚠️ Failed to remove failed worktree %s: %v", wtPath, err)
+		log.Warn("⚠️ Failed to remove failed worktree via git %s: %v, falling back to os.RemoveAll", wtPath, err)
+		// Fallback: if git worktree remove fails (e.g. worktree is no longer registered),
+		// remove the directory directly. This matches the pattern used in
+		// CleanupStaleJobWorktrees and ReclaimOrphanedPoolWorktrees.
+		if err := os.RemoveAll(wtPath); err != nil {
+			log.Warn("⚠️ Failed to remove failed worktree directory %s: %v", wtPath, err)
+		}
 	}
 
 	// Try to delete the branch
