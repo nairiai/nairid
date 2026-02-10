@@ -43,10 +43,38 @@ func (g *GitClient) setWorkDir(cmd *exec.Cmd) {
 	}
 }
 
+// isRateLimitError checks if an error is a GitHub API rate limit error
+func isRateLimitError(err error, output string) bool {
+	if err == nil {
+		return false
+	}
+
+	errStr := strings.ToLower(err.Error())
+	outputStr := strings.ToLower(output)
+
+	rateLimitPatterns := []string{
+		"rate limit",
+		"secondary rate limit",
+		"abuse detection",
+	}
+
+	for _, pattern := range rateLimitPatterns {
+		if strings.Contains(errStr, pattern) || strings.Contains(outputStr, pattern) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // isRecoverableGHError checks if an error is a recoverable GitHub API error that should be retried
 func isRecoverableGHError(err error, output string) bool {
 	if err == nil {
 		return false
+	}
+
+	if isRateLimitError(err, output) {
+		return true
 	}
 
 	errStr := strings.ToLower(err.Error())
@@ -58,9 +86,6 @@ func isRecoverableGHError(err error, output string) bool {
 		"connection timeout",
 		"dial tcp",
 		"context deadline exceeded",
-		"rate limit",
-		"secondary rate limit",
-		"abuse detection",
 	}
 
 	for _, pattern := range recoverablePatterns {
@@ -72,10 +97,12 @@ func isRecoverableGHError(err error, output string) bool {
 	return false
 }
 
-// executeWithRetry executes a GitHub CLI command with exponential backoff for recoverable errors
+// executeWithRetry executes a GitHub CLI command with exponential backoff for recoverable errors.
+// Rate limit errors use a longer backoff (up to 10 minutes) since GitHub rate limits reset on longer windows.
 func (g *GitClient) executeWithRetry(cmd *exec.Cmd, operationName string) ([]byte, error) {
 	var output []byte
 	var err error
+	var rateLimitDetected bool
 
 	retryBackoff := backoff.NewExponentialBackOff()
 	retryBackoff.InitialInterval = 2 * time.Second
@@ -90,7 +117,15 @@ func (g *GitClient) executeWithRetry(cmd *exec.Cmd, operationName string) ([]byt
 		output, err = cmd.CombinedOutput()
 
 		if err != nil && isRecoverableGHError(err, string(output)) {
-			log.Info("⏳ GitHub API recoverable error detected for %s, retrying...", operationName)
+			// On first rate limit detection, extend the backoff parameters
+			if !rateLimitDetected && isRateLimitError(err, string(output)) {
+				rateLimitDetected = true
+				retryBackoff.MaxInterval = 60 * time.Second
+				retryBackoff.MaxElapsedTime = 10 * time.Minute
+				log.Info("⏳ GitHub API rate limit detected for %s, extending retry window to 10 minutes...", operationName)
+			} else {
+				log.Info("⏳ GitHub API recoverable error detected for %s, retrying...", operationName)
+			}
 			// Reset command for retry, preserving working directory
 			cmd = exec.Command(cmd.Args[0], cmd.Args[1:]...)
 			cmd.Dir = originalDir
