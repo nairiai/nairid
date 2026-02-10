@@ -1668,10 +1668,12 @@ func (g *GitClient) HasExistingPRInWorktree(worktreePath, branchName string) (bo
 	return hasPR, nil
 }
 
-// executeWithRetryInDir is like executeWithRetry but with explicit working directory
+// executeWithRetryInDir is like executeWithRetry but with explicit working directory.
+// Rate limit errors use a longer backoff (up to 10 minutes) since GitHub rate limits reset on longer windows.
 func (g *GitClient) executeWithRetryInDir(cmd *exec.Cmd, workDir, operationName string) ([]byte, error) {
 	var output []byte
 	var err error
+	var rateLimitDetected bool
 
 	retryBackoff := backoff.NewExponentialBackOff()
 	retryBackoff.InitialInterval = 2 * time.Second
@@ -1683,7 +1685,15 @@ func (g *GitClient) executeWithRetryInDir(cmd *exec.Cmd, workDir, operationName 
 		output, err = cmd.CombinedOutput()
 
 		if err != nil && isRecoverableGHError(err, string(output)) {
-			log.Info("⏳ GitHub API recoverable error detected for %s, retrying...", operationName)
+			// On first rate limit detection, extend the backoff parameters
+			if !rateLimitDetected && isRateLimitError(err, string(output)) {
+				rateLimitDetected = true
+				retryBackoff.MaxInterval = 60 * time.Second
+				retryBackoff.MaxElapsedTime = 10 * time.Minute
+				log.Info("⏳ GitHub API rate limit detected for %s, extending retry window to 10 minutes...", operationName)
+			} else {
+				log.Info("⏳ GitHub API recoverable error detected for %s, retrying...", operationName)
+			}
 			cmd = exec.Command(cmd.Args[0], cmd.Args[1:]...)
 			cmd.Dir = workDir
 			return err

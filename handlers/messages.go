@@ -432,14 +432,19 @@ func (mh *MessageHandler) handleStartConversation(msg models.BaseMessage) error 
 		return fmt.Errorf("failed to send git activity system message: %w", err)
 	}
 
-	// Validate and restore PR description footer if needed
+	// Validate and restore PR description footer if needed.
+	// Pass branch name from commitResult to skip redundant HasExistingPR API calls.
+	knownBranch := ""
+	if commitResult != nil && commitResult.PullRequestID != "" {
+		knownBranch = commitResult.BranchName
+	}
 	if worktreePath != "" {
-		if err := mh.gitUseCase.ValidateAndRestorePRDescriptionFooterInWorktree(payload.MessageLink, worktreePath); err != nil {
+		if err := mh.gitUseCase.ValidateAndRestorePRDescriptionFooterInWorktree(payload.MessageLink, worktreePath, knownBranch); err != nil {
 			log.Info("❌ Failed to validate PR description footer in worktree: %v", err)
 			return fmt.Errorf("failed to validate PR description footer in worktree: %w", err)
 		}
 	} else {
-		if err := mh.gitUseCase.ValidateAndRestorePRDescriptionFooter(payload.MessageLink); err != nil {
+		if err := mh.gitUseCase.ValidateAndRestorePRDescriptionFooter(payload.MessageLink, knownBranch); err != nil {
 			log.Info("❌ Failed to validate PR description footer: %v", err)
 			return fmt.Errorf("failed to validate PR description footer: %w", err)
 		}
@@ -744,14 +749,19 @@ func (mh *MessageHandler) handleUserMessage(msg models.BaseMessage) error {
 		return fmt.Errorf("failed to send git activity system message: %w", err)
 	}
 
-	// Validate and restore PR description footer if needed
+	// Validate and restore PR description footer if needed.
+	// Pass branch name from commitResult to skip redundant HasExistingPR API calls.
+	knownBranch := ""
+	if commitResult != nil && commitResult.PullRequestID != "" {
+		knownBranch = commitResult.BranchName
+	}
 	if jobData.WorktreePath != "" {
-		if err := mh.gitUseCase.ValidateAndRestorePRDescriptionFooterInWorktree(payload.MessageLink, jobData.WorktreePath); err != nil {
+		if err := mh.gitUseCase.ValidateAndRestorePRDescriptionFooterInWorktree(payload.MessageLink, jobData.WorktreePath, knownBranch); err != nil {
 			log.Info("❌ Failed to validate PR description footer in worktree: %v", err)
 			return fmt.Errorf("failed to validate PR description footer in worktree: %w", err)
 		}
 	} else {
-		if err := mh.gitUseCase.ValidateAndRestorePRDescriptionFooter(payload.MessageLink); err != nil {
+		if err := mh.gitUseCase.ValidateAndRestorePRDescriptionFooter(payload.MessageLink, knownBranch); err != nil {
 			log.Info("❌ Failed to validate PR description footer: %v", err)
 			return fmt.Errorf("failed to validate PR description footer: %w", err)
 		}

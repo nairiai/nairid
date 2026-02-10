@@ -623,7 +623,9 @@ func (g *GitUseCase) generatePRBodyWithClaude(sessionID, branchName, threadLink 
 	return finalBody, nil
 }
 
-func (g *GitUseCase) ValidateAndRestorePRDescriptionFooter(threadLink string) error {
+// ValidateAndRestorePRDescriptionFooter validates and restores the PR description footer.
+// If knownBranchName is non-empty, the branch is already known to have a PR, skipping redundant API calls.
+func (g *GitUseCase) ValidateAndRestorePRDescriptionFooter(threadLink, knownBranchName string) error {
 	log.Info("📋 Starting to validate and restore PR description footer")
 
 	// Check if we're in repo mode
@@ -633,24 +635,32 @@ func (g *GitUseCase) ValidateAndRestorePRDescriptionFooter(threadLink string) er
 		return nil
 	}
 
-	// Get current branch
-	currentBranch, err := g.gitClient.GetCurrentBranch()
-	if err != nil {
-		log.Error("❌ Failed to get current branch: %v", err)
-		return fmt.Errorf("failed to get current branch: %w", err)
-	}
+	var currentBranch string
+	if knownBranchName != "" {
+		// Caller already knows the branch has a PR, skip redundant API calls
+		currentBranch = knownBranchName
+		log.Info("📋 Using cached branch name: %s (PR already known to exist)", currentBranch)
+	} else {
+		// Get current branch
+		var err error
+		currentBranch, err = g.gitClient.GetCurrentBranch()
+		if err != nil {
+			log.Error("❌ Failed to get current branch: %v", err)
+			return fmt.Errorf("failed to get current branch: %w", err)
+		}
 
-	// Check if a PR exists for this branch
-	hasExistingPR, err := g.gitClient.HasExistingPR(currentBranch)
-	if err != nil {
-		log.Error("❌ Failed to check for existing PR: %v", err)
-		return fmt.Errorf("failed to check for existing PR: %w", err)
-	}
+		// Check if a PR exists for this branch
+		hasExistingPR, err := g.gitClient.HasExistingPR(currentBranch)
+		if err != nil {
+			log.Error("❌ Failed to check for existing PR: %v", err)
+			return fmt.Errorf("failed to check for existing PR: %w", err)
+		}
 
-	if !hasExistingPR {
-		log.Info("ℹ️ No existing PR found - skipping footer validation")
-		log.Info("📋 Completed successfully - no PR to validate")
-		return nil
+		if !hasExistingPR {
+			log.Info("ℹ️ No existing PR found - skipping footer validation")
+			log.Info("📋 Completed successfully - no PR to validate")
+			return nil
+		}
 	}
 
 	// Get current PR description
@@ -1833,8 +1843,9 @@ func (g *GitUseCase) generateUpdatedPRDescriptionWithClaudeInWorktree(
 	return finalBody, nil
 }
 
-// ValidateAndRestorePRDescriptionFooterInWorktree validates and restores PR footer in worktree
-func (g *GitUseCase) ValidateAndRestorePRDescriptionFooterInWorktree(threadLink, worktreePath string) error {
+// ValidateAndRestorePRDescriptionFooterInWorktree validates and restores PR footer in worktree.
+// If knownBranchName is non-empty, the branch is already known to have a PR, skipping redundant API calls.
+func (g *GitUseCase) ValidateAndRestorePRDescriptionFooterInWorktree(threadLink, worktreePath, knownBranchName string) error {
 	log.Info("📋 Starting to validate and restore PR description footer in worktree: %s", worktreePath)
 
 	// Check if we're in repo mode
@@ -1844,23 +1855,31 @@ func (g *GitUseCase) ValidateAndRestorePRDescriptionFooterInWorktree(threadLink,
 		return nil
 	}
 
-	// Get current branch in worktree
-	currentBranch, err := g.gitClient.GetCurrentBranchInWorktree(worktreePath)
-	if err != nil {
-		log.Error("❌ Failed to get current branch in worktree: %v", err)
-		return fmt.Errorf("failed to get current branch in worktree: %w", err)
-	}
+	var currentBranch string
+	if knownBranchName != "" {
+		// Caller already knows the branch has a PR, skip redundant API calls
+		currentBranch = knownBranchName
+		log.Info("📋 Using cached branch name: %s (PR already known to exist)", currentBranch)
+	} else {
+		// Get current branch in worktree
+		var err error
+		currentBranch, err = g.gitClient.GetCurrentBranchInWorktree(worktreePath)
+		if err != nil {
+			log.Error("❌ Failed to get current branch in worktree: %v", err)
+			return fmt.Errorf("failed to get current branch in worktree: %w", err)
+		}
 
-	// Check if a PR exists for this branch
-	hasExistingPR, err := g.gitClient.HasExistingPRInWorktree(worktreePath, currentBranch)
-	if err != nil {
-		log.Error("❌ Failed to check for existing PR: %v", err)
-		return fmt.Errorf("failed to check for existing PR: %w", err)
-	}
+		// Check if a PR exists for this branch
+		hasExistingPR, err := g.gitClient.HasExistingPRInWorktree(worktreePath, currentBranch)
+		if err != nil {
+			log.Error("❌ Failed to check for existing PR: %v", err)
+			return fmt.Errorf("failed to check for existing PR: %w", err)
+		}
 
-	if !hasExistingPR {
-		log.Info("ℹ️ No existing PR found - skipping footer validation")
-		return nil
+		if !hasExistingPR {
+			log.Info("ℹ️ No existing PR found - skipping footer validation")
+			return nil
+		}
 	}
 
 	// Get current PR description
