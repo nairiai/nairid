@@ -1,3 +1,13 @@
+## [v0.0.71] - 2026-02-10
+
+### Bugfixes
+
+- Fix job failure when pool worktree becomes invalid after container restart ([#155](https://github.com/eksecai/eksecd/pull/155))
+  - Add `WorktreeExists()` validation in `Acquire()` before attempting `git worktree move`
+  - After container restarts, pool directories persist on the volume but `.git/worktrees/` entries are lost, causing `git worktree move` to fail with "is not a working tree"
+  - New `ErrWorktreeInvalid` sentinel error allows graceful fallback to synchronous worktree creation instead of hard-failing the job
+  - Fix `cleanupFailedWorktree` to fall back to `os.RemoveAll` when `git worktree remove` fails on unregistered worktrees
+
 ## [v0.0.70] - 2026-02-09
 
 ### Bugfixes
