@@ -1,3 +1,12 @@
+## [v0.0.74] - 2026-02-10
+
+### Bugfixes
+
+- Extend retry backoff to 10 minutes for GitHub API rate limit errors
+  - Network errors (timeout, dial tcp) keep the existing 2-minute retry window
+  - Rate limit errors now dynamically extend backoff to MaxInterval=60s, MaxElapsedTime=10min on first detection
+  - Fixes jobs still failing after v0.0.73 because 2-minute window was too short for GitHub rate limit resets
+
 ## [v0.0.73] - 2026-02-10
 
 ### Bugfixes
