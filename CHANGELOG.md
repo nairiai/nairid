@@ -1,3 +1,12 @@
+## [v0.0.76] - 2026-02-10
+
+### Bugfixes
+
+- Reduce GitHub API calls in idle job checker ([#162](https://github.com/eksecai/eksecd/pull/162))
+  - Remove `HasExistingPR` guard from `CheckPRStatus`: call `GetPRState` directly and treat "no pull requests found" as `no_pr`. Saves 1 API call per job per idle check cycle.
+  - Cache "no PR" result: store `PullRequestID="none"` in JobData so future idle checks skip GitHub API entirely for jobs without PRs.
+  - Eliminates ~280 API calls/minute for orgs with many tracked jobs across containers.
+
 ## [v0.0.75] - 2026-02-10
 
 ### Bugfixes
