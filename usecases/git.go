@@ -780,21 +780,17 @@ func (g *GitUseCase) CheckPRStatus(branchName string) (string, error) {
 		return "no_pr", nil
 	}
 
-	// First check if a PR exists for this branch
-	hasExistingPR, err := g.gitClient.HasExistingPR(branchName)
-	if err != nil {
-		log.Error("❌ Failed to check for existing PR for branch %s: %v", branchName, err)
-		return "", fmt.Errorf("failed to check for existing PR: %w", err)
-	}
-
-	if !hasExistingPR {
-		log.Info("📋 No PR found for branch %s", branchName)
-		return "no_pr", nil
-	}
-
-	// Get PR status using GitHub CLI
+	// Get PR status directly - if no PR exists, GetPRState returns an error
+	// which we interpret as "no_pr". This saves a separate HasExistingPR API call.
 	prStatus, err := g.gitClient.GetPRState(branchName)
 	if err != nil {
+		errStr := strings.ToLower(err.Error())
+		// "no pull requests found" is returned by gh pr view when no PR exists for the branch.
+		// This is not an error - it just means there's no PR, so we return "no_pr".
+		if strings.Contains(errStr, "no pull requests found") || strings.Contains(errStr, "no open pull requests found") {
+			log.Info("📋 No PR found for branch %s", branchName)
+			return "no_pr", nil
+		}
 		log.Error("❌ Failed to get PR state for branch %s: %v", branchName, err)
 		return "", fmt.Errorf("failed to get PR state: %w", err)
 	}
