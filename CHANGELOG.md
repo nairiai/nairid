@@ -1,3 +1,11 @@
+## [v0.0.73] - 2026-02-10
+
+### Bugfixes
+
+- Handle GitHub API rate limit errors with retry backoff ([#161](https://github.com/eksecai/eksecd/pull/161))
+  - Add rate limit error patterns (`rate limit`, `secondary rate limit`, `abuse detection`) to `isRecoverableGHError()`
+  - Previously, rate limit errors were treated as permanent failures; now they trigger exponential backoff retry (2s→30s over 2min)
+
 ## [v0.0.72] - 2026-02-10
 
 ### Bugfixes
