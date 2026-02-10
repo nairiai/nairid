@@ -1,6 +1,7 @@
 package clients
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -277,6 +278,93 @@ func TestDeleteLocalBranch_NonExistentBranch(t *testing.T) {
 	err := client.DeleteLocalBranch("nonexistent-branch")
 	if err == nil {
 		t.Error("Expected error when deleting non-existent branch, got nil")
+	}
+}
+
+// ============ isRecoverableGHError Tests ============
+
+func TestIsRecoverableGHError_NilError(t *testing.T) {
+	if isRecoverableGHError(nil, "") {
+		t.Error("Expected false for nil error")
+	}
+}
+
+func TestIsRecoverableGHError_NetworkErrors(t *testing.T) {
+	tests := []struct {
+		name   string
+		err    string
+		output string
+	}{
+		{"timeout in error", "connection timeout", ""},
+		{"dial tcp in error", "dial tcp 1.2.3.4:443: i/o timeout", ""},
+		{"context deadline in error", "context deadline exceeded", ""},
+		{"timeout in output", "exit status 1", "i/o timeout"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if !isRecoverableGHError(fmt.Errorf("%s", tc.err), tc.output) {
+				t.Errorf("Expected recoverable for err=%q output=%q", tc.err, tc.output)
+			}
+		})
+	}
+}
+
+func TestIsRecoverableGHError_RateLimitErrors(t *testing.T) {
+	tests := []struct {
+		name   string
+		err    string
+		output string
+	}{
+		{
+			"graphql rate limit in output",
+			"exit status 1",
+			"GraphQL: API rate limit already exceeded for installation ID 92312766.",
+		},
+		{
+			"rate limit in error",
+			"API rate limit exceeded",
+			"",
+		},
+		{
+			"secondary rate limit in output",
+			"exit status 1",
+			"You have exceeded a secondary rate limit",
+		},
+		{
+			"abuse detection in output",
+			"exit status 1",
+			"You have triggered an abuse detection mechanism",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if !isRecoverableGHError(fmt.Errorf("%s", tc.err), tc.output) {
+				t.Errorf("Expected recoverable for err=%q output=%q", tc.err, tc.output)
+			}
+		})
+	}
+}
+
+func TestIsRecoverableGHError_NonRecoverableErrors(t *testing.T) {
+	tests := []struct {
+		name   string
+		err    string
+		output string
+	}{
+		{"generic error", "something went wrong", ""},
+		{"not found", "exit status 1", "not found"},
+		{"permission denied", "exit status 1", "permission denied"},
+		{"invalid branch", "exit status 128", "fatal: invalid reference"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if isRecoverableGHError(fmt.Errorf("%s", tc.err), tc.output) {
+				t.Errorf("Expected non-recoverable for err=%q output=%q", tc.err, tc.output)
+			}
+		})
 	}
 }
 
