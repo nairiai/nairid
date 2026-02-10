@@ -127,13 +127,7 @@ func (c *ClaudeClient) ContinueSession(sessionID, prompt string, options *client
 }
 
 // buildPermissionArgs returns the CLI args for the configured permission mode.
-// When bypassPermissions is set, we use --dangerously-skip-permissions instead of
-// --permission-mode bypassPermissions because the latter causes Claude Code to
-// revert file edits on session exit.
 func (c *ClaudeClient) buildPermissionArgs() []string {
-	if c.permissionMode == "bypassPermissions" {
-		return []string{"--dangerously-skip-permissions"}
-	}
 	return []string{"--permission-mode", c.permissionMode}
 }
 
