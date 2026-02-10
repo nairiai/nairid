@@ -58,6 +58,9 @@ func isRecoverableGHError(err error, output string) bool {
 		"connection timeout",
 		"dial tcp",
 		"context deadline exceeded",
+		"rate limit",
+		"secondary rate limit",
+		"abuse detection",
 	}
 
 	for _, pattern := range recoverablePatterns {
