@@ -811,8 +811,11 @@ func (mh *MessageHandler) checkJobIdleness(jobID string, jobData models.JobData)
 	var prStatus string
 	var err error
 
-	// Use stored PR ID if available, otherwise fall back to branch-based check
-	if jobData.PullRequestID != "" {
+	if jobData.PullRequestID == "none" {
+		// We already know this job has no PR - skip API calls entirely
+		log.Info("ℹ️ Job %s has no PR (cached) - using inactivity timeout only", jobID)
+		prStatus = "no_pr"
+	} else if jobData.PullRequestID != "" {
 		log.Info("ℹ️ Using stored PR ID %s for job %s", jobData.PullRequestID, jobID)
 		prStatus, err = mh.gitUseCase.CheckPRStatusByID(jobData.PullRequestID)
 		if err != nil {
@@ -825,6 +828,16 @@ func (mh *MessageHandler) checkJobIdleness(jobID string, jobData models.JobData)
 		if err != nil {
 			log.Error("❌ Failed to check PR status for branch %s: %v", jobData.BranchName, err)
 			return fmt.Errorf("failed to check PR status for branch %s: %w", jobData.BranchName, err)
+		}
+
+		// Cache the "no PR" result so future idle checks skip API calls entirely
+		if prStatus == "no_pr" {
+			log.Info("📋 Caching 'no PR' result for job %s to avoid future API calls", jobID)
+			jobData.PullRequestID = "none"
+			if updateErr := mh.appState.UpdateJobData(jobID, jobData); updateErr != nil {
+				log.Error("❌ Failed to cache no-PR status for job %s: %v", jobID, updateErr)
+				// Non-fatal - continue with the idle check
+			}
 		}
 	}
 
