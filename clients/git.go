@@ -167,7 +167,7 @@ func (g *GitClient) CheckoutBranch(branchName string) error {
 func (g *GitClient) PullLatest() error {
 	log.Info("📋 Starting to pull latest changes")
 
-	cmd := exec.Command("git", "pull")
+	cmd := exec.Command("git", "pull", "--rebase")
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -1456,7 +1456,7 @@ func (g *GitClient) CleanUntrackedInWorktree(worktreePath string) error {
 func (g *GitClient) PullLatestInWorktree(worktreePath string) error {
 	log.Info("📋 Starting to pull latest changes in worktree: %s", worktreePath)
 
-	cmd := exec.Command("git", "pull")
+	cmd := exec.Command("git", "pull", "--rebase")
 	cmd.Dir = worktreePath
 	output, err := cmd.CombinedOutput()
 
