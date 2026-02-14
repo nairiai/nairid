@@ -248,7 +248,7 @@ func ExtractOpenCodeResult(messages []OpenCodeMessage) (string, error) {
 
 	// Prefer text messages if available
 	if len(textParts) > 0 {
-		return strings.Join(textParts, ""), nil
+		return strings.Join(textParts, "\n\n"), nil
 	}
 
 	// Fall back to tool summaries if no text messages

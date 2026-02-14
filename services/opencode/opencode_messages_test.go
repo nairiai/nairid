@@ -162,10 +162,22 @@ func TestExtractOpenCodeResult(t *testing.T) {
 			expectError:    false,
 		},
 		{
-			name: "concatenates multiple text messages",
-			input: `{"type":"text","timestamp":1759406015783,"sessionID":"ses_123","part":{"type":"text","text":"First part. "}}
+			name: "joins multiple text messages with double newline",
+			input: `{"type":"text","timestamp":1759406015783,"sessionID":"ses_123","part":{"type":"text","text":"First part."}}
 {"type":"text","timestamp":1759406015784,"sessionID":"ses_123","part":{"type":"text","text":"Second part."}}`,
-			expectedResult: "First part. Second part.",
+			expectedResult: "First part.\n\nSecond part.",
+			expectError:    false,
+		},
+		{
+			name: "joins multiple intermediate text messages with newlines",
+			input: `{"type":"step_start","timestamp":1759406013703,"sessionID":"ses_123","part":{}}
+{"type":"text","timestamp":1759406015783,"sessionID":"ses_123","part":{"type":"text","text":"Let me check the schema."}}
+{"type":"tool_use","timestamp":1759406015800,"sessionID":"ses_123","part":{"tool":"read","state":{"status":"completed","title":"schema.sql"}}}
+{"type":"text","timestamp":1759406015900,"sessionID":"ses_123","part":{"type":"text","text":"Now let me query the data."}}
+{"type":"tool_use","timestamp":1759406015950,"sessionID":"ses_123","part":{"tool":"read","state":{"status":"completed","title":"data.sql"}}}
+{"type":"text","timestamp":1759406016000,"sessionID":"ses_123","part":{"type":"text","text":"Found 42 results."}}
+{"type":"step_finish","timestamp":1759406016100,"sessionID":"ses_123","part":{}}`,
+			expectedResult: "Let me check the schema.\n\nNow let me query the data.\n\nFound 42 results.",
 			expectError:    false,
 		},
 		{
