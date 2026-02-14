@@ -516,7 +516,8 @@ func (p *ClaudeCodeProxiedMCPProcessor) ProcessMCPConfigs(targetHomeDir string) 
 	mcpServers := make(map[string]interface{})
 	for _, server := range servers {
 		mcpServers[server.Name] = map[string]interface{}{
-			"url": p.mcpProxyURL + server.URL,
+			"type": "url",
+			"url":  p.mcpProxyURL + server.URL,
 		}
 	}
 
