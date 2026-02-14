@@ -23,12 +23,21 @@ var BlockedEnvVars = map[string]bool{
 	"CCAGENT_WS_API_URL": true, // Legacy env var
 	"AGENT_EXEC_USER":    true,
 	"AGENT_HTTP_PROXY":   true, // This is for eksecd to read, not for agents
+	"AGENT_MCP_PROXY":    true, // This is for eksecd to read, not for agents
 }
 
 // AgentExecUser returns the configured user for running agent processes.
 // Returns empty string if not configured (self-hosted mode).
 func AgentExecUser() string {
 	return os.Getenv("AGENT_EXEC_USER")
+}
+
+// AgentMCPProxy returns the MCP proxy URL for proxying MCP server connections.
+// When set, eksecd configures agents to use HTTP URLs pointing to the MCP proxy
+// instead of spawning local stdio MCP server processes.
+// Returns empty string if not configured.
+func AgentMCPProxy() string {
+	return os.Getenv("AGENT_MCP_PROXY")
 }
 
 // AgentHTTPProxy returns the HTTP proxy URL that agent processes should use.

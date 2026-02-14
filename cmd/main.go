@@ -143,8 +143,14 @@ func fetchAndStoreArtifacts(agentsApiClient *clients.AgentsApiClient) error {
 		return fmt.Errorf("failed to clean eksecd rules directory: %w", err)
 	}
 
-	if err := utils.CleanCcagentMCPDir(); err != nil {
-		return fmt.Errorf("failed to clean eksecd MCP directory: %w", err)
+	// Skip MCP config cleanup and download when MCP proxy is enabled
+	// (configs will be fetched from the proxy at processing time)
+	if clients.AgentMCPProxy() == "" {
+		if err := utils.CleanCcagentMCPDir(); err != nil {
+			return fmt.Errorf("failed to clean eksecd MCP directory: %w", err)
+		}
+	} else {
+		log.Info("📦 MCP proxy enabled, skipping MCP config artifact downloads")
 	}
 
 	if err := utils.CleanCcagentSkillsDir(); err != nil {
@@ -164,8 +170,18 @@ func fetchAndStoreArtifacts(agentsApiClient *clients.AgentsApiClient) error {
 
 	log.Info("📦 Found %d artifact(s) to download", len(artifacts))
 
+	// Check if MCP proxy is enabled (skip MCP config artifact downloads)
+	mcpProxyEnabled := clients.AgentMCPProxy() != ""
+
 	// Download and store each artifact file
 	for _, artifact := range artifacts {
+		// Skip MCP config artifacts when proxy is enabled
+		// (the proxy fetches its own configs directly from the backend)
+		if mcpProxyEnabled && (artifact.Type == "mcp_config" || artifact.Type == "mcp_cfg") {
+			log.Info("📦 Skipping %s artifact (MCP proxy handles this): %s", artifact.Type, artifact.Title)
+			continue
+		}
+
 		log.Info("📦 Processing %s artifact: %s (%s)", artifact.Type, artifact.Title, artifact.Description)
 
 		for _, file := range artifact.Files {
@@ -218,16 +234,32 @@ func processMCPConfigs(agentType, workDir, targetHomeDir string) error {
 
 	var processor utils.MCPProcessor
 
-	switch agentType {
-	case "claude":
-		processor = utils.NewClaudeCodeMCPProcessor(workDir)
-	case "opencode":
-		processor = utils.NewOpenCodeMCPProcessor(workDir)
-	case "cursor", "codex":
-		// Cursor and Codex don't support MCP configs yet
-		processor = utils.NewNoOpMCPProcessor()
-	default:
-		return fmt.Errorf("unknown agent type: %s", agentType)
+	// Check if MCP proxy mode is enabled
+	mcpProxyURL := clients.AgentMCPProxy()
+	if mcpProxyURL != "" {
+		log.Info("🔌 MCP proxy mode enabled: %s", mcpProxyURL)
+		switch agentType {
+		case "claude":
+			processor = utils.NewClaudeCodeProxiedMCPProcessor(mcpProxyURL)
+		case "opencode":
+			processor = utils.NewOpenCodeProxiedMCPProcessor(mcpProxyURL)
+		case "cursor", "codex":
+			processor = utils.NewNoOpMCPProcessor()
+		default:
+			return fmt.Errorf("unknown agent type: %s", agentType)
+		}
+	} else {
+		switch agentType {
+		case "claude":
+			processor = utils.NewClaudeCodeMCPProcessor(workDir)
+		case "opencode":
+			processor = utils.NewOpenCodeMCPProcessor(workDir)
+		case "cursor", "codex":
+			// Cursor and Codex don't support MCP configs yet
+			processor = utils.NewNoOpMCPProcessor()
+		default:
+			return fmt.Errorf("unknown agent type: %s", agentType)
+		}
 	}
 
 	if err := processor.ProcessMCPConfigs(targetHomeDir); err != nil {
@@ -377,7 +409,7 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 
 	wsURL := envManager.Get("EKSEC_WS_API_URL")
 	if wsURL == "" {
-		wsURL = "https://claudecontrol.onrender.com/socketio/"
+		wsURL = "https://api.eksec.ai/socketio/"
 	}
 
 	// Extract base URL for API client (remove /socketio/ suffix)
