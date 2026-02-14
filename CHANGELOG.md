@@ -1,3 +1,13 @@
+## [v0.0.78] - 2026-02-14
+
+### Features
+
+- Add MCP proxy support via AGENT_MCP_PROXY ([#165](https://github.com/eksecai/eksecd/pull/165))
+  - When `AGENT_MCP_PROXY` is set, eksecd fetches MCP server configs from the proxy's `/servers` endpoint and writes HTTP-based MCP URLs into agent config files instead of spawning local stdio MCP server processes.
+  - Supports both Claude Code (`type: "http"` in `.claude.json`) and OpenCode (`type: "remote"` in `opencode.json`) agent types.
+  - Skip MCP config artifact downloads when proxy is enabled since the proxy handles server lifecycle.
+  - Update default backend URL to api.eksec.ai.
+
 ## [v0.0.77] - 2026-02-13
 
 ### Bugfixes
