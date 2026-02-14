@@ -170,8 +170,18 @@ func fetchAndStoreArtifacts(agentsApiClient *clients.AgentsApiClient) error {
 
 	log.Info("📦 Found %d artifact(s) to download", len(artifacts))
 
+	// Check if MCP proxy is enabled (skip MCP config artifact downloads)
+	mcpProxyEnabled := clients.AgentMCPProxy() != ""
+
 	// Download and store each artifact file
 	for _, artifact := range artifacts {
+		// Skip MCP config artifacts when proxy is enabled
+		// (the proxy fetches its own configs directly from the backend)
+		if mcpProxyEnabled && (artifact.Type == "mcp_config" || artifact.Type == "mcp_cfg") {
+			log.Info("📦 Skipping %s artifact (MCP proxy handles this): %s", artifact.Type, artifact.Title)
+			continue
+		}
+
 		log.Info("📦 Processing %s artifact: %s (%s)", artifact.Type, artifact.Title, artifact.Description)
 
 		for _, file := range artifact.Files {
