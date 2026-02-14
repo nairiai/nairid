@@ -409,7 +409,7 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 
 	wsURL := envManager.Get("EKSEC_WS_API_URL")
 	if wsURL == "" {
-		wsURL = "https://claudecontrol.onrender.com/socketio/"
+		wsURL = "https://api.eksec.ai/socketio/"
 	}
 
 	// Extract base URL for API client (remove /socketio/ suffix)
