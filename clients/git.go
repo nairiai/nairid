@@ -245,6 +245,23 @@ func (g *GitClient) ResetHard() error {
 	return nil
 }
 
+// ResetHardToRef resets the current branch to the specified ref (e.g., "origin/main").
+func (g *GitClient) ResetHardToRef(ref string) error {
+	log.Info("📋 Starting to reset hard to ref: %s", ref)
+
+	cmd := exec.Command("git", "reset", "--hard", ref)
+	g.setWorkDir(cmd)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		log.Error("❌ Git reset hard to ref failed: %v\nOutput: %s", err, string(output))
+		return fmt.Errorf("git reset hard to ref failed: %w\nOutput: %s", err, string(output))
+	}
+
+	log.Info("✅ Successfully reset hard to ref: %s", ref)
+	return nil
+}
+
 // hasCommits checks if the repository has any commits
 func (g *GitClient) hasCommits() (bool, error) {
 	// Use git rev-parse --verify HEAD to check if HEAD exists

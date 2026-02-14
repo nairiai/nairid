@@ -313,19 +313,13 @@ func (g *GitUseCase) PrepareForNewConversation(conversationHint string) (string,
 func (g *GitUseCase) resetAndPullDefaultBranch() error {
 	log.Info("📋 Starting to reset and pull default branch")
 
-	// Step 1: Reset hard current branch to discard uncommitted changes
-	if err := g.gitClient.ResetHard(); err != nil {
-		log.Error("❌ Failed to reset hard: %v", err)
-		return fmt.Errorf("failed to reset hard: %w", err)
-	}
-
-	// Step 2: Clean untracked files
+	// Step 1: Clean untracked files
 	if err := g.gitClient.CleanUntracked(); err != nil {
 		log.Error("❌ Failed to clean untracked files: %v", err)
 		return fmt.Errorf("failed to clean untracked files: %w", err)
 	}
 
-	// Step 3: Get default branch and checkout to it
+	// Step 2: Get default branch and checkout to it
 	defaultBranch, err := g.gitClient.GetDefaultBranch()
 	if err != nil {
 		log.Error("❌ Failed to get default branch: %v", err)
@@ -337,12 +331,18 @@ func (g *GitUseCase) resetAndPullDefaultBranch() error {
 		return fmt.Errorf("failed to checkout default branch %s: %w", defaultBranch, err)
 	}
 
-	// Step 4: Pull latest changes (should always succeed on default branch)
-	// If we hit the remote branch deleted error here, it means the default branch itself
-	// was deleted which is a critical error
-	if err := g.gitClient.PullLatest(); err != nil {
-		log.Error("❌ Failed to pull latest changes: %v", err)
-		return fmt.Errorf("failed to pull latest changes: %w", err)
+	// Step 3: Fetch latest from origin and hard-reset to origin/<default-branch>.
+	// This replaces the previous pull --rebase approach which could fail when local
+	// and remote branches diverge (e.g. after force-pushes or failed rebases).
+	if err := g.gitClient.FetchOrigin(); err != nil {
+		log.Error("❌ Failed to fetch from origin: %v", err)
+		return fmt.Errorf("failed to fetch from origin: %w", err)
+	}
+
+	originRef := fmt.Sprintf("origin/%s", defaultBranch)
+	if err := g.gitClient.ResetHardToRef(originRef); err != nil {
+		log.Error("❌ Failed to reset to %s: %v", originRef, err)
+		return fmt.Errorf("failed to reset to %s: %w", originRef, err)
 	}
 
 	log.Info("✅ Successfully reset and pulled main")
