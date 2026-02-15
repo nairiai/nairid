@@ -395,11 +395,6 @@ func (p *WorktreePool) getCurrentOriginCommit() (string, error) {
 // resetMainRepoToDefaultBranch resets the main repository to the default branch.
 // This prevents cross-pollination of changes when creating new worktrees.
 func (p *WorktreePool) resetMainRepoToDefaultBranch() error {
-	// Reset hard to discard any uncommitted changes
-	if err := p.gitClient.ResetHard(); err != nil {
-		return fmt.Errorf("failed to reset hard: %w", err)
-	}
-
 	// Clean untracked files
 	if err := p.gitClient.CleanUntracked(); err != nil {
 		return fmt.Errorf("failed to clean untracked: %w", err)
@@ -416,9 +411,16 @@ func (p *WorktreePool) resetMainRepoToDefaultBranch() error {
 		return fmt.Errorf("failed to checkout default branch: %w", err)
 	}
 
-	// Pull latest changes
-	if err := p.gitClient.PullLatest(); err != nil {
-		return fmt.Errorf("failed to pull latest: %w", err)
+	// Fetch latest from origin and hard-reset to origin/<default-branch>.
+	// This replaces the previous pull --rebase approach which could fail when local
+	// and remote branches diverge (e.g. after force-pushes or failed rebases).
+	if err := p.gitClient.FetchOrigin(); err != nil {
+		return fmt.Errorf("failed to fetch from origin: %w", err)
+	}
+
+	originRef := fmt.Sprintf("origin/%s", defaultBranch)
+	if err := p.gitClient.ResetHardToRef(originRef); err != nil {
+		return fmt.Errorf("failed to reset to %s: %w", originRef, err)
 	}
 
 	return nil
