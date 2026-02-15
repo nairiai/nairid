@@ -88,6 +88,10 @@ The release process includes:
 - All git operations are tracked and logged
 - OpenCode **only supports `bypassPermissions` mode**
 
+### Customer Data Privacy
+
+**NEVER** include real production data in commits, PRs, test cases, or code examples. This includes customer names, organization names, user counts, query results, metric values, or any data observed from production systems. All commits and PRs are public. Always use obviously fake/placeholder data in tests (e.g. "Found 42 results" not real counts from production).
+
 ## Log Management
 
 - Logs stored in `~/.config/eksecd/logs/`
