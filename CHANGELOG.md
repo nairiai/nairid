@@ -1,3 +1,11 @@
+## [v0.0.81] - 2026-02-15
+
+### Features
+
+- Fetch and apply container env vars on startup ([#168](https://github.com/eksecai/eksecd/pull/168))
+  - On startup, self-hosted agents now fetch environment variables from the API (`/api/agents/env`) and apply them via EnvManager before artifact fetching.
+  - Managed installations skip this step. Enables configuring agent environment variables through the platform without modifying container config.
+
 ## [v0.0.80] - 2026-02-15
 
 ### Bugfixes
