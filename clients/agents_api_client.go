@@ -130,6 +130,51 @@ func (c *AgentsApiClient) FetchToken() (*TokenResponse, error) {
 	return &tokenResp, nil
 }
 
+// EnvVarEntry represents a key-value environment variable from the API
+type EnvVarEntry struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// EnvVarsResponse represents the API response for environment variables
+type EnvVarsResponse struct {
+	EnvVars []EnvVarEntry `json:"env_vars"`
+}
+
+// FetchEnvVars retrieves environment variables for the authenticated container
+func (c *AgentsApiClient) FetchEnvVars() ([]EnvVarEntry, error) {
+	url := fmt.Sprintf("%s/api/agents/env", c.baseURL)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
+	req.Header.Set("Accept", "application/json")
+	if c.agentID != "" {
+		req.Header.Set("X-AGENT-ID", c.agentID)
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var envVarsResp EnvVarsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&envVarsResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return envVarsResp.EnvVars, nil
+}
+
 // FetchArtifacts retrieves the list of agent artifacts from the API
 func (c *AgentsApiClient) FetchArtifacts() ([]Artifact, error) {
 	url := fmt.Sprintf("%s/api/agents/artifacts", c.baseURL)

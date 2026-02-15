@@ -133,6 +133,37 @@ func fetchAndSetToken(agentsApiClient *clients.AgentsApiClient, envManager *env.
 	return nil
 }
 
+// fetchAndApplyEnvVars fetches environment variables from the API and sets them via EnvManager.
+// This only runs for self-hosted agents.
+func fetchAndApplyEnvVars(agentsApiClient *clients.AgentsApiClient, envManager *env.EnvManager) error {
+	if !agentsApiClient.IsSelfHosted() {
+		log.Info("📦 Managed installation, skipping env vars fetch")
+		return nil
+	}
+
+	log.Info("🔧 Fetching environment variables from API...")
+
+	envVars, err := agentsApiClient.FetchEnvVars()
+	if err != nil {
+		return fmt.Errorf("failed to fetch env vars: %w", err)
+	}
+
+	if len(envVars) == 0 {
+		log.Info("🔧 No environment variables configured for this agent")
+		return nil
+	}
+
+	for _, ev := range envVars {
+		if err := envManager.Set(ev.Key, ev.Value); err != nil {
+			return fmt.Errorf("failed to set env var %s: %w", ev.Key, err)
+		}
+		log.Info("🔧 Set environment variable: %s", ev.Key)
+	}
+
+	log.Info("🔧 Successfully applied %d environment variable(s)", len(envVars))
+	return nil
+}
+
 // fetchAndStoreArtifacts fetches agent artifacts from API and stores them locally
 func fetchAndStoreArtifacts(agentsApiClient *clients.AgentsApiClient) error {
 	log.Info("📦 Fetching agent artifacts from API...")
@@ -422,6 +453,11 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 	// Fetch and set Anthropic token BEFORE initializing anything else
 	if err := fetchAndSetToken(agentsApiClient, envManager); err != nil {
 		return nil, fmt.Errorf("failed to fetch and set token: %w", err)
+	}
+
+	// Fetch and apply environment variables (self-hosted only)
+	if err := fetchAndApplyEnvVars(agentsApiClient, envManager); err != nil {
+		return nil, fmt.Errorf("failed to fetch and apply env vars: %w", err)
 	}
 
 	// Fetch and store agent artifacts (rules, guidelines, instructions)
