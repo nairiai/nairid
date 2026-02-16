@@ -134,13 +134,7 @@ func fetchAndSetToken(agentsApiClient *clients.AgentsApiClient, envManager *env.
 }
 
 // fetchAndApplyEnvVars fetches environment variables from the API and sets them via EnvManager.
-// This only runs for self-hosted agents.
 func fetchAndApplyEnvVars(agentsApiClient *clients.AgentsApiClient, envManager *env.EnvManager) error {
-	if !agentsApiClient.IsSelfHosted() {
-		log.Info("📦 Managed installation, skipping env vars fetch")
-		return nil
-	}
-
 	log.Info("🔧 Fetching environment variables from API...")
 
 	envVars, err := agentsApiClient.FetchEnvVars()
@@ -455,7 +449,7 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 		return nil, fmt.Errorf("failed to fetch and set token: %w", err)
 	}
 
-	// Fetch and apply environment variables (self-hosted only)
+	// Fetch and apply environment variables from API
 	if err := fetchAndApplyEnvVars(agentsApiClient, envManager); err != nil {
 		return nil, fmt.Errorf("failed to fetch and apply env vars: %w", err)
 	}
