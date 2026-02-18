@@ -11,6 +11,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/lucasepe/codename v0.2.0
 	github.com/oklog/ulid/v2 v2.1.1
+	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/zishang520/socket.io/clients/socket/v3 v3.0.0-rc.11
 	github.com/zishang520/socket.io/v3 v3.0.0-rc.11
 )

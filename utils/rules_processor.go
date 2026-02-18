@@ -384,6 +384,88 @@ func (p *OpenCodeRulesProcessor) ProcessRules(targetHomeDir string) error {
 	return nil
 }
 
+// CodexRulesProcessor handles rules processing for Codex
+type CodexRulesProcessor struct{}
+
+// NewCodexRulesProcessor creates a new Codex rules processor
+func NewCodexRulesProcessor() *CodexRulesProcessor {
+	return &CodexRulesProcessor{}
+}
+
+// ProcessRules implements RulesProcessor for Codex
+// It builds a single AGENTS.md file at ~/.codex/AGENTS.md containing
+// all rules inlined under a "Rules" section with title, description, and body
+// for each rule. Codex natively reads AGENTS.md from the global config directory.
+// targetHomeDir specifies the home directory to deploy config to.
+// If empty, uses the current user's home directory.
+func (p *CodexRulesProcessor) ProcessRules(targetHomeDir string) error {
+	log.Info("📋 Processing rules for Codex agent")
+
+	// Get rule files from eksecd directory
+	ruleFiles, err := GetRuleFiles()
+	if err != nil {
+		return fmt.Errorf("failed to get rule files: %w", err)
+	}
+
+	if len(ruleFiles) == 0 {
+		log.Info("📋 No rules found in eksecd rules directory")
+		return nil
+	}
+
+	log.Info("📋 Found %d rule file(s) to process", len(ruleFiles))
+
+	// Determine home directory for Codex config
+	homeDir := targetHomeDir
+	if homeDir == "" {
+		var err error
+		homeDir, err = os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("failed to get home directory: %w", err)
+		}
+	}
+
+	log.Info("📋 Deploying Codex AGENTS.md to home directory: %s", homeDir)
+
+	codexConfigDir := filepath.Join(homeDir, ".codex")
+
+	// Ensure Codex config directory exists with correct ownership
+	if err := mkdirAllAsTargetUser(codexConfigDir); err != nil {
+		return fmt.Errorf("failed to create Codex config directory: %w", err)
+	}
+
+	// Build AGENTS.md content from all rule files
+	var sb strings.Builder
+	sb.WriteString("# Rules\n\n")
+	sb.WriteString("The following is a list of rules that you need to strictly follow when they are relevant to your task.\n")
+
+	for _, ruleFile := range ruleFiles {
+		title, description, body, err := ReadRuleBody(ruleFile)
+		if err != nil {
+			return fmt.Errorf("failed to read rule file %s: %w", ruleFile, err)
+		}
+
+		sb.WriteString("\n## ")
+		sb.WriteString(title)
+		sb.WriteString("\n\n")
+		if description != "" {
+			sb.WriteString(description)
+			sb.WriteString("\n\n")
+		}
+		sb.WriteString(body)
+		sb.WriteString("\n")
+	}
+
+	agentsMdPath := filepath.Join(codexConfigDir, "AGENTS.md")
+	log.Info("📋 Creating AGENTS.md at: %s", agentsMdPath)
+
+	if err := writeFileAsTargetUser(agentsMdPath, []byte(sb.String()), 0644); err != nil {
+		return fmt.Errorf("failed to write AGENTS.md: %w", err)
+	}
+
+	log.Info("✅ Successfully processed %d rule(s) for Codex", len(ruleFiles))
+	return nil
+}
+
 // NoOpRulesProcessor is a no-op implementation for agents that don't support rules
 type NoOpRulesProcessor struct{}
 

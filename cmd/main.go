@@ -237,8 +237,9 @@ func processAgentRules(agentType, workDir, targetHomeDir string) error {
 		processor = utils.NewClaudeCodeRulesProcessor(workDir)
 	case "opencode":
 		processor = utils.NewOpenCodeRulesProcessor(workDir)
-	case "cursor", "codex":
-		// Cursor and Codex don't support rules processing yet
+	case "codex":
+		processor = utils.NewCodexRulesProcessor()
+	case "cursor":
 		processor = utils.NewNoOpRulesProcessor()
 	default:
 		return fmt.Errorf("unknown agent type: %s", agentType)
@@ -268,7 +269,9 @@ func processMCPConfigs(agentType, workDir, targetHomeDir string) error {
 			processor = utils.NewClaudeCodeProxiedMCPProcessor(mcpProxyURL)
 		case "opencode":
 			processor = utils.NewOpenCodeProxiedMCPProcessor(mcpProxyURL)
-		case "cursor", "codex":
+		case "codex":
+			processor = utils.NewCodexProxiedMCPProcessor(mcpProxyURL)
+		case "cursor":
 			processor = utils.NewNoOpMCPProcessor()
 		default:
 			return fmt.Errorf("unknown agent type: %s", agentType)
@@ -279,8 +282,9 @@ func processMCPConfigs(agentType, workDir, targetHomeDir string) error {
 			processor = utils.NewClaudeCodeMCPProcessor(workDir)
 		case "opencode":
 			processor = utils.NewOpenCodeMCPProcessor(workDir)
-		case "cursor", "codex":
-			// Cursor and Codex don't support MCP configs yet
+		case "codex":
+			processor = utils.NewCodexMCPProcessor()
+		case "cursor":
 			processor = utils.NewNoOpMCPProcessor()
 		default:
 			return fmt.Errorf("unknown agent type: %s", agentType)
@@ -307,8 +311,9 @@ func processSkills(agentType, targetHomeDir string) error {
 		processor = utils.NewClaudeCodeSkillsProcessor()
 	case "opencode":
 		processor = utils.NewOpenCodeSkillsProcessor()
-	case "cursor", "codex":
-		// Cursor and Codex don't support skills yet
+	case "codex":
+		processor = utils.NewCodexSkillsProcessor()
+	case "cursor":
 		processor = utils.NewNoOpSkillsProcessor()
 	default:
 		return fmt.Errorf("unknown agent type: %s", agentType)

@@ -6,7 +6,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	toml "github.com/pelletier/go-toml/v2"
 )
 
 // Test GetMCPConfigFiles
@@ -1595,6 +1598,317 @@ func TestOpenCodeMCPProcessor_RemoteServerWithoutHeaders(t *testing.T) {
 	// Verify enabled is true
 	if enabled, ok := publicConfig["enabled"].(bool); !ok || !enabled {
 		t.Errorf("Expected enabled to be true, got: %v", publicConfig["enabled"])
+	}
+}
+
+// Test CodexMCPProcessor
+
+func TestCodexMCPProcessor_NoConfigs(t *testing.T) {
+	tempDir := t.TempDir()
+
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", originalHome)
+
+	processor := NewCodexMCPProcessor()
+	if err := processor.ProcessMCPConfigs(""); err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+
+	// config.toml should still be created with shell_environment_policy
+	codexConfigPath := filepath.Join(tempDir, ".codex", "config.toml")
+	content, err := os.ReadFile(codexConfigPath)
+	if err != nil {
+		t.Fatalf("Expected config.toml to exist, got error: %v", err)
+	}
+
+	var config map[string]interface{}
+	if err := toml.Unmarshal(content, &config); err != nil {
+		t.Fatalf("Failed to parse config.toml: %v", err)
+	}
+
+	// Verify shell_environment_policy is set
+	policy, ok := config["shell_environment_policy"].(map[string]interface{})
+	if !ok {
+		t.Fatal("Expected shell_environment_policy to exist")
+	}
+
+	if policy["inherit"] != "core" {
+		t.Errorf("Expected inherit to be 'core', got: %v", policy["inherit"])
+	}
+
+	if policy["ignore_default_excludes"] != true {
+		t.Errorf("Expected ignore_default_excludes to be true, got: %v", policy["ignore_default_excludes"])
+	}
+}
+
+func TestCodexMCPProcessor_WithConfigs(t *testing.T) {
+	tempDir := t.TempDir()
+	mcpDir := filepath.Join(tempDir, ".config", "eksecd", "mcp")
+
+	if err := os.MkdirAll(mcpDir, 0755); err != nil {
+		t.Fatalf("Failed to create MCP directory: %v", err)
+	}
+
+	fileConfig := map[string]interface{}{
+		"mcpServers": map[string]interface{}{
+			"github": map[string]interface{}{
+				"command": "uvx",
+				"args":    []string{"mcp-server-github"},
+				"env": map[string]interface{}{
+					"GITHUB_TOKEN": "ghp_test",
+				},
+			},
+		},
+	}
+
+	fileJSON, _ := json.Marshal(fileConfig)
+	if err := os.WriteFile(filepath.Join(mcpDir, "github.json"), fileJSON, 0644); err != nil {
+		t.Fatalf("Failed to create github config: %v", err)
+	}
+
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", originalHome)
+
+	processor := NewCodexMCPProcessor()
+	if err := processor.ProcessMCPConfigs(""); err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+
+	codexConfigPath := filepath.Join(tempDir, ".codex", "config.toml")
+	content, err := os.ReadFile(codexConfigPath)
+	if err != nil {
+		t.Fatalf("Expected config.toml to exist, got error: %v", err)
+	}
+
+	var config map[string]interface{}
+	if err := toml.Unmarshal(content, &config); err != nil {
+		t.Fatalf("Failed to parse config.toml: %v", err)
+	}
+
+	// Verify mcp_servers key exists
+	mcpServers, ok := config["mcp_servers"].(map[string]interface{})
+	if !ok {
+		t.Fatal("Expected mcp_servers key to exist")
+	}
+
+	githubConfig, ok := mcpServers["github"].(map[string]interface{})
+	if !ok {
+		t.Fatal("Expected github server to exist in mcp_servers")
+	}
+
+	if githubConfig["command"] != "uvx" {
+		t.Errorf("Expected command to be 'uvx', got: %v", githubConfig["command"])
+	}
+
+	if githubConfig["enabled"] != true {
+		t.Errorf("Expected enabled to be true, got: %v", githubConfig["enabled"])
+	}
+
+	// Verify shell_environment_policy is also set
+	if _, ok := config["shell_environment_policy"]; !ok {
+		t.Error("Expected shell_environment_policy to be set")
+	}
+}
+
+func TestCodexMCPProcessor_RemoteServer(t *testing.T) {
+	tempDir := t.TempDir()
+	mcpDir := filepath.Join(tempDir, ".config", "eksecd", "mcp")
+
+	if err := os.MkdirAll(mcpDir, 0755); err != nil {
+		t.Fatalf("Failed to create MCP directory: %v", err)
+	}
+
+	fileConfig := map[string]interface{}{
+		"mcpServers": map[string]interface{}{
+			"api-server": map[string]interface{}{
+				"url": "https://api.example.com/mcp",
+				"headers": map[string]interface{}{
+					"Authorization": "Bearer token123",
+				},
+			},
+		},
+	}
+
+	fileJSON, _ := json.Marshal(fileConfig)
+	if err := os.WriteFile(filepath.Join(mcpDir, "api.json"), fileJSON, 0644); err != nil {
+		t.Fatalf("Failed to create api config: %v", err)
+	}
+
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", originalHome)
+
+	processor := NewCodexMCPProcessor()
+	if err := processor.ProcessMCPConfigs(""); err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+
+	codexConfigPath := filepath.Join(tempDir, ".codex", "config.toml")
+	content, err := os.ReadFile(codexConfigPath)
+	if err != nil {
+		t.Fatalf("Expected config.toml to exist, got error: %v", err)
+	}
+
+	var config map[string]interface{}
+	if err := toml.Unmarshal(content, &config); err != nil {
+		t.Fatalf("Failed to parse config.toml: %v", err)
+	}
+
+	mcpServers, ok := config["mcp_servers"].(map[string]interface{})
+	if !ok {
+		t.Fatal("Expected mcp_servers key to exist")
+	}
+
+	apiConfig, ok := mcpServers["api-server"].(map[string]interface{})
+	if !ok {
+		t.Fatal("Expected api-server to exist in mcp_servers")
+	}
+
+	if apiConfig["url"] != "https://api.example.com/mcp" {
+		t.Errorf("Expected url to be 'https://api.example.com/mcp', got: %v", apiConfig["url"])
+	}
+
+	// Verify headers were mapped to http_headers
+	headers, ok := apiConfig["http_headers"].(map[string]interface{})
+	if !ok {
+		t.Fatal("Expected http_headers to be a map")
+	}
+
+	if headers["Authorization"] != "Bearer token123" {
+		t.Errorf("Expected Authorization header, got: %v", headers["Authorization"])
+	}
+}
+
+func TestCodexMCPProcessor_PreservesExistingConfig(t *testing.T) {
+	tempDir := t.TempDir()
+	codexConfigDir := filepath.Join(tempDir, ".codex")
+
+	if err := os.MkdirAll(codexConfigDir, 0755); err != nil {
+		t.Fatalf("Failed to create codex config dir: %v", err)
+	}
+
+	// Create existing config.toml with a custom setting
+	existingTOML := `model = "gpt-5"
+`
+	codexConfigPath := filepath.Join(codexConfigDir, "config.toml")
+	if err := os.WriteFile(codexConfigPath, []byte(existingTOML), 0644); err != nil {
+		t.Fatalf("Failed to create existing config.toml: %v", err)
+	}
+
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", originalHome)
+
+	processor := NewCodexMCPProcessor()
+	if err := processor.ProcessMCPConfigs(""); err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+
+	content, err := os.ReadFile(codexConfigPath)
+	if err != nil {
+		t.Fatalf("Expected config.toml to exist, got error: %v", err)
+	}
+
+	var config map[string]interface{}
+	if err := toml.Unmarshal(content, &config); err != nil {
+		t.Fatalf("Failed to parse config.toml: %v", err)
+	}
+
+	// Verify existing key is preserved
+	if config["model"] != "gpt-5" {
+		t.Errorf("Expected model to be preserved as 'gpt-5', got: %v", config["model"])
+	}
+
+	// Verify shell_environment_policy was added
+	if _, ok := config["shell_environment_policy"]; !ok {
+		t.Error("Expected shell_environment_policy to be added")
+	}
+}
+
+func TestCodexProxiedMCPProcessor_Success(t *testing.T) {
+	servers := []MCPProxyServerInfo{
+		{Name: "github", URL: "/mcp/github"},
+		{Name: "postgres", URL: "/mcp/postgres"},
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(servers)
+	}))
+	defer ts.Close()
+
+	tempDir := t.TempDir()
+	processor := NewCodexProxiedMCPProcessor(ts.URL)
+
+	if err := processor.ProcessMCPConfigs(tempDir); err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(tempDir, ".codex", "config.toml"))
+	if err != nil {
+		t.Fatalf("Failed to read config.toml: %v", err)
+	}
+
+	var config map[string]interface{}
+	if err := toml.Unmarshal(content, &config); err != nil {
+		t.Fatalf("Failed to parse config.toml: %v", err)
+	}
+
+	mcpServers, ok := config["mcp_servers"].(map[string]interface{})
+	if !ok {
+		t.Fatal("Expected mcp_servers key in config")
+	}
+
+	if len(mcpServers) != 2 {
+		t.Errorf("Expected 2 MCP servers, got %d", len(mcpServers))
+	}
+
+	githubServer, ok := mcpServers["github"].(map[string]interface{})
+	if !ok {
+		t.Fatal("Expected github server in config")
+	}
+
+	expectedURL := ts.URL + "/mcp/github"
+	if githubServer["url"] != expectedURL {
+		t.Errorf("Expected URL %s, got %s", expectedURL, githubServer["url"])
+	}
+
+	// Verify shell_environment_policy
+	policy, ok := config["shell_environment_policy"].(map[string]interface{})
+	if !ok {
+		t.Fatal("Expected shell_environment_policy to exist")
+	}
+
+	if policy["ignore_default_excludes"] != true {
+		t.Errorf("Expected ignore_default_excludes to be true")
+	}
+}
+
+func TestCodexProxiedMCPProcessor_EmptyServers(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("[]"))
+	}))
+	defer ts.Close()
+
+	tempDir := t.TempDir()
+	processor := NewCodexProxiedMCPProcessor(ts.URL)
+
+	if err := processor.ProcessMCPConfigs(tempDir); err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+
+	// config.toml should still be created with shell_environment_policy
+	content, err := os.ReadFile(filepath.Join(tempDir, ".codex", "config.toml"))
+	if err != nil {
+		t.Fatalf("Expected config.toml to exist, got error: %v", err)
+	}
+
+	configStr := string(content)
+	if !strings.Contains(configStr, "ignore_default_excludes") {
+		t.Error("Expected config.toml to contain shell_environment_policy even with no servers")
 	}
 }
 

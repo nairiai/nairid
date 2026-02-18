@@ -548,6 +548,118 @@ func TestOpenCodeSkillsProcessor_Integration(t *testing.T) {
 	}
 }
 
+func TestCodexSkillsProcessor_Integration(t *testing.T) {
+	tmpDir := t.TempDir()
+	eksecSkillsDir := filepath.Join(tmpDir, ".config", "eksecd", "skills")
+	codexSkillsDir := filepath.Join(tmpDir, ".codex", "skills")
+
+	originalHome := os.Getenv("HOME")
+	t.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", originalHome)
+
+	if err := os.MkdirAll(eksecSkillsDir, 0755); err != nil {
+		t.Fatalf("Failed to create eksecd skills directory: %v", err)
+	}
+
+	skillZipPath := filepath.Join(eksecSkillsDir, "test-skill-abc123.zip")
+	skillContent := map[string]string{
+		"SKILL.md":          "# Test Skill\n\nSkill content here",
+		"scripts/run.sh":    "#!/bin/bash\necho 'running'",
+		"references/doc.md": "Documentation",
+	}
+
+	if err := createTestZip(skillZipPath, skillContent); err != nil {
+		t.Fatalf("Failed to create test ZIP: %v", err)
+	}
+
+	processor := NewCodexSkillsProcessor()
+	if err := processor.ProcessSkills(""); err != nil {
+		t.Fatalf("ProcessSkills failed: %v", err)
+	}
+
+	expectedSkillDir := filepath.Join(codexSkillsDir, "test-skill")
+
+	for filePath, expectedContent := range skillContent {
+		fullPath := filepath.Join(expectedSkillDir, filePath)
+		content, err := os.ReadFile(fullPath)
+		if err != nil {
+			t.Errorf("Failed to read extracted file %s: %v", filePath, err)
+			continue
+		}
+
+		if string(content) != expectedContent {
+			t.Errorf("File %s content mismatch. Got %q, want %q", filePath, string(content), expectedContent)
+		}
+	}
+}
+
+func TestCodexSkillsProcessor_WithRootDirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+	eksecSkillsDir := filepath.Join(tmpDir, ".config", "eksecd", "skills")
+	codexSkillsDir := filepath.Join(tmpDir, ".codex", "skills")
+
+	originalHome := os.Getenv("HOME")
+	t.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", originalHome)
+
+	if err := os.MkdirAll(eksecSkillsDir, 0755); err != nil {
+		t.Fatalf("Failed to create eksecd skills directory: %v", err)
+	}
+
+	skillZipPath := filepath.Join(eksecSkillsDir, "my-skill-xyz789.zip")
+	skillContent := map[string]string{
+		"my-skill/SKILL.md":          "# My Skill\n\nContent",
+		"my-skill/scripts/script.sh": "#!/bin/bash\necho 'test'",
+	}
+
+	if err := createTestZip(skillZipPath, skillContent); err != nil {
+		t.Fatalf("Failed to create test ZIP: %v", err)
+	}
+
+	processor := NewCodexSkillsProcessor()
+	if err := processor.ProcessSkills(""); err != nil {
+		t.Fatalf("ProcessSkills failed: %v", err)
+	}
+
+	expectedSkillDir := filepath.Join(codexSkillsDir, "my-skill")
+
+	expectedFiles := map[string]string{
+		"SKILL.md":          "# My Skill\n\nContent",
+		"scripts/script.sh": "#!/bin/bash\necho 'test'",
+	}
+
+	for filePath, expectedContent := range expectedFiles {
+		fullPath := filepath.Join(expectedSkillDir, filePath)
+		content, err := os.ReadFile(fullPath)
+		if err != nil {
+			t.Errorf("Failed to read extracted file %s: %v", filePath, err)
+			continue
+		}
+
+		if string(content) != expectedContent {
+			t.Errorf("File %s content mismatch. Got %q, want %q", filePath, string(content), expectedContent)
+		}
+	}
+}
+
+func TestCodexSkillsProcessor_NoSkills(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	originalHome := os.Getenv("HOME")
+	t.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", originalHome)
+
+	processor := NewCodexSkillsProcessor()
+	if err := processor.ProcessSkills(""); err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+
+	codexSkillsDir := filepath.Join(tmpDir, ".codex", "skills")
+	if _, err := os.Stat(codexSkillsDir); !os.IsNotExist(err) {
+		t.Errorf("Expected skills directory not to exist when no skills")
+	}
+}
+
 func TestNoOpSkillsProcessor(t *testing.T) {
 	processor := NewNoOpSkillsProcessor()
 	err := processor.ProcessSkills("")

@@ -413,6 +413,90 @@ func (p *OpenCodeSkillsProcessor) ProcessSkills(targetHomeDir string) error {
 	return nil
 }
 
+// CodexSkillsProcessor handles skills processing for Codex
+type CodexSkillsProcessor struct{}
+
+// NewCodexSkillsProcessor creates a new Codex skills processor
+func NewCodexSkillsProcessor() *CodexSkillsProcessor {
+	return &CodexSkillsProcessor{}
+}
+
+// ProcessSkills implements SkillsProcessor for Codex
+// targetHomeDir specifies the home directory to deploy skills to.
+// If empty, uses the current user's home directory.
+func (p *CodexSkillsProcessor) ProcessSkills(targetHomeDir string) error {
+	log.Info("🎯 Processing skills for Codex agent")
+
+	// Get skill files from eksecd directory
+	skillFiles, err := GetSkillFiles()
+	if err != nil {
+		return fmt.Errorf("failed to get skill files: %w", err)
+	}
+
+	if len(skillFiles) == 0 {
+		log.Info("🎯 No skills found in eksecd skills directory")
+		return nil
+	}
+
+	log.Info("🎯 Found %d skill file(s) to process", len(skillFiles))
+
+	// Determine home directory for Codex skills
+	homeDir := targetHomeDir
+	if homeDir == "" {
+		var err error
+		homeDir, err = os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("failed to get home directory: %w", err)
+		}
+	}
+
+	log.Info("🎯 Deploying skills to home directory: %s", homeDir)
+
+	// Target directory: ~/.codex/skills/
+	codexSkillsDir := filepath.Join(homeDir, ".codex", "skills")
+
+	// Clean up existing skills directory to avoid stale skills
+	log.Info("🎯 Cleaning Codex skills directory: %s", codexSkillsDir)
+	if err := removeAllAsTargetUser(codexSkillsDir); err != nil && !os.IsNotExist(err) {
+		log.Info("⚠️  Failed to remove existing skills directory: %v", err)
+	}
+
+	// Create fresh skills directory
+	if err := mkdirAllAsTargetUser(codexSkillsDir); err != nil {
+		return fmt.Errorf("failed to create Codex skills directory: %w", err)
+	}
+
+	// Extract each skill ZIP to its own directory
+	for _, skillFile := range skillFiles {
+		fileName := filepath.Base(skillFile)
+		skillName := ExtractSkillNameFromFilename(fileName)
+		targetSkillDir := filepath.Join(codexSkillsDir, skillName)
+
+		log.Info("🎯 Extracting skill: %s -> %s", fileName, targetSkillDir)
+
+		// Create skill directory
+		if err := mkdirAllAsTargetUser(targetSkillDir); err != nil {
+			log.Info("⚠️  Failed to create skill directory %s: %v", targetSkillDir, err)
+			continue
+		}
+
+		// Extract ZIP to skill directory
+		if err := ExtractZipToDirectory(skillFile, targetSkillDir); err != nil {
+			log.Info("⚠️  Failed to extract skill %s: %v", skillName, err)
+			continue
+		}
+
+		// Verify SKILL.md exists
+		skillMdPath := filepath.Join(targetSkillDir, "SKILL.md")
+		if _, err := os.Stat(skillMdPath); os.IsNotExist(err) {
+			log.Info("⚠️  Missing SKILL.md in skill %s", skillName)
+		}
+	}
+
+	log.Info("✅ Successfully processed %d skill(s) for Codex", len(skillFiles))
+	return nil
+}
+
 // NoOpSkillsProcessor is a no-op implementation for agents that don't support skills
 type NoOpSkillsProcessor struct{}
 

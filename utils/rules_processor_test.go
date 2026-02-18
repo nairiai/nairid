@@ -746,6 +746,124 @@ func TestOpenCodeRulesProcessor_CleansOldArtifacts(t *testing.T) {
 	}
 }
 
+// Test CodexRulesProcessor
+
+func TestCodexRulesProcessor_NoRules(t *testing.T) {
+	tempDir := t.TempDir()
+
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", originalHome)
+
+	processor := NewCodexRulesProcessor()
+	if err := processor.ProcessRules(""); err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+
+	agentsMdPath := filepath.Join(tempDir, ".codex", "AGENTS.md")
+	if _, err := os.Stat(agentsMdPath); !os.IsNotExist(err) {
+		t.Errorf("Expected AGENTS.md not to exist when no rules")
+	}
+}
+
+func TestCodexRulesProcessor_WithRules(t *testing.T) {
+	tempDir := t.TempDir()
+	rulesDir := filepath.Join(tempDir, ".config", "eksecd", "rules")
+
+	if err := os.MkdirAll(rulesDir, 0755); err != nil {
+		t.Fatalf("Failed to create rules directory: %v", err)
+	}
+
+	rule1 := `---
+title: Code Style Guidelines
+description: Use this to learn coding standards
+---
+
+# Code Style
+Follow these guidelines.`
+
+	rule2 := `---
+title: Testing Best Practices
+description: How to write effective tests
+---
+
+# Testing
+Write tests for everything.`
+
+	if err := os.WriteFile(filepath.Join(rulesDir, "code-style.md"), []byte(rule1), 0644); err != nil {
+		t.Fatalf("Failed to create rule1: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(rulesDir, "testing.md"), []byte(rule2), 0644); err != nil {
+		t.Fatalf("Failed to create rule2: %v", err)
+	}
+
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", originalHome)
+
+	processor := NewCodexRulesProcessor()
+	if err := processor.ProcessRules(""); err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+
+	agentsMdPath := filepath.Join(tempDir, ".codex", "AGENTS.md")
+	content, err := os.ReadFile(agentsMdPath)
+	if err != nil {
+		t.Fatalf("Expected AGENTS.md to exist, got error: %v", err)
+	}
+
+	agentsMd := string(content)
+
+	if !strings.Contains(agentsMd, "# Rules") {
+		t.Errorf("Expected AGENTS.md to contain '# Rules' header")
+	}
+
+	if !strings.Contains(agentsMd, "## Code Style Guidelines") {
+		t.Errorf("Expected AGENTS.md to contain '## Code Style Guidelines'")
+	}
+
+	if !strings.Contains(agentsMd, "## Testing Best Practices") {
+		t.Errorf("Expected AGENTS.md to contain '## Testing Best Practices'")
+	}
+
+	if !strings.Contains(agentsMd, "# Code Style\nFollow these guidelines.") {
+		t.Errorf("Expected AGENTS.md to contain body of code style rule")
+	}
+
+	if strings.Contains(agentsMd, "---") {
+		t.Errorf("Expected AGENTS.md to NOT contain front matter delimiters")
+	}
+}
+
+func TestCodexRulesProcessor_WithTargetHomeDir(t *testing.T) {
+	tempDir := t.TempDir()
+	targetHome := filepath.Join(tempDir, "target-home")
+	rulesDir := filepath.Join(tempDir, ".config", "eksecd", "rules")
+
+	if err := os.MkdirAll(rulesDir, 0755); err != nil {
+		t.Fatalf("Failed to create rules directory: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(rulesDir, "rule.md"), []byte("# Rule content"), 0644); err != nil {
+		t.Fatalf("Failed to create rule: %v", err)
+	}
+
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", originalHome)
+
+	processor := NewCodexRulesProcessor()
+	if err := processor.ProcessRules(targetHome); err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+
+	agentsMdPath := filepath.Join(targetHome, ".codex", "AGENTS.md")
+	if _, err := os.Stat(agentsMdPath); os.IsNotExist(err) {
+		t.Errorf("Expected AGENTS.md to be created at target home dir")
+	}
+}
+
 // Test NoOpRulesProcessor
 
 func TestNoOpRulesProcessor(t *testing.T) {

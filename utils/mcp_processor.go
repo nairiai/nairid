@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"eksecd/core/log"
+
+	toml "github.com/pelletier/go-toml/v2"
 )
 
 // writeFileAsTargetUser writes content to a file, using sudo if necessary.
@@ -439,6 +441,216 @@ func (p *OpenCodeMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 	}
 
 	log.Info("✅ Successfully configured %d MCP server(s) for OpenCode", len(opencodeMcpServers))
+	return nil
+}
+
+// CodexMCPProcessor handles MCP config processing for Codex
+type CodexMCPProcessor struct{}
+
+// NewCodexMCPProcessor creates a new Codex MCP processor
+func NewCodexMCPProcessor() *CodexMCPProcessor {
+	return &CodexMCPProcessor{}
+}
+
+// ProcessMCPConfigs implements MCPProcessor for Codex
+// It reads all MCP configs, merges them, transforms them to Codex TOML format,
+// and updates ~/.codex/config.toml. Always sets shell_environment_policy to
+// not filter env vars regardless of name patterns.
+// targetHomeDir specifies the home directory to deploy configs to.
+// If empty, uses the current user's home directory.
+func (p *CodexMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
+	log.Info("🔌 Processing MCP configs for Codex agent")
+
+	// Get merged MCP server configs
+	mcpServers, err := MergeMCPConfigs()
+	if err != nil {
+		return fmt.Errorf("failed to merge MCP configs: %w", err)
+	}
+
+	// Determine home directory for Codex config
+	homeDir := targetHomeDir
+	if homeDir == "" {
+		var err error
+		homeDir, err = os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("failed to get home directory: %w", err)
+		}
+	}
+
+	log.Info("🔌 Deploying Codex MCP configs to home directory: %s", homeDir)
+
+	codexConfigDir := filepath.Join(homeDir, ".codex")
+	codexConfigPath := filepath.Join(codexConfigDir, "config.toml")
+
+	if err := mkdirAllAsTargetUser(codexConfigDir); err != nil {
+		return fmt.Errorf("failed to create Codex config directory: %w", err)
+	}
+
+	// Read existing config if it exists (read-modify-write)
+	existingConfig := make(map[string]interface{})
+	if content, err := readFileAsTargetUser(codexConfigPath); err == nil {
+		if err := toml.Unmarshal(content, &existingConfig); err != nil {
+			log.Info("⚠️  Failed to parse existing config.toml, creating new config: %v", err)
+			existingConfig = make(map[string]interface{})
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("failed to read existing config.toml: %w", err)
+	}
+
+	// Always set shell_environment_policy to not filter env vars
+	existingConfig["shell_environment_policy"] = map[string]interface{}{
+		"inherit":                 "core",
+		"ignore_default_excludes": true,
+	}
+
+	if len(mcpServers) == 0 {
+		log.Info("🔌 No MCP configs found, writing config with shell_environment_policy only")
+	} else {
+		log.Info("🔌 Found %d MCP server(s) to configure", len(mcpServers))
+
+		codexMCPServers := make(map[string]interface{})
+		for serverName, serverConfig := range mcpServers {
+			configMap, ok := serverConfig.(map[string]interface{})
+			if !ok {
+				log.Info("⚠️  Skipping invalid MCP server config for %s", serverName)
+				continue
+			}
+
+			codexServerConfig := make(map[string]interface{})
+
+			// Check if this is a remote server (has "url" field)
+			if url, hasURL := configMap["url"]; hasURL {
+				codexServerConfig["url"] = url
+				if headers, ok := configMap["headers"]; ok {
+					codexServerConfig["http_headers"] = headers
+				}
+			} else {
+				// Local server - keep command/args/env format
+				if cmd, ok := configMap["command"].(string); ok {
+					codexServerConfig["command"] = cmd
+				}
+
+				if args, ok := configMap["args"].([]interface{}); ok {
+					strArgs := make([]string, 0, len(args))
+					for _, arg := range args {
+						if argStr, ok := arg.(string); ok {
+							strArgs = append(strArgs, argStr)
+						}
+					}
+					codexServerConfig["args"] = strArgs
+				}
+
+				if env, ok := configMap["env"].(map[string]interface{}); ok {
+					strEnv := make(map[string]string)
+					for k, v := range env {
+						strEnv[k] = fmt.Sprintf("%v", v)
+					}
+					codexServerConfig["env"] = strEnv
+				}
+			}
+
+			codexServerConfig["enabled"] = true
+			codexMCPServers[serverName] = codexServerConfig
+		}
+
+		existingConfig["mcp_servers"] = codexMCPServers
+	}
+
+	configTOML, err := toml.Marshal(existingConfig)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config.toml: %w", err)
+	}
+
+	log.Info("🔌 Updating config.toml at: %s", codexConfigPath)
+
+	if err := writeFileAsTargetUser(codexConfigPath, configTOML, 0644); err != nil {
+		return fmt.Errorf("failed to write config.toml: %w", err)
+	}
+
+	log.Info("✅ Successfully configured %d MCP server(s) for Codex", len(mcpServers))
+	return nil
+}
+
+// CodexProxiedMCPProcessor handles MCP config processing for Codex
+// when using an MCP proxy. Writes HTTP-type configs pointing to the MCP proxy.
+type CodexProxiedMCPProcessor struct {
+	mcpProxyURL string
+}
+
+// NewCodexProxiedMCPProcessor creates a new proxied Codex MCP processor
+func NewCodexProxiedMCPProcessor(mcpProxyURL string) *CodexProxiedMCPProcessor {
+	return &CodexProxiedMCPProcessor{mcpProxyURL: mcpProxyURL}
+}
+
+// ProcessMCPConfigs fetches server list from MCP proxy and writes URL-based configs to config.toml
+func (p *CodexProxiedMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
+	log.Info("🔌 Processing MCP configs via MCP proxy for Codex agent")
+
+	servers, err := FetchMCPProxyServers(p.mcpProxyURL)
+	if err != nil {
+		return fmt.Errorf("failed to fetch MCP proxy servers: %w", err)
+	}
+
+	// Determine home directory
+	homeDir := targetHomeDir
+	if homeDir == "" {
+		var err error
+		homeDir, err = os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("failed to get home directory: %w", err)
+		}
+	}
+
+	codexConfigDir := filepath.Join(homeDir, ".codex")
+	codexConfigPath := filepath.Join(codexConfigDir, "config.toml")
+
+	if err := mkdirAllAsTargetUser(codexConfigDir); err != nil {
+		return fmt.Errorf("failed to create Codex config directory: %w", err)
+	}
+
+	// Read existing config if it exists (read-modify-write)
+	existingConfig := make(map[string]interface{})
+	if content, err := readFileAsTargetUser(codexConfigPath); err == nil {
+		if err := toml.Unmarshal(content, &existingConfig); err != nil {
+			log.Info("⚠️  Failed to parse existing config.toml, creating new config: %v", err)
+			existingConfig = make(map[string]interface{})
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("failed to read existing config.toml: %w", err)
+	}
+
+	// Always set shell_environment_policy to not filter env vars
+	existingConfig["shell_environment_policy"] = map[string]interface{}{
+		"inherit":                 "core",
+		"ignore_default_excludes": true,
+	}
+
+	if len(servers) == 0 {
+		log.Info("🔌 No MCP servers available from proxy, writing config with shell_environment_policy only")
+	} else {
+		log.Info("🔌 Found %d MCP server(s) from proxy", len(servers))
+
+		codexMCPServers := make(map[string]interface{})
+		for _, server := range servers {
+			codexMCPServers[server.Name] = map[string]interface{}{
+				"url":     p.mcpProxyURL + server.URL,
+				"enabled": true,
+			}
+		}
+
+		existingConfig["mcp_servers"] = codexMCPServers
+	}
+
+	configTOML, err := toml.Marshal(existingConfig)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config.toml: %w", err)
+	}
+
+	if err := writeFileAsTargetUser(codexConfigPath, configTOML, 0644); err != nil {
+		return fmt.Errorf("failed to write config.toml: %w", err)
+	}
+
+	log.Info("✅ Successfully configured %d proxied MCP server(s) for Codex", len(servers))
 	return nil
 }
 
