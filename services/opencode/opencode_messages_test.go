@@ -75,6 +75,25 @@ RipgrepExtractionFailedError: RipgrepExtractionFailedError
 			expectedTypes: []string{"raw_error"},
 			expectError:   false,
 		},
+		{
+			name: "non-JSON preamble followed by JSON messages is parsed normally",
+			input: `Performing one time database migration, may take a few minutes...
+{"type":"step_start","timestamp":1759406013703,"sessionID":"ses_123","part":{}}
+{"type":"text","timestamp":1759406015783,"sessionID":"ses_123","part":{"type":"text","text":"Hello!"}}
+{"type":"step_finish","timestamp":1759406015885,"sessionID":"ses_123","part":{}}`,
+			expectedCount: 3,
+			expectedTypes: []string{"step_start", "text", "step_finish"},
+			expectError:   false,
+		},
+		{
+			name: "multiple non-JSON preamble lines followed by JSON messages",
+			input: `Performing one time database migration, may take a few minutes...
+Migration complete.
+{"type":"text","timestamp":1759406015783,"sessionID":"ses_456","part":{"type":"text","text":"Done"}}`,
+			expectedCount: 1,
+			expectedTypes: []string{"text"},
+			expectError:   false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -127,6 +146,13 @@ func TestExtractOpenCodeSessionID(t *testing.T) {
 			name:       "extracts from first message with session ID",
 			input:      `{"type":"text","timestamp":1759406015783,"sessionID":"ses_fromtext","part":{"type":"text","text":"Test"}}`,
 			expectedID: "ses_fromtext",
+		},
+		{
+			name: "extracts session ID when non-JSON preamble precedes JSON output",
+			input: `Performing one time database migration, may take a few minutes...
+{"type":"step_start","timestamp":1759406013703,"sessionID":"ses_aftermigration","part":{}}
+{"type":"text","timestamp":1759406015783,"sessionID":"ses_aftermigration","part":{"type":"text","text":"Hello"}}`,
+			expectedID: "ses_aftermigration",
 		},
 	}
 
@@ -218,6 +244,15 @@ RipgrepExtractionFailedError: RipgrepExtractionFailedError
 			expectedResult: "",
 			expectError:    true,
 			errorContains:  "opencode error:",
+		},
+		{
+			name: "extracts result when non-JSON preamble precedes JSON output",
+			input: `Performing one time database migration, may take a few minutes...
+{"type":"step_start","timestamp":1759406013703,"sessionID":"ses_123","part":{}}
+{"type":"text","timestamp":1759406015783,"sessionID":"ses_123","part":{"type":"text","text":"Hello! Migration is done."}}
+{"type":"step_finish","timestamp":1759406015885,"sessionID":"ses_123","part":{}}`,
+			expectedResult: "Hello! Migration is done.",
+			expectError:    false,
 		},
 	}
 

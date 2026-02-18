@@ -111,21 +111,12 @@ func (e OpenCodeRawErrorMessage) GetSessionID() string {
 func MapOpenCodeOutputToMessages(output string) ([]OpenCodeMessage, error) {
 	var messages []OpenCodeMessage
 
-	// Check if the output looks like it might be a non-JSON error
-	// OpenCode JSON output always starts with a '{' character on the first non-empty line
-	trimmedOutput := strings.TrimSpace(output)
-	if trimmedOutput != "" && !strings.HasPrefix(trimmedOutput, "{") {
-		// This is likely a raw error output (e.g., JavaScript stack trace)
-		// Return it as a raw error message
-		return []OpenCodeMessage{
-			OpenCodeRawErrorMessage{RawOutput: trimmedOutput},
-		}, nil
-	}
-
 	// Use a scanner with a larger buffer to handle long lines
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	// Set a 5MB buffer to handle long JSON lines
 	scanner.Buffer(make([]byte, 0, 5*1024*1024), 5*1024*1024)
+
+	hasJSONLines := false
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -133,13 +124,31 @@ func MapOpenCodeOutputToMessages(output string) ([]OpenCodeMessage, error) {
 			continue
 		}
 
-		// Parse the message
-		message := parseOpenCodeMessage([]byte(line))
-		messages = append(messages, message)
+		if strings.HasPrefix(line, "{") {
+			// JSON line — parse normally
+			hasJSONLines = true
+			message := parseOpenCodeMessage([]byte(line))
+			messages = append(messages, message)
+		}
+		// Non-JSON lines (e.g. "Performing one time database migration...") are skipped.
+		// If no JSON lines are found at all, the entire output is treated as a raw error below.
 	}
 
 	if err := scanner.Err(); err != nil {
 		return nil, err
+	}
+
+	// If we found JSON lines, return them (non-JSON preamble lines are ignored)
+	if hasJSONLines {
+		return messages, nil
+	}
+
+	// No JSON lines found — treat the entire output as a raw error
+	trimmedOutput := strings.TrimSpace(output)
+	if trimmedOutput != "" {
+		return []OpenCodeMessage{
+			OpenCodeRawErrorMessage{RawOutput: trimmedOutput},
+		}, nil
 	}
 
 	return messages, nil
