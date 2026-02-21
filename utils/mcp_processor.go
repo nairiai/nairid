@@ -670,9 +670,8 @@ func (p *NoOpMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 
 // MCPProxyServerInfo represents a server exposed by the MCP proxy
 type MCPProxyServerInfo struct {
-	Name      string `json:"name"`
-	URL       string `json:"url"`
-	RemoteURL string `json:"remoteUrl,omitempty"` // Original URL for remote servers (connect directly)
+	Name string `json:"name"`
+	URL  string `json:"url"`
 }
 
 // FetchMCPProxyServers fetches the list of available MCP servers from the proxy's /servers endpoint
@@ -728,18 +727,9 @@ func (p *ClaudeCodeProxiedMCPProcessor) ProcessMCPConfigs(targetHomeDir string) 
 
 	mcpServers := make(map[string]interface{})
 	for _, server := range servers {
-		if server.RemoteURL != "" {
-			// Remote servers: connect directly to the original URL
-			mcpServers[server.Name] = map[string]interface{}{
-				"type": "url",
-				"url":  server.RemoteURL,
-			}
-		} else {
-			// Local servers: connect via the MCP proxy
-			mcpServers[server.Name] = map[string]interface{}{
-				"type": "http",
-				"url":  p.mcpProxyURL + server.URL,
-			}
+		mcpServers[server.Name] = map[string]interface{}{
+			"type": "http",
+			"url":  p.mcpProxyURL + server.URL,
 		}
 	}
 
@@ -810,13 +800,9 @@ func (p *OpenCodeProxiedMCPProcessor) ProcessMCPConfigs(targetHomeDir string) er
 
 	opencodeMcpServers := make(map[string]interface{})
 	for _, server := range servers {
-		serverURL := p.mcpProxyURL + server.URL
-		if server.RemoteURL != "" {
-			serverURL = server.RemoteURL
-		}
 		opencodeMcpServers[server.Name] = map[string]interface{}{
 			"type":    "remote",
-			"url":     serverURL,
+			"url":     p.mcpProxyURL + server.URL,
 			"enabled": true,
 		}
 	}
