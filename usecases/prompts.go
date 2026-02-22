@@ -21,27 +21,38 @@ Fix user authentication validation
 YOUR RESPONSE MUST BE THE COMMIT MESSAGE ONLY.`
 }
 
-// PRTitleGenerationPrompt creates a prompt for Claude to generate PR titles
-// Uses XML-style structured sections for better compatibility with smaller models
+// PRTitleGenerationPrompt creates a prompt for Claude to generate PR titles.
+// The prompt uses explicit good/bad examples and strong output constraints to prevent
+// the model from generating a full PR description instead of just the title.
 func PRTitleGenerationPrompt(branchName string) string {
-	return `Generate a pull request title for the changes in this conversation.
+	return `You are a PR title generator. Output ONLY a single-line PR title for the changes in this conversation.
 
-<format>
-type: short description
-</format>
+Format: type: short description
+Valid types: feat, fix, docs, chore, refactor, test, perf, ci, build, style
 
-<types>
-feat|fix|docs|chore|refactor|test|perf|ci|build|style
-</types>
+GOOD output examples:
+  feat: add email validation for user signup
+  fix: prevent nil pointer in user lookup
+  chore: update Go dependencies to latest
+  refactor: extract auth middleware into package
 
-<constraints>
-- Maximum 50 characters total
-- No quotes around the title
-- No explanations or additional text
-- Don't mention "Claude" or "agent"
-</constraints>
+BAD output (NEVER do this):
+  feat: add validation ## Summary - Added validation... (includes markdown/body text)
+  "feat: add validation" (has quotes)
+  Here is the PR title: feat: add validation (has preamble)
+  feat: add validation. This change also updates... (has explanation)
 
-Respond with ONLY the title text, nothing else.`
+RULES:
+1. Output EXACTLY one line - no line breaks, no additional lines
+2. Maximum 72 characters total
+3. Use lowercase after the colon
+4. No period at the end
+5. No markdown (##, -, *, etc.)
+6. No quotes around the title
+7. No preamble or explanation - just the title itself
+8. Do not mention "Claude" or "agent"
+
+Your entire response must be the PR title and nothing else.`
 }
 
 // PRDescriptionGenerationPrompt creates a prompt for Claude to generate PR descriptions
@@ -112,25 +123,38 @@ CRITICAL: Your response must contain ONLY the PR description in markdown format.
 Respond with ONLY the PR description in markdown format, nothing else.`
 }
 
-// PRTitleUpdatePrompt creates a prompt for Claude to update existing PR titles
-// Uses XML-style structured sections for better compatibility with smaller models
+// PRTitleUpdatePrompt creates a prompt for Claude to update existing PR titles.
+// Uses explicit examples and strong output constraints to prevent the model from
+// generating a full PR description instead of just the title.
 func PRTitleUpdatePrompt(currentTitle, branchName string) string {
-	return fmt.Sprintf(`Review and optionally update this PR title based on our conversation.
+	return fmt.Sprintf(`You are a PR title generator. Review and optionally update this PR title based on our conversation.
 
-<current_title>
-%s
-</current_title>
+Current title: %s
 
-<rules>
-- Only update if current title is inaccurate or obsolete
-- Keep unchanged if it still captures the main purpose
-- Format: type: short description
-- Types: feat|fix|docs|chore|refactor|test|perf|ci|build|style
-- Maximum 50 characters
-- No quotes, no explanations
-</rules>
+Only update if the current title is inaccurate or obsolete. Keep it unchanged if it still captures the main purpose.
 
-Respond with ONLY the title text (updated or unchanged), nothing else.`, currentTitle)
+Format: type: short description
+Valid types: feat, fix, docs, chore, refactor, test, perf, ci, build, style
+
+GOOD output examples:
+  feat: add email validation for user signup
+  fix: prevent nil pointer in user lookup
+
+BAD output (NEVER do this):
+  feat: add validation ## Summary - Added validation... (includes body text)
+  "feat: add validation" (has quotes)
+  Here is the updated title: feat: add validation (has preamble)
+
+RULES:
+1. Output EXACTLY one line - no line breaks, no additional lines
+2. Maximum 72 characters total
+3. Use lowercase after the colon
+4. No period at the end
+5. No markdown (##, -, *, etc.)
+6. No quotes around the title
+7. No preamble or explanation - just the title itself
+
+Your entire response must be the PR title and nothing else.`, currentTitle)
 }
 
 // PRDescriptionUpdatePrompt creates a prompt for Claude to update existing PR descriptions

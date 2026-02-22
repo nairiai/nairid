@@ -592,7 +592,7 @@ func (g *GitUseCase) generatePRTitleWithClaude(sessionID, branchName string) (st
 		return "", fmt.Errorf("claude failed to generate PR title: %w", err)
 	}
 
-	return strings.TrimSpace(result.Output), nil
+	return clients.SanitizePRTitle(result.Output), nil
 }
 
 func (g *GitUseCase) generatePRBodyWithClaude(sessionID, branchName, threadLink string) (string, error) {
@@ -1017,7 +1017,7 @@ func (g *GitUseCase) generateUpdatedPRTitleWithClaude(sessionID, branchName, cur
 		return "", fmt.Errorf("claude failed to generate updated PR title: %w", err)
 	}
 
-	return strings.TrimSpace(result.Output), nil
+	return clients.SanitizePRTitle(result.Output), nil
 }
 
 func (g *GitUseCase) generateUpdatedPRDescriptionWithClaude(
@@ -1688,7 +1688,7 @@ func (g *GitUseCase) generatePRTitleWithClaudeInWorktree(sessionID, branchName, 
 		return "", fmt.Errorf("claude failed to generate PR title: %w", err)
 	}
 
-	return strings.TrimSpace(result.Output), nil
+	return clients.SanitizePRTitle(result.Output), nil
 }
 
 func (g *GitUseCase) generatePRBodyWithClaudeInWorktree(
@@ -1811,7 +1811,7 @@ func (g *GitUseCase) generateUpdatedPRTitleWithClaudeInWorktree(
 		return "", fmt.Errorf("claude failed to generate updated PR title: %w", err)
 	}
 
-	return strings.TrimSpace(result.Output), nil
+	return clients.SanitizePRTitle(result.Output), nil
 }
 
 func (g *GitUseCase) generateUpdatedPRDescriptionWithClaudeInWorktree(
