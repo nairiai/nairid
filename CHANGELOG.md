@@ -1,3 +1,10 @@
+## [v0.0.88] - 2026-02-27
+
+### Bugfixes
+
+- Evict idle jobs from dispatcher to free worker pool slots ([#175](https://github.com/eksecai/eksecd/pull/175))
+  - Detect and evict jobs that become idle while waiting in the dispatcher queue, preventing worker pool exhaustion when jobs are abandoned before being assigned a worker
+
 ## [v0.0.87] - 2026-02-22
 
 ### Improvements
