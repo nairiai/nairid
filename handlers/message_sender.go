@@ -1,51 +1,48 @@
 package handlers
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
-	"github.com/zishang520/socket.io/clients/socket/v3"
 
+	"eksecd/clients"
 	"eksecd/core/log"
 )
 
-// OutgoingMessage represents a message to be sent via Socket.IO
+// OutgoingMessage represents a message to be sent via the HTTP API
 type OutgoingMessage struct {
 	Event string
 	Data  any
 }
 
-// MessageSender handles queuing and sending messages to Socket.IO client.
-// It blocks when the connection is down and resumes when reconnected.
+// MessageSender handles queuing and sending messages via the HTTP API.
+// It replaces the previous Socket.IO-based sender with HTTP POST requests
+// to ensure reliable message delivery through the outbox pattern.
 type MessageSender struct {
-	connectionState *ConnectionState
-	messageQueue    chan OutgoingMessage
-	socketClient    *socket.Socket
+	messageQueue chan OutgoingMessage
+	apiClient    *clients.AgentsApiClient
 }
 
 // NewMessageSender creates a new MessageSender instance.
 // The queue has a buffer of 1 message to ensure blocking until messages are sent.
 // This guarantees that jobs are only marked complete after their messages are actually sent.
-func NewMessageSender(connectionState *ConnectionState) *MessageSender {
+func NewMessageSender() *MessageSender {
 	return &MessageSender{
-		connectionState: connectionState,
-		messageQueue:    make(chan OutgoingMessage, 1),
-		socketClient:    nil, // Set later via Run()
+		messageQueue: make(chan OutgoingMessage, 1),
+		apiClient:    nil, // Set later via Run()
 	}
 }
 
 // Run starts the message sender goroutine that processes the queue.
-// This should be called once with the Socket.IO client reference.
+// This should be called once with the API client reference.
 // It blocks until the message queue is closed.
-func (ms *MessageSender) Run(socketClient *socket.Socket) {
-	ms.socketClient = socketClient
-	log.Info("📤 MessageSender: Started processing queue")
+func (ms *MessageSender) Run(apiClient *clients.AgentsApiClient) {
+	ms.apiClient = apiClient
+	log.Info("📤 MessageSender: Started processing queue (HTTP mode)")
 
 	for msg := range ms.messageQueue {
-		// Block until connection is established
-		ms.connectionState.WaitForConnection()
-
-		// Send the message with retry logic (3 attempts with exponential backoff)
+		// Send the message with retry logic (exponential backoff)
 		ms.sendWithRetry(msg)
 	}
 
@@ -53,21 +50,43 @@ func (ms *MessageSender) Run(socketClient *socket.Socket) {
 }
 
 // sendWithRetry attempts to send a message with exponential backoff retry logic.
-// Uses the backoff library for consistent retry behavior across the codebase.
 func (ms *MessageSender) sendWithRetry(msg OutgoingMessage) {
-	// Configure exponential backoff for 3 retries
+	// Configure exponential backoff for retries
 	expBackoff := backoff.NewExponentialBackOff()
 	expBackoff.InitialInterval = 1 * time.Second
 	expBackoff.MaxInterval = 4 * time.Second
 	expBackoff.MaxElapsedTime = 10 * time.Second // Total retry window
 	expBackoff.Multiplier = 2
 
+	// Build the message payload to include the event type
+	payload := map[string]any{
+		"event": msg.Event,
+		"data":  msg.Data,
+	}
+
+	// If Data is already a map, merge event into it for a flat structure
+	if dataMap, ok := msg.Data.(map[string]any); ok {
+		payload = make(map[string]any, len(dataMap)+1)
+		for k, v := range dataMap {
+			payload[k] = v
+		}
+	} else {
+		// Try to convert via JSON round-trip for struct types
+		dataBytes, err := json.Marshal(msg.Data)
+		if err == nil {
+			var dataMap map[string]any
+			if json.Unmarshal(dataBytes, &dataMap) == nil {
+				payload = dataMap
+			}
+		}
+	}
+
 	attempt := 0
 	operation := func() error {
 		attempt++
-		err := ms.socketClient.Emit(msg.Event, msg.Data)
+		err := ms.apiClient.SubmitMessage(payload)
 		if err != nil {
-			log.Warn("⚠️ MessageSender: Failed to emit message on event '%s' (attempt %d): %v", msg.Event, attempt, err)
+			log.Warn("⚠️ MessageSender: Failed to submit message on event '%s' (attempt %d): %v", msg.Event, attempt, err)
 			return err // Trigger retry
 		}
 		log.Info("📤 MessageSender: Successfully sent message on event '%s' (attempt %d)", msg.Event, attempt)
@@ -76,7 +95,7 @@ func (ms *MessageSender) sendWithRetry(msg OutgoingMessage) {
 
 	err := backoff.Retry(operation, expBackoff)
 	if err != nil {
-		log.Error("❌ MessageSender: Failed to emit message on event '%s' after %d attempts: %v. Message lost.", msg.Event, attempt, err)
+		log.Error("❌ MessageSender: Failed to submit message on event '%s' after %d attempts: %v. Message lost.", msg.Event, attempt, err)
 	}
 }
 

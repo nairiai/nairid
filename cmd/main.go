@@ -59,6 +59,9 @@ type CmdRunner struct {
 	// Job dispatcher for per-job message sequencing
 	dispatcher *handlers.JobDispatcher
 
+	// Message poller for HTTP-based message redundancy
+	messagePoller *handlers.MessagePoller
+
 	// Worktree pool for fast worktree acquisition
 	poolCtx    context.Context
 	poolCancel context.CancelFunc
@@ -541,7 +544,7 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 
 	// Initialize ConnectionState and MessageSender
 	connectionState := handlers.NewConnectionState()
-	messageSender := handlers.NewMessageSender(connectionState)
+	messageSender := handlers.NewMessageSender()
 
 	gitUseCase := usecases.NewGitUseCase(gitClient, cliAgent, appState)
 
@@ -882,6 +885,12 @@ func main() {
 			)
 		}
 
+		// Stop message poller
+		if cmdRunner.messagePoller != nil {
+			cmdRunner.messagePoller.Stop()
+			log.Info("📡 MessagePoller stopped")
+		}
+
 		// Stop persistent worker pools on shutdown
 		if cmdRunner.blockingWorkerPool != nil {
 			cmdRunner.blockingWorkerPool.StopWait()
@@ -975,9 +984,14 @@ func (cr *CmdRunner) startSocketIOClient(serverURLStr, apiKey string) error {
 	manager := socket.NewManager(serverURLStr, opts)
 	socketClient := manager.Socket("/", opts)
 
-	// Start MessageSender goroutine
-	go cr.messageSender.Run(socketClient)
-	log.Info("📤 Started MessageSender goroutine")
+	// Start MessageSender goroutine (HTTP-based)
+	go cr.messageSender.Run(cr.agentsApiClient)
+	log.Info("📤 Started MessageSender goroutine (HTTP mode)")
+
+	// Start MessagePoller for HTTP redundancy
+	cr.messagePoller = handlers.NewMessagePoller(cr.agentsApiClient, cr.dispatcher, 30*time.Second)
+	go cr.messagePoller.Run()
+	log.Info("📡 Started MessagePoller goroutine (30s interval)")
 
 	// Use persistent worker pools across reconnects
 	instantWorkerPool := cr.instantWorkerPool
@@ -1063,6 +1077,15 @@ func (cr *CmdRunner) startSocketIOClient(serverURLStr, apiKey string) error {
 		}
 	})
 	utils.AssertInvariant(err == nil, fmt.Sprintf("Failed to set up cc_message handler: %v", err))
+
+	// Set up nudge handler — backend sends this to trigger an immediate HTTP poll
+	err = socketClient.On("nudge", func(args ...any) {
+		log.Info("📡 Received nudge event, triggering immediate poll")
+		if cr.messagePoller != nil {
+			cr.messagePoller.Nudge()
+		}
+	})
+	utils.AssertInvariant(err == nil, fmt.Sprintf("Failed to set up nudge handler: %v", err))
 
 	// Wait for initial connection or detect auth failure
 	// Wait up to 10 seconds for initial connection

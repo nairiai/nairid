@@ -1,6 +1,7 @@
 package clients
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -173,6 +174,114 @@ func (c *AgentsApiClient) FetchEnvVars() ([]EnvVarEntry, error) {
 	}
 
 	return envVarsResp.EnvVars, nil
+}
+
+// PendingMessage represents a message from the outbox pending delivery
+type PendingMessage struct {
+	ID                    string          `json:"id"`
+	ConversationMessageID *string         `json:"conversation_message_id,omitempty"`
+	MessagePayload        json.RawMessage `json:"payload"`
+}
+
+// PollMessagesResponse represents the response from the poll messages endpoint
+type PollMessagesResponse struct {
+	Messages []PendingMessage `json:"messages"`
+}
+
+// PollMessages fetches pending messages from the backend HTTP API
+func (c *AgentsApiClient) PollMessages() (*PollMessagesResponse, error) {
+	url := fmt.Sprintf("%s/api/agents/messages", c.baseURL)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
+	req.Header.Set("Accept", "application/json")
+	if c.agentID != "" {
+		req.Header.Set("X-AGENT-ID", c.agentID)
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var pollResp PollMessagesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&pollResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &pollResp, nil
+}
+
+// AckMessage acknowledges a pending message by ID
+func (c *AgentsApiClient) AckMessage(pendingMsgID string) error {
+	url := fmt.Sprintf("%s/api/agents/messages/%s/ack", c.baseURL, pendingMsgID)
+
+	req, err := http.NewRequest("POST", url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
+	if c.agentID != "" {
+		req.Header.Set("X-AGENT-ID", c.agentID)
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	return nil
+}
+
+// SubmitMessage sends an agent response message to the backend via HTTP
+func (c *AgentsApiClient) SubmitMessage(msg any) error {
+	body, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal message: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/api/agents/messages", c.baseURL)
+
+	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
+	req.Header.Set("Content-Type", "application/json")
+	if c.agentID != "" {
+		req.Header.Set("X-AGENT-ID", c.agentID)
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	return nil
 }
 
 // FetchArtifacts retrieves the list of agent artifacts from the API
