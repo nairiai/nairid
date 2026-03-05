@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"time"
 
 	"nairid/clients"
@@ -66,14 +65,14 @@ func (mp *MessagePoller) pollAndDispatch() {
 
 	for _, job := range resp.Jobs {
 		for _, msg := range job.Messages {
-			if len(msg.WSPayload) == 0 {
+			if msg.Type == "" {
 				continue
 			}
 
-			var baseMsg models.BaseMessage
-			if err := json.Unmarshal(msg.WSPayload, &baseMsg); err != nil {
-				log.Warn("📡 MessagePoller: Failed to unmarshal ws_payload for message %s: %v", msg.ID, err)
-				continue
+			baseMsg := models.BaseMessage{
+				ID:      msg.ID,
+				Type:    msg.Type,
+				Payload: msg.Payload,
 			}
 
 			// Persist and dispatch through same pipeline as WS messages

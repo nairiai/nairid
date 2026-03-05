@@ -234,11 +234,9 @@ type AgentJob struct {
 // AgentJobMessage represents a message within an agent job
 type AgentJobMessage struct {
 	ID        string          `json:"id"`
-	Role      string          `json:"role"`
-	Content   string          `json:"content"`
-	Status    string          `json:"status"`
+	Type      string          `json:"type"`
+	Payload   json.RawMessage `json:"payload"`
 	CreatedAt time.Time       `json:"created_at"`
-	WSPayload json.RawMessage `json:"ws_payload"`
 }
 
 // FetchAgentJobs retrieves active jobs and unacked messages for the authenticated agent
