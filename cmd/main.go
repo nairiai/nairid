@@ -59,6 +59,9 @@ type CmdRunner struct {
 	// Job dispatcher for per-job message sequencing
 	dispatcher *handlers.JobDispatcher
 
+	// Message poller for HTTP redundancy
+	messagePoller *handlers.MessagePoller
+
 	// Worktree pool for fast worktree acquisition
 	poolCtx    context.Context
 	poolCancel context.CancelFunc
@@ -551,7 +554,7 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 
 	// Initialize ConnectionState and MessageSender
 	connectionState := handlers.NewConnectionState()
-	messageSender := handlers.NewMessageSender(connectionState)
+	messageSender := handlers.NewMessageSender(connectionState, agentsApiClient)
 
 	gitUseCase := usecases.NewGitUseCase(gitClient, cliAgent, appState)
 
@@ -591,6 +594,14 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 		cr.appState,
 	)
 	log.Info("🔀 Initialized job dispatcher for per-job message sequencing")
+
+	// Initialize message poller for HTTP redundancy (polls every 30s)
+	cr.messagePoller = handlers.NewMessagePoller(
+		cr.agentsApiClient,
+		cr.dispatcher,
+		cr.messageHandler,
+		30*time.Second,
+	)
 
 	// Wire up the job evictor so MessageHandler can signal dispatcher to stop failed jobs
 	cr.messageHandler.SetJobEvictor(cr.dispatcher)
@@ -878,6 +889,11 @@ func main() {
 			log.Info("🏊 Worktree pool stopped")
 		}
 
+		// Stop message poller
+		if cmdRunner.messagePoller != nil {
+			cmdRunner.messagePoller.Stop()
+		}
+
 		// Stop environment manager periodic refresh
 		if cmdRunner.envManager != nil {
 			cmdRunner.envManager.Stop()
@@ -998,6 +1014,10 @@ func (cr *CmdRunner) startSocketIOClient(serverURLStr, apiKey string) error {
 	// Start MessageSender goroutine
 	go cr.messageSender.Run(socketClient)
 	log.Info("📤 Started MessageSender goroutine")
+
+	// Start MessagePoller for HTTP redundancy
+	cr.messagePoller.Start()
+	log.Info("📡 Started MessagePoller goroutine")
 
 	// Use persistent worker pools across reconnects
 	instantWorkerPool := cr.instantWorkerPool

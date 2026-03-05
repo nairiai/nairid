@@ -1,12 +1,15 @@
 package clients
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
+
+	"nairid/models"
 )
 
 // AttachmentResponse represents the API response for fetching an attachment
@@ -213,3 +216,123 @@ func (c *AgentsApiClient) FetchArtifacts() ([]Artifact, error) {
 	return artifacts, nil
 }
 
+// AgentJobsResponse represents the response from GET /api/agents/jobs
+type AgentJobsResponse struct {
+	Jobs []AgentJob `json:"jobs"`
+}
+
+// AgentJob represents a job assigned to the agent
+type AgentJob struct {
+	ID        string            `json:"id"`
+	JobType   string            `json:"job_type"`
+	Mode      string            `json:"mode"`
+	Title     *string           `json:"title"`
+	CreatedAt time.Time         `json:"created_at"`
+	Messages  []AgentJobMessage `json:"messages"`
+}
+
+// AgentJobMessage represents a message within an agent job
+type AgentJobMessage struct {
+	ID        string          `json:"id"`
+	Role      string          `json:"role"`
+	Content   string          `json:"content"`
+	Status    string          `json:"status"`
+	CreatedAt time.Time       `json:"created_at"`
+	WSPayload json.RawMessage `json:"ws_payload"`
+}
+
+// FetchAgentJobs retrieves active jobs and unacked messages for the authenticated agent
+func (c *AgentsApiClient) FetchAgentJobs() (*AgentJobsResponse, error) {
+	url := fmt.Sprintf("%s/api/agents/jobs", c.baseURL)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
+	req.Header.Set("Accept", "application/json")
+	if c.agentID != "" {
+		req.Header.Set("X-AGENT-ID", c.agentID)
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var jobsResp AgentJobsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &jobsResp, nil
+}
+
+// AckMessage acknowledges a message has been processed
+func (c *AgentsApiClient) AckMessage(messageID string) error {
+	url := fmt.Sprintf("%s/api/agents/messages/%s/ack", c.baseURL, messageID)
+
+	req, err := http.NewRequest("POST", url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
+	if c.agentID != "" {
+		req.Header.Set("X-AGENT-ID", c.agentID)
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	return nil
+}
+
+// SubmitMessage sends an agent response message via HTTP
+func (c *AgentsApiClient) SubmitMessage(msg models.BaseMessage) error {
+	url := fmt.Sprintf("%s/api/agents/messages", c.baseURL)
+
+	body, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal message: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
+	req.Header.Set("Content-Type", "application/json")
+	if c.agentID != "" {
+		req.Header.Set("X-AGENT-ID", c.agentID)
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	return nil
+}

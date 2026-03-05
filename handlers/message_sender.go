@@ -1,36 +1,42 @@
 package handlers
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/zishang520/socket.io/clients/socket/v3"
 
+	"nairid/clients"
 	"nairid/core/log"
+	"nairid/models"
 )
 
-// OutgoingMessage represents a message to be sent via Socket.IO
+// OutgoingMessage represents a message to be sent via Socket.IO or HTTP
 type OutgoingMessage struct {
 	Event string
 	Data  any
 }
 
-// MessageSender handles queuing and sending messages to Socket.IO client.
-// It blocks when the connection is down and resumes when reconnected.
+// MessageSender handles queuing and sending messages via WS or HTTP.
+// processing_message_v1 is sent via WS (real-time UX signal).
+// All other response types are sent via HTTP.
 type MessageSender struct {
 	connectionState *ConnectionState
 	messageQueue    chan OutgoingMessage
 	socketClient    *socket.Socket
+	apiClient       *clients.AgentsApiClient
 }
 
 // NewMessageSender creates a new MessageSender instance.
 // The queue has a buffer of 1 message to ensure blocking until messages are sent.
 // This guarantees that jobs are only marked complete after their messages are actually sent.
-func NewMessageSender(connectionState *ConnectionState) *MessageSender {
+func NewMessageSender(connectionState *ConnectionState, apiClient *clients.AgentsApiClient) *MessageSender {
 	return &MessageSender{
 		connectionState: connectionState,
 		messageQueue:    make(chan OutgoingMessage, 1),
 		socketClient:    nil, // Set later via Run()
+		apiClient:       apiClient,
 	}
 }
 
@@ -42,24 +48,38 @@ func (ms *MessageSender) Run(socketClient *socket.Socket) {
 	log.Info("📤 MessageSender: Started processing queue")
 
 	for msg := range ms.messageQueue {
-		// Block until connection is established
-		ms.connectionState.WaitForConnection()
-
-		// Send the message with retry logic (3 attempts with exponential backoff)
-		ms.sendWithRetry(msg)
+		if ms.isWSMessage(msg) {
+			ms.connectionState.WaitForConnection()
+			ms.sendWSWithRetry(msg)
+		} else {
+			ms.sendHTTPWithRetry(msg)
+		}
 	}
 
 	log.Info("📤 MessageSender: Queue closed, exiting")
 }
 
-// sendWithRetry attempts to send a message with exponential backoff retry logic.
-// Uses the backoff library for consistent retry behavior across the codebase.
-func (ms *MessageSender) sendWithRetry(msg OutgoingMessage) {
-	// Configure exponential backoff for 3 retries
+// isWSMessage checks if the message should be sent via WS (processing_message_v1 only)
+func (ms *MessageSender) isWSMessage(msg OutgoingMessage) bool {
+	msgBytes, err := json.Marshal(msg.Data)
+	if err != nil {
+		return true // fallback to WS on marshal error
+	}
+
+	var baseMsg models.BaseMessage
+	if err := json.Unmarshal(msgBytes, &baseMsg); err != nil {
+		return true // fallback to WS on unmarshal error
+	}
+
+	return baseMsg.Type == models.MessageTypeProcessingMessage
+}
+
+// sendWSWithRetry sends a message via WebSocket with exponential backoff retry logic.
+func (ms *MessageSender) sendWSWithRetry(msg OutgoingMessage) {
 	expBackoff := backoff.NewExponentialBackOff()
 	expBackoff.InitialInterval = 1 * time.Second
 	expBackoff.MaxInterval = 4 * time.Second
-	expBackoff.MaxElapsedTime = 10 * time.Second // Total retry window
+	expBackoff.MaxElapsedTime = 10 * time.Second
 	expBackoff.Multiplier = 2
 
 	attempt := 0
@@ -68,15 +88,53 @@ func (ms *MessageSender) sendWithRetry(msg OutgoingMessage) {
 		err := ms.socketClient.Emit(msg.Event, msg.Data)
 		if err != nil {
 			log.Warn("⚠️ MessageSender: Failed to emit message on event '%s' (attempt %d): %v", msg.Event, attempt, err)
-			return err // Trigger retry
+			return err
 		}
-		log.Info("📤 MessageSender: Successfully sent message on event '%s' (attempt %d)", msg.Event, attempt)
-		return nil // Success
+		log.Info("📤 MessageSender: Successfully sent message via WS on event '%s' (attempt %d)", msg.Event, attempt)
+		return nil
 	}
 
 	err := backoff.Retry(operation, expBackoff)
 	if err != nil {
 		log.Error("❌ MessageSender: Failed to emit message on event '%s' after %d attempts: %v. Message lost.", msg.Event, attempt, err)
+	}
+}
+
+// sendHTTPWithRetry sends a message via HTTP with exponential backoff retry logic.
+func (ms *MessageSender) sendHTTPWithRetry(msg OutgoingMessage) {
+	msgBytes, err := json.Marshal(msg.Data)
+	if err != nil {
+		log.Error("❌ MessageSender: Failed to marshal message for HTTP: %v", err)
+		return
+	}
+
+	var baseMsg models.BaseMessage
+	if err := json.Unmarshal(msgBytes, &baseMsg); err != nil {
+		log.Error("❌ MessageSender: Failed to unmarshal BaseMessage for HTTP: %v", err)
+		return
+	}
+
+	expBackoff := backoff.NewExponentialBackOff()
+	expBackoff.InitialInterval = 1 * time.Second
+	expBackoff.MaxInterval = 4 * time.Second
+	expBackoff.MaxElapsedTime = 10 * time.Second
+	expBackoff.Multiplier = 2
+
+	attempt := 0
+	operation := func() error {
+		attempt++
+		err := ms.apiClient.SubmitMessage(baseMsg)
+		if err != nil {
+			log.Warn("⚠️ MessageSender: Failed to submit message via HTTP (attempt %d): %v", attempt, err)
+			return err
+		}
+		log.Info("📤 MessageSender: Successfully sent message via HTTP (attempt %d, type: %s)", attempt, baseMsg.Type)
+		return nil
+	}
+
+	err = backoff.Retry(operation, expBackoff)
+	if err != nil {
+		log.Error("❌ MessageSender: Failed to submit message via HTTP after %d attempts: %v. Message lost.", attempt, err)
 	}
 }
 
