@@ -81,6 +81,26 @@ func TestPrependSenderMetadata(t *testing.T) {
 			},
 			expected: "[Sender: Bob]\n\ncheck this",
 		},
+		{
+			name:    "full prod metadata with slack mrkdwn email",
+			message: "deploy the service",
+			metadata: &models.UserMetadata{
+				ID:       strPtr("U08S1TQ0QLR"),
+				Name:     strPtr("Pres"),
+				Email:    strPtr("<mailto:pmihaylov95@gmail.com|pmihaylov95@gmail.com>"),
+				Platform: &slackPlatform,
+			},
+			expected: "[Sender: Pres (pmihaylov95@gmail.com) via slack]\n\ndeploy the service",
+		},
+		{
+			name:    "email and platform without name",
+			message: "hello",
+			metadata: &models.UserMetadata{
+				Email:    strPtr("user@example.com"),
+				Platform: &slackPlatform,
+			},
+			expected: "[Sender: (user@example.com) via slack]\n\nhello",
+		},
 	}
 
 	for _, tt := range tests {

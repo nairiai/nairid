@@ -1,6 +1,9 @@
 package models
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // AgentMode represents the mode of a conversation
 type AgentMode string
@@ -27,8 +30,22 @@ type UserMetadata struct {
 	Platform *Platform `json:"platform,omitempty"`
 }
 
+// slackEmailRegex matches Slack's mrkdwn email format: <mailto:email@example.com|email@example.com>
+var slackEmailRegex = regexp.MustCompile(`<mailto:[^|]+\|([^>]+)>`)
+
+// CleanEmail extracts a plain email address from Slack's mrkdwn format.
+// Input like "<mailto:user@example.com|user@example.com>" returns "user@example.com".
+// Plain email addresses are returned as-is.
+func CleanEmail(email string) string {
+	if m := slackEmailRegex.FindStringSubmatch(email); len(m) == 2 {
+		return m[1]
+	}
+	return email
+}
+
 // FormatSenderLabel returns a formatted string identifying the sender,
 // or empty string if no metadata is available.
+// Example output: "Pres (pmihaylov95@gmail.com) via slack"
 func FormatSenderLabel(metadata *UserMetadata) string {
 	if metadata == nil {
 		return ""
@@ -37,6 +54,10 @@ func FormatSenderLabel(metadata *UserMetadata) string {
 	var parts []string
 	if metadata.Name != nil && *metadata.Name != "" {
 		parts = append(parts, *metadata.Name)
+	}
+	if metadata.Email != nil && *metadata.Email != "" {
+		email := CleanEmail(*metadata.Email)
+		parts = append(parts, "("+email+")")
 	}
 	if metadata.Platform != nil {
 		parts = append(parts, "via "+string(*metadata.Platform))
