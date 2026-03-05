@@ -1,3 +1,21 @@
+## [v0.0.92] - 2026-03-05
+
+### Features
+
+- Support configurable system prompt from backend ([#181](https://github.com/nairiai/eksecd/pull/181))
+  - Accept optional `system_prompt` field in start conversation payload from the backend
+  - When provided, use it as the base prompt and append repo context and mode instructions dynamically
+  - Fall back to built-in default prompts when no custom prompt is specified
+
+### Bugfixes
+
+- Fix startup crash loop when GitHub token in git remote URL has expired ([#182](https://github.com/nairiai/eksecd/pull/182))
+  - Apply latest GitHub token to git remote URL before validation on startup, preventing crash loops when the token baked into the URL from a previous session has expired
+
+- Fix index.lock race in concurrent worktree creation ([#183](https://github.com/nairiai/eksecd/pull/183))
+  - Add `mainRepoMu` mutex to serialize git operations (checkout, reset, clean) on the main repository
+  - Prevent `.git/index.lock` conflicts between the pool replenisher and synchronous worktree creation
+
 ## [v0.0.91] - 2026-03-05
 
 ### Bugfixes
