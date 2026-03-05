@@ -1,3 +1,16 @@
+## [v0.0.90] - 2026-03-05
+
+### Refactoring
+
+- Rename eksec/eksecd to nairi/nairid across codebase ([#178](https://github.com/nairiai/eksecd/pull/178))
+  - Rename Go module from `eksecd` to `nairid`
+  - Rename environment variables with `NAIRI_` prefix (backwards-compatible fallback to `EKSEC_` prefix)
+  - Update default WebSocket API URL to `api.nairi.ai`
+  - Update API key prefix validation to accept `nairid_` alongside legacy `eksecd_` and `ccagent_` prefixes
+  - Update branch naming prefix from `eksecd/` to `nairid/`
+  - Add backwards compatibility for `eksecd/` branch prefix in cleanup and pool reclaim functions
+  - Update all system prompts and branding references
+
 ## [v0.0.89] - 2026-03-05
 
 ### Features
