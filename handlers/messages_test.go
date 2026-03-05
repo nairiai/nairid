@@ -1,6 +1,9 @@
 package handlers
 
-import "testing"
+import (
+	"nairid/models"
+	"testing"
+)
 
 func TestStripAccessTokenFromURL(t *testing.T) {
 	tests := []struct {
@@ -38,4 +41,78 @@ func TestStripAccessTokenFromURL(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPrependSenderMetadata(t *testing.T) {
+	slackPlatform := models.PlatformSlack
+
+	tests := []struct {
+		name     string
+		message  string
+		metadata *models.UserMetadata
+		expected string
+	}{
+		{
+			name:     "nil metadata returns original message",
+			message:  "hello world",
+			metadata: nil,
+			expected: "hello world",
+		},
+		{
+			name:     "empty metadata returns original message",
+			message:  "hello world",
+			metadata: &models.UserMetadata{},
+			expected: "hello world",
+		},
+		{
+			name:    "name and platform prepends sender header",
+			message: "review my PR",
+			metadata: &models.UserMetadata{
+				Name:     strPtr("Alice"),
+				Platform: &slackPlatform,
+			},
+			expected: "[Sender: Alice via slack]\n\nreview my PR",
+		},
+		{
+			name:    "name only prepends sender header",
+			message: "check this",
+			metadata: &models.UserMetadata{
+				Name: strPtr("Bob"),
+			},
+			expected: "[Sender: Bob]\n\ncheck this",
+		},
+		{
+			name:    "full prod metadata with slack mrkdwn email",
+			message: "deploy the service",
+			metadata: &models.UserMetadata{
+				ID:       strPtr("U08S1TQ0QLR"),
+				Name:     strPtr("Pres"),
+				Email:    strPtr("<mailto:pmihaylov95@gmail.com|pmihaylov95@gmail.com>"),
+				Platform: &slackPlatform,
+			},
+			expected: "[Sender: Pres (pmihaylov95@gmail.com) via slack]\n\ndeploy the service",
+		},
+		{
+			name:    "email and platform without name",
+			message: "hello",
+			metadata: &models.UserMetadata{
+				Email:    strPtr("user@example.com"),
+				Platform: &slackPlatform,
+			},
+			expected: "[Sender: (user@example.com) via slack]\n\nhello",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := prependSenderMetadata(tt.message, tt.metadata)
+			if result != tt.expected {
+				t.Errorf("prependSenderMetadata() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func strPtr(s string) *string {
+	return &s
 }
