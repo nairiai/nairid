@@ -1,8 +1,17 @@
+## [v0.0.89] - 2026-03-05
+
+### Features
+
+- Consume user metadata from restructured message payloads ([#179](https://github.com/nairiai/eksecd/pull/179))
+  - Parse `sender_metadata` (name, email, platform) from incoming messages and prepend a `[Sender: ...]` header so agents can identify who sent each message in multi-user scenarios
+  - Add multi-user context instructions to Slack system prompts
+  - Clean Slack mrkdwn email formatting automatically
+
 ## [v0.0.88] - 2026-02-27
 
 ### Bugfixes
 
-- Evict idle jobs from dispatcher to free worker pool slots ([#175](https://github.com/eksecai/eksecd/pull/175))
+- Evict idle jobs from dispatcher to free worker pool slots ([#175](https://github.com/nairiai/eksecd/pull/175))
   - Detect and evict jobs that become idle while waiting in the dispatcher queue, preventing worker pool exhaustion when jobs are abandoned before being assigned a worker
 
 ## [v0.0.87] - 2026-02-22
