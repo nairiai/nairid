@@ -82,6 +82,46 @@ MODE: You are in ASK mode.
 	return basePrompt
 }
 
+// AppendRepoContext appends repository context information to a base prompt
+func AppendRepoContext(base string, repoContext *models.RepositoryContext, workspacePath string) string {
+	if repoContext != nil && repoContext.IsRepoMode {
+		effectivePath := repoContext.RepoPath
+		if workspacePath != "" {
+			effectivePath = workspacePath
+		}
+		base += fmt.Sprintf(`
+
+*Repository Information:*
+You are working on the git repository: %s
+Repository path: %s
+
+CRITICAL WORKSPACE RULES:
+- The repository path above is your ONLY workspace. All file operations refer to this path, NOT the process working directory.
+- IGNORE the process working directory completely — it is only used internally by the agent system.
+`, repoContext.RepositoryIdentifier, effectivePath)
+	} else {
+		base += `
+
+*No-Repository Mode:*
+You are running in no-repository mode. Git operations (commits, branches, PRs) are disabled.
+Use the current working directory as your workspace for all file operations.
+`
+	}
+	return base
+}
+
+// AppendModeInstructions appends mode-specific instructions to a base prompt
+func AppendModeInstructions(base string, mode models.AgentMode) string {
+	if mode == models.AgentModeAsk {
+		base += `
+MODE: You are in ASK mode.
+- DO NOT modify, create, or delete any files in the repository
+- If asked to write code, provide it in your response instead of writing to the filesystem
+- EXCEPTION: You may create temporary files in /tmp for analysis or calculations`
+	}
+	return base
+}
+
 // GetCursorSystemPrompt returns the system prompt for Cursor agents
 func GetCursorSystemPrompt(mode models.AgentMode, repoContext *models.RepositoryContext, workspacePath string) string {
 	basePrompt := `You are an AI agent acting as "nairid" for this session. When someone says "nairid", they refer to you.

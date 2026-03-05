@@ -284,10 +284,17 @@ func (mh *MessageHandler) handleStartConversation(msg models.BaseMessage) error 
 	repoContext := mh.appState.GetRepositoryContext()
 
 	// Get appropriate system prompt based on agent type and mode
-	// Pass worktreePath so Claude knows to work in the worktree directory
-	systemPrompt := GetClaudeSystemPrompt(payload.Mode, repoContext, worktreePath)
-	if mh.claudeService.AgentName() == "cursor" {
-		systemPrompt = GetCursorSystemPrompt(payload.Mode, repoContext, worktreePath)
+	// If the backend provided a custom system prompt, use it as base and append dynamic sections
+	// Otherwise, fall back to the built-in defaults
+	var systemPrompt string
+	if payload.SystemPrompt != "" {
+		systemPrompt = AppendRepoContext(payload.SystemPrompt, repoContext, worktreePath)
+		systemPrompt = AppendModeInstructions(systemPrompt, payload.Mode)
+	} else {
+		systemPrompt = GetClaudeSystemPrompt(payload.Mode, repoContext, worktreePath)
+		if mh.claudeService.AgentName() == "cursor" {
+			systemPrompt = GetCursorSystemPrompt(payload.Mode, repoContext, worktreePath)
+		}
 	}
 
 	// Process thread context (previous messages) and attachments
