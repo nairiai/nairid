@@ -830,6 +830,12 @@ func main() {
 
 	// Validate Git environment and cleanup stale branches/worktrees (only if in repo mode)
 	if repoCtx.IsRepoMode {
+		// Apply the latest GitHub token to the git remote URL before validation.
+		// The periodic refresh hook only fires after 1 minute, but we need the token
+		// applied now so ValidateRemoteAccess() doesn't fail with a stale token
+		// baked into the remote URL from a previous session.
+		cmdRunner.gitUseCase.GithubTokenUpdateHook()
+
 		err = cmdRunner.gitUseCase.ValidateGitEnvironment()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Git environment validation failed: %v\n", err)
