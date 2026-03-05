@@ -102,9 +102,15 @@ func createTestMessage(msgType string, jobID string) models.BaseMessage {
 	var payload any
 	switch msgType {
 	case models.MessageTypeStartConversation:
-		payload = models.StartConversationPayload{JobID: jobID, Message: "test message"}
+		payload = models.StartConversationPayload{
+			JobID:   jobID,
+			Message: "test message",
+		}
 	case models.MessageTypeUserMessage:
-		payload = models.UserMessagePayload{JobID: jobID, Message: "test message"}
+		payload = models.UserMessagePayload{
+			JobID:   jobID,
+			Message: "test message",
+		}
 	default:
 		payload = nil
 	}

@@ -1,5 +1,7 @@
 package models
 
+import "strings"
+
 // AgentMode represents the mode of a conversation
 type AgentMode string
 
@@ -7,6 +9,45 @@ const (
 	AgentModeExecute AgentMode = "execute"
 	AgentModeAsk     AgentMode = "ask"
 )
+
+// Platform represents the source platform of a message
+type Platform string
+
+const (
+	PlatformSlack   Platform = "slack"
+	PlatformDiscord Platform = "discord"
+	PlatformWeb     Platform = "web"
+)
+
+// UserMetadata represents optional user information from incoming messages
+type UserMetadata struct {
+	ID       *string   `json:"id,omitempty"`
+	Name     *string   `json:"name,omitempty"`
+	Email    *string   `json:"email,omitempty"`
+	Platform *Platform `json:"platform,omitempty"`
+}
+
+// FormatSenderLabel returns a formatted string identifying the sender,
+// or empty string if no metadata is available.
+func FormatSenderLabel(metadata *UserMetadata) string {
+	if metadata == nil {
+		return ""
+	}
+
+	var parts []string
+	if metadata.Name != nil && *metadata.Name != "" {
+		parts = append(parts, *metadata.Name)
+	}
+	if metadata.Platform != nil {
+		parts = append(parts, "via "+string(*metadata.Platform))
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	return strings.Join(parts, " ")
+}
 
 // Message types
 const (
@@ -42,9 +83,10 @@ type StartConversationPayload struct {
 	Message            string              `json:"message"`
 	ProcessedMessageID string              `json:"processed_message_id"`
 	MessageLink        string              `json:"message_link"`
+	Mode               AgentMode           `json:"mode"`
 	Attachments        []MessageAttachment `json:"attachments,omitempty"`
 	PreviousMessages   []PreviousMessage   `json:"previous_messages,omitempty"`
-	Mode               AgentMode           `json:"mode"`
+	SenderMetadata     *UserMetadata       `json:"sender_metadata,omitempty"`
 }
 
 type StartConversationResponsePayload struct {
@@ -58,6 +100,7 @@ type UserMessagePayload struct {
 	ProcessedMessageID string              `json:"processed_message_id"`
 	MessageLink        string              `json:"message_link"`
 	Attachments        []MessageAttachment `json:"attachments,omitempty"`
+	SenderMetadata     *UserMetadata       `json:"sender_metadata,omitempty"`
 }
 
 type AssistantMessagePayload struct {
@@ -85,4 +128,3 @@ type JobCompletePayload struct {
 	JobID  string `json:"job_id"`
 	Reason string `json:"reason"`
 }
-

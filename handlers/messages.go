@@ -312,6 +312,9 @@ func (mh *MessageHandler) handleStartConversation(msg models.BaseMessage) error 
 		log.Info("📝 Formatted thread context with %d previous messages", len(payload.PreviousMessages))
 	}
 
+	// Prepend sender metadata if available
+	finalPrompt = prependSenderMetadata(finalPrompt, payload.SenderMetadata)
+
 	// Start Claude session - use worktree directory if in worktree mode
 	var claudeResult *services.CLIAgentResult
 	if worktreePath != "" {
@@ -629,6 +632,8 @@ func (mh *MessageHandler) handleUserMessage(msg models.BaseMessage) error {
 	if attachmentText != "" {
 		finalPrompt = payload.Message + "\n" + attachmentText
 	}
+	// Prepend sender metadata if available
+	finalPrompt = prependSenderMetadata(finalPrompt, payload.SenderMetadata)
 
 	// Continue Claude session - use worktree directory if in worktree mode
 	var claudeResult *services.CLIAgentResult
@@ -1037,6 +1042,16 @@ func (mh *MessageHandler) sendGitActivitySystemMessage(
 	}
 
 	return nil
+}
+
+// prependSenderMetadata prepends a sender identification header to the message
+// if user metadata is available. Returns the original message unchanged if no metadata.
+func prependSenderMetadata(message string, metadata *models.UserMetadata) string {
+	label := models.FormatSenderLabel(metadata)
+	if label == "" {
+		return message
+	}
+	return fmt.Sprintf("[Sender: %s]\n\n%s", label, message)
 }
 
 func unmarshalPayload(payload any, target any) error {
