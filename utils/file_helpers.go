@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"eksecd/core/log"
+	"nairid/core/log"
 )
 
 // readFileAsTargetUser reads content from a file, using sudo if necessary.

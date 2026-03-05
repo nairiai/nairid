@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"eksecd/clients"
-	"eksecd/core"
-	"eksecd/services"
+	"nairid/clients"
+	"nairid/core"
+	"nairid/services"
 )
 
 func TestNewClaudeService(t *testing.T) {

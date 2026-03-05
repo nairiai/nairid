@@ -3,7 +3,7 @@ package handlers
 import (
 	"sync"
 
-	"eksecd/core/log"
+	"nairid/core/log"
 )
 
 // ConnectionState manages the Socket.IO connection state and provides

@@ -1,6 +1,6 @@
 package services
 
-import "eksecd/clients"
+import "nairid/clients"
 
 // MockCodexClient implements the CodexClient interface for testing
 type MockCodexClient struct {

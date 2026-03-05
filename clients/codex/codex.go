@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"eksecd/clients"
-	"eksecd/core"
-	"eksecd/core/log"
+	"nairid/clients"
+	"nairid/core"
+	"nairid/core/log"
 )
 
 type CodexClient struct {
@@ -128,7 +128,7 @@ func (c *CodexClient) buildBaseArgs(options *clients.CodexOptions) []string {
 
 	// EXEC OPTIONS (after 'exec' subcommand)
 
-	// Permission mode - map eksecd modes to Codex flags
+	// Permission mode - map nairid modes to Codex flags
 	if c.permissionMode == "bypassPermissions" {
 		// Completely unrestricted access (no sandbox, no approvals)
 		args = append(args, "--dangerously-bypass-approvals-and-sandbox")

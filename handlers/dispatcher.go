@@ -7,8 +7,8 @@ import (
 
 	"github.com/gammazero/workerpool"
 
-	"eksecd/core/log"
-	"eksecd/models"
+	"nairid/core/log"
+	"nairid/models"
 )
 
 const (

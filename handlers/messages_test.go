@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"eksecd/models"
+	"nairid/models"
 	"testing"
 )
 

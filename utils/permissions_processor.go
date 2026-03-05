@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"eksecd/core/log"
+	"nairid/core/log"
 )
 
 // PermissionsProcessor defines the interface for processing agent-specific permissions

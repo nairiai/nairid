@@ -68,7 +68,7 @@ func TestMapOpenCodeOutputToMessages(t *testing.T) {
 156 |         })
 RipgrepExtractionFailedError: RipgrepExtractionFailedError
  data: {
-  filepath: "/home/eksecd/.local/share/opencode/bin/rg",
+  filepath: "/home/nairid/.local/share/opencode/bin/rg",
   stderr: "tar: unrecognized option: wildcards",
 }`,
 			expectedCount: 1,

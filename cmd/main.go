@@ -18,23 +18,23 @@ import (
 	"github.com/zishang520/socket.io/clients/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 
-	"eksecd/clients"
-	claudeclient "eksecd/clients/claude"
-	codexclient "eksecd/clients/codex"
-	cursorclient "eksecd/clients/cursor"
-	opencodeclient "eksecd/clients/opencode"
-	"eksecd/core"
-	"eksecd/core/env"
-	"eksecd/core/log"
-	"eksecd/handlers"
-	"eksecd/models"
-	"eksecd/services"
-	claudeservice "eksecd/services/claude"
-	codexservice "eksecd/services/codex"
-	cursorservice "eksecd/services/cursor"
-	opencodeservice "eksecd/services/opencode"
-	"eksecd/usecases"
-	"eksecd/utils"
+	"nairid/clients"
+	claudeclient "nairid/clients/claude"
+	codexclient "nairid/clients/codex"
+	cursorclient "nairid/clients/cursor"
+	opencodeclient "nairid/clients/opencode"
+	"nairid/core"
+	"nairid/core/env"
+	"nairid/core/log"
+	"nairid/handlers"
+	"nairid/models"
+	"nairid/services"
+	claudeservice "nairid/services/claude"
+	codexservice "nairid/services/codex"
+	cursorservice "nairid/services/cursor"
+	opencodeservice "nairid/services/opencode"
+	"nairid/usecases"
+	"nairid/utils"
 )
 
 type CmdRunner struct {
@@ -48,7 +48,7 @@ type CmdRunner struct {
 	agentID         string
 	agentsApiClient *clients.AgentsApiClient
 	wsURL           string
-	eksecAPIKey     string
+	nairiAPIKey     string
 	dirLock         *utils.DirLock
 	repoLock        *utils.DirLock
 
@@ -164,22 +164,22 @@ func fetchAndStoreArtifacts(agentsApiClient *clients.AgentsApiClient) error {
 
 	// Clean up existing rules, MCP configs, and skills before downloading new ones
 	// This ensures stale items deleted on the server are removed locally
-	if err := utils.CleanCcagentRulesDir(); err != nil {
-		return fmt.Errorf("failed to clean eksecd rules directory: %w", err)
+	if err := utils.CleanNairidRulesDir(); err != nil {
+		return fmt.Errorf("failed to clean nairid rules directory: %w", err)
 	}
 
 	// Skip MCP config cleanup and download when MCP proxy is enabled
 	// (configs will be fetched from the proxy at processing time)
 	if clients.AgentMCPProxy() == "" {
-		if err := utils.CleanCcagentMCPDir(); err != nil {
-			return fmt.Errorf("failed to clean eksecd MCP directory: %w", err)
+		if err := utils.CleanNairidMCPDir(); err != nil {
+			return fmt.Errorf("failed to clean nairid MCP directory: %w", err)
 		}
 	} else {
 		log.Info("📦 MCP proxy enabled, skipping MCP config artifact downloads")
 	}
 
-	if err := utils.CleanCcagentSkillsDir(); err != nil {
-		return fmt.Errorf("failed to clean eksecd skills directory: %w", err)
+	if err := utils.CleanNairidSkillsDir(); err != nil {
+		return fmt.Errorf("failed to clean nairid skills directory: %w", err)
 	}
 
 	artifacts, err := agentsApiClient.FetchArtifacts()
@@ -224,7 +224,7 @@ func fetchAndStoreArtifacts(agentsApiClient *clients.AgentsApiClient) error {
 	return nil
 }
 
-// processAgentRules processes rules from eksecd directory based on agent type
+// processAgentRules processes rules from nairid directory based on agent type
 // targetHomeDir specifies the home directory to deploy rules to.
 // If empty, uses the current user's home directory.
 func processAgentRules(agentType, workDir, targetHomeDir string) error {
@@ -252,7 +252,7 @@ func processAgentRules(agentType, workDir, targetHomeDir string) error {
 	return nil
 }
 
-// processMCPConfigs processes MCP configs from eksecd directory based on agent type
+// processMCPConfigs processes MCP configs from nairid directory based on agent type
 // targetHomeDir specifies the home directory to deploy configs to.
 // If empty, uses the current user's home directory.
 func processMCPConfigs(agentType, workDir, targetHomeDir string) error {
@@ -298,7 +298,7 @@ func processMCPConfigs(agentType, workDir, targetHomeDir string) error {
 	return nil
 }
 
-// processSkills processes skills from eksecd directory based on agent type
+// processSkills processes skills from nairid directory based on agent type
 // targetHomeDir specifies the home directory to deploy skills to.
 // If empty, uses the current user's home directory.
 func processSkills(agentType, targetHomeDir string) error {
@@ -432,21 +432,31 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 	envManager.StartPeriodicRefresh(1 * time.Minute)
 
 	// Get API key and WS URL for agents API client
-	eksecAPIKey := envManager.Get("EKSEC_API_KEY")
-	if eksecAPIKey == "" {
-		return nil, fmt.Errorf("EKSEC_API_KEY environment variable is required but not set")
+	// Support legacy EKSEC_* env vars for backwards compatibility
+	nairiAPIKey := envManager.Get("NAIRI_API_KEY")
+	if nairiAPIKey == "" {
+		nairiAPIKey = envManager.Get("EKSEC_API_KEY") // Legacy env var
+	}
+	if nairiAPIKey == "" {
+		return nil, fmt.Errorf("NAIRI_API_KEY environment variable is required but not set")
 	}
 
-	wsURL := envManager.Get("EKSEC_WS_API_URL")
+	wsURL := envManager.Get("NAIRI_WS_API_URL")
 	if wsURL == "" {
-		wsURL = "https://api.eksec.ai/socketio/"
+		wsURL = envManager.Get("EKSEC_WS_API_URL") // Legacy env var
+	}
+	if wsURL == "" {
+		wsURL = "https://api.nairi.ai/socketio/"
 	}
 
 	// Extract base URL for API client (remove /socketio/ suffix)
 	apiBaseURL := strings.TrimSuffix(wsURL, "/socketio/")
 	// Get agent ID for X-AGENT-ID header (used to disambiguate containers sharing API keys)
-	agentIDForAPI := envManager.Get("EKSEC_AGENT_ID")
-	agentsApiClient := clients.NewAgentsApiClient(eksecAPIKey, apiBaseURL, agentIDForAPI)
+	agentIDForAPI := envManager.Get("NAIRI_AGENT_ID")
+	if agentIDForAPI == "" {
+		agentIDForAPI = envManager.Get("EKSEC_AGENT_ID") // Legacy env var
+	}
+	agentsApiClient := clients.NewAgentsApiClient(nairiAPIKey, apiBaseURL, agentIDForAPI)
 	log.Info("🔗 Configured agents API client with base URL: %s", apiBaseURL)
 
 	// Fetch and set Anthropic token BEFORE initializing anything else
@@ -558,7 +568,7 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 		agentID:         agentID,
 		agentsApiClient: agentsApiClient,
 		wsURL:           wsURL,
-		eksecAPIKey:     eksecAPIKey,
+		nairiAPIKey:     nairiAPIKey,
 	}
 
 	// Initialize dual worker pools that persist for the app lifetime
@@ -695,7 +705,7 @@ type Options struct {
 	Agent             string `long:"agent" description:"CLI agent to use (claude, cursor, codex, or opencode)" choice:"claude" choice:"cursor" choice:"codex" choice:"opencode" default:"claude"`
 	BypassPermissions bool   `long:"claude-bypass-permissions" description:"Use bypassPermissions mode for Claude/Codex (only applies when --agent=claude or --agent=codex) (WARNING: Only use in controlled sandbox environments)"`
 	Model             string `long:"model" description:"Model to use (agent-specific: claude: sonnet/haiku/opus or full model name, cursor: gpt-5/sonnet-4/sonnet-4-thinking, codex: any model string, opencode: provider/model format)"`
-	Repo              string `long:"repo" description:"Path to git repository (absolute or relative). If not provided, eksecd runs in no-repo mode with git operations disabled"`
+	Repo              string `long:"repo" description:"Path to git repository (absolute or relative). If not provided, nairid runs in no-repo mode with git operations disabled"`
 	Version           bool   `long:"version" short:"v" description:"Show version information"`
 }
 
@@ -722,7 +732,7 @@ func main() {
 	log.SetLevel(slog.LevelInfo)
 
 	// Log startup information
-	log.Info("🚀 eksecd starting - version %s", core.GetVersion())
+	log.Info("🚀 nairid starting - version %s", core.GetVersion())
 	log.Info("⚙️  Configuration: agent=%s, permission_mode=%s", opts.Agent, func() string {
 		if opts.BypassPermissions {
 			return "bypassPermissions"
@@ -892,7 +902,7 @@ func main() {
 	}()
 
 	// Start Socket.IO client with backoff retry
-	err = cmdRunner.startSocketIOClientWithRetry(cmdRunner.wsURL, cmdRunner.eksecAPIKey)
+	err = cmdRunner.startSocketIOClientWithRetry(cmdRunner.wsURL, cmdRunner.nairiAPIKey)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error starting WebSocket client after retries: %v\n", err)
 		os.Exit(1)
@@ -952,16 +962,20 @@ func (cr *CmdRunner) startSocketIOClient(serverURLStr, apiKey string) error {
 	repoIdentifier := repoContext.RepositoryIdentifier
 
 	// Determine agent ID value - use env var if set, otherwise use repo identifier
-	agentID := cr.envManager.Get("EKSEC_AGENT_ID")
+	// Support legacy EKSEC_AGENT_ID for backwards compatibility
+	agentID := cr.envManager.Get("NAIRI_AGENT_ID")
+	if agentID == "" {
+		agentID = cr.envManager.Get("EKSEC_AGENT_ID") // Legacy env var
+	}
 	if agentID == "" {
 		if repoIdentifier != "" {
 			agentID = repoIdentifier
 			log.Info("📋 Using repository identifier as agent ID: %s", agentID)
 		} else {
-			return fmt.Errorf("EKSEC_AGENT_ID environment variable is required in no-repo mode")
+			return fmt.Errorf("NAIRI_AGENT_ID environment variable is required in no-repo mode")
 		}
 	} else {
-		log.Info("📋 Using EKSEC_AGENT_ID from environment: %s", agentID)
+		log.Info("📋 Using NAIRI_AGENT_ID from environment: %s", agentID)
 	}
 
 	// Set authentication headers
@@ -1114,7 +1128,7 @@ func (cr *CmdRunner) setupProgramLogging() (string, error) {
 	rotatingWriter, err := log.NewRotatingWriter(log.RotatingWriterConfig{
 		LogDir:      logsDir,
 		MaxFileSize: 1024, // 10MB
-		FilePrefix:  "eksecd",
+		FilePrefix:  "nairid",
 		Stdout:      os.Stdout,
 	})
 	if err != nil {

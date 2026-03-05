@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"eksecd/core/log"
+	"nairid/core/log"
 )
 
 // RuleFrontMatter represents the parsed front matter from a rule file
@@ -18,7 +18,7 @@ type RuleFrontMatter struct {
 
 // RulesProcessor defines the interface for processing agent-specific rules
 type RulesProcessor interface {
-	// ProcessRules processes rules from the eksecd rules directory
+	// ProcessRules processes rules from the nairid rules directory
 	// and copies them to the agent-specific location.
 	// targetHomeDir specifies the home directory to deploy rules to.
 	// If empty, uses the current user's home directory.
@@ -135,19 +135,19 @@ func ReadRuleBody(filePath string) (title string, description string, body strin
 	return title, description, body, nil
 }
 
-// GetCcagentRulesDir returns the path to the eksecd rules directory
-func GetCcagentRulesDir() (string, error) {
+// GetNairidRulesDir returns the path to the nairid rules directory
+func GetNairidRulesDir() (string, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get home directory: %w", err)
 	}
 
-	return filepath.Join(homeDir, ".config", "eksecd", "rules"), nil
+	return filepath.Join(homeDir, ".config", "nairid", "rules"), nil
 }
 
-// GetRuleFiles returns a list of markdown files in the eksecd rules directory
+// GetRuleFiles returns a list of markdown files in the nairid rules directory
 func GetRuleFiles() ([]string, error) {
-	rulesDir, err := GetCcagentRulesDir()
+	rulesDir, err := GetNairidRulesDir()
 	if err != nil {
 		return nil, err
 	}
@@ -179,11 +179,11 @@ func GetRuleFiles() ([]string, error) {
 	return ruleFiles, nil
 }
 
-// CleanCcagentRulesDir removes all files from the eksecd rules directory
+// CleanNairidRulesDir removes all files from the nairid rules directory
 // This should be called before downloading new rules from the server to ensure
 // stale rules that were deleted on the server are also removed locally.
-func CleanCcagentRulesDir() error {
-	rulesDir, err := GetCcagentRulesDir()
+func CleanNairidRulesDir() error {
+	rulesDir, err := GetNairidRulesDir()
 	if err != nil {
 		return err
 	}
@@ -194,7 +194,7 @@ func CleanCcagentRulesDir() error {
 		return nil
 	}
 
-	log.Info("📋 Cleaning eksecd rules directory: %s", rulesDir)
+	log.Info("📋 Cleaning nairid rules directory: %s", rulesDir)
 
 	// Remove and recreate the directory to ensure a clean state
 	if err := os.RemoveAll(rulesDir); err != nil {
@@ -206,7 +206,7 @@ func CleanCcagentRulesDir() error {
 		return fmt.Errorf("failed to recreate rules directory: %w", err)
 	}
 
-	log.Info("✅ Successfully cleaned eksecd rules directory")
+	log.Info("✅ Successfully cleaned nairid rules directory")
 	return nil
 }
 
@@ -224,14 +224,14 @@ func NewClaudeCodeRulesProcessor(workDir string) *ClaudeCodeRulesProcessor {
 func (p *ClaudeCodeRulesProcessor) ProcessRules(targetHomeDir string) error {
 	log.Info("📋 Processing rules for Claude Code agent")
 
-	// Get rule files from eksecd directory
+	// Get rule files from nairid directory
 	ruleFiles, err := GetRuleFiles()
 	if err != nil {
 		return fmt.Errorf("failed to get rule files: %w", err)
 	}
 
 	if len(ruleFiles) == 0 {
-		log.Info("📋 No rules found in eksecd rules directory")
+		log.Info("📋 No rules found in nairid rules directory")
 		return nil
 	}
 
@@ -307,14 +307,14 @@ func NewOpenCodeRulesProcessor(workDir string) *OpenCodeRulesProcessor {
 func (p *OpenCodeRulesProcessor) ProcessRules(targetHomeDir string) error {
 	log.Info("📋 Processing rules for OpenCode agent")
 
-	// Get rule files from eksecd directory
+	// Get rule files from nairid directory
 	ruleFiles, err := GetRuleFiles()
 	if err != nil {
 		return fmt.Errorf("failed to get rule files: %w", err)
 	}
 
 	if len(ruleFiles) == 0 {
-		log.Info("📋 No rules found in eksecd rules directory")
+		log.Info("📋 No rules found in nairid rules directory")
 		return nil
 	}
 
@@ -401,14 +401,14 @@ func NewCodexRulesProcessor() *CodexRulesProcessor {
 func (p *CodexRulesProcessor) ProcessRules(targetHomeDir string) error {
 	log.Info("📋 Processing rules for Codex agent")
 
-	// Get rule files from eksecd directory
+	// Get rule files from nairid directory
 	ruleFiles, err := GetRuleFiles()
 	if err != nil {
 		return fmt.Errorf("failed to get rule files: %w", err)
 	}
 
 	if len(ruleFiles) == 0 {
-		log.Info("📋 No rules found in eksecd rules directory")
+		log.Info("📋 No rules found in nairid rules directory")
 		return nil
 	}
 

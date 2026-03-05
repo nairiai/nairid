@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"eksecd/clients"
+	"nairid/clients"
 )
 
 // setupTestGitRepoWithRemote creates a temporary git repository with a local "remote" for testing.
@@ -194,7 +194,7 @@ func TestAcquire_EmptyPool(t *testing.T) {
 	gitClient := clients.NewGitClient()
 	pool := NewWorktreePool(gitClient, "/tmp/test", 3)
 
-	_, err := pool.Acquire("job-123", "eksecd/test-branch")
+	_, err := pool.Acquire("job-123", "nairid/test-branch")
 	if err == nil {
 		t.Error("Expected error when acquiring from empty pool, got nil")
 	}
@@ -240,7 +240,7 @@ func TestAcquire_FromPool(t *testing.T) {
 	t.Logf("Pool filled with %d worktrees", initialSize)
 
 	// Acquire a worktree
-	wtPath, err := pool.Acquire("job-test-123", "eksecd/test-feature")
+	wtPath, err := pool.Acquire("job-test-123", "nairid/test-feature")
 	if err != nil {
 		t.Fatalf("Failed to acquire worktree: %v", err)
 	}
@@ -265,8 +265,8 @@ func TestAcquire_FromPool(t *testing.T) {
 	}
 
 	branchName := strings.TrimSpace(string(output))
-	if branchName != "eksecd/test-feature" {
-		t.Errorf("Expected branch 'eksecd/test-feature', got '%s'", branchName)
+	if branchName != "nairid/test-feature" {
+		t.Errorf("Expected branch 'nairid/test-feature', got '%s'", branchName)
 	}
 
 	// Pool size should have decreased
@@ -304,7 +304,7 @@ func TestAcquire_InvalidWorktree(t *testing.T) {
 	pool.mutex.Lock()
 	pool.ready = append(pool.ready, PooledWorktree{
 		Path:       fakePath,
-		BranchName: "eksecd/pool-ready-fake12345",
+		BranchName: "nairid/pool-ready-fake12345",
 		BaseCommit: "abc123",
 		CreatedAt:  time.Now(),
 	})
@@ -315,7 +315,7 @@ func TestAcquire_InvalidWorktree(t *testing.T) {
 	}
 
 	// Acquire should return ErrWorktreeInvalid instead of a generic move error
-	_, err := pool.Acquire("job-test-invalid", "eksecd/test-branch")
+	_, err := pool.Acquire("job-test-invalid", "nairid/test-branch")
 	if err == nil {
 		t.Fatal("Expected error when acquiring invalid worktree, got nil")
 	}
@@ -377,7 +377,7 @@ func TestConcurrentAcquire(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			jobID := filepath.Base(worktreeBase) + "-concurrent-" + string(rune('a'+idx))
-			branchName := "eksecd/concurrent-" + string(rune('a'+idx))
+			branchName := "nairid/concurrent-" + string(rune('a'+idx))
 			path, err := pool.Acquire(jobID, branchName)
 			if err != nil {
 				errors <- err
@@ -441,7 +441,7 @@ func TestReplenish_AfterAcquire(t *testing.T) {
 	}
 
 	// Acquire one
-	_, acquireErr := pool.Acquire("job-replenish-test", "eksecd/replenish-test")
+	_, acquireErr := pool.Acquire("job-replenish-test", "nairid/replenish-test")
 	if acquireErr != nil {
 		t.Fatalf("Failed to acquire: %v", acquireErr)
 	}
@@ -528,7 +528,7 @@ func TestReclaimOrphanedPoolWorktrees(t *testing.T) {
 
 	// Create a pool worktree manually (simulating crash recovery)
 	poolPath := filepath.Join(worktreeBase, "pool-orphan123")
-	branchName := "eksecd/pool-ready-orphan123"
+	branchName := "nairid/pool-ready-orphan123"
 
 	// Use "main" directly since we set up the test repo with main branch
 	// (GetDefaultBranch may return "(unknown)" for local test remotes)
@@ -571,7 +571,7 @@ func TestCleanupStaleJobWorktrees(t *testing.T) {
 
 	// Create a valid job worktree first
 	validJobPath := filepath.Join(worktreeBase, "j_valid123")
-	branchName := "eksecd/test-branch-valid"
+	branchName := "nairid/test-branch-valid"
 	baseRef := "origin/main"
 	err := gitClient.CreateWorktree(validJobPath, branchName, baseRef)
 	if err != nil {

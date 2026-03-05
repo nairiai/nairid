@@ -1,7 +1,7 @@
 package core
 
 import (
-	"eksecd/utils"
+	"nairid/utils"
 	"crypto/rand"
 	"strings"
 	"time"

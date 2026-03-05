@@ -67,15 +67,15 @@ func NewDirLock(path string) (*DirLock, error) {
 	// Get system temp directory
 	tempDir := os.TempDir()
 
-	// Create eksecd subdirectory in temp
-	eksecTempDir := filepath.Join(tempDir, "eksecd")
-	if err := os.MkdirAll(eksecTempDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create eksecd temp directory: %w", err)
+	// Create nairid subdirectory in temp
+	nairiTempDir := filepath.Join(tempDir, "nairid")
+	if err := os.MkdirAll(nairiTempDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create nairid temp directory: %w", err)
 	}
 
 	// Create lock file path using sanitized directory name
 	lockFileName := fmt.Sprintf("%s.lock", sanitizedDir)
-	lockPath := filepath.Join(eksecTempDir, lockFileName)
+	lockPath := filepath.Join(nairiTempDir, lockFileName)
 
 	// Create flock instance
 	lockFile := flock.New(lockPath)
@@ -95,7 +95,7 @@ func (dl *DirLock) TryLock() error {
 	}
 
 	if !locked {
-		return fmt.Errorf("another eksecd instance is already running in this path")
+		return fmt.Errorf("another nairid instance is already running in this path")
 	}
 
 	return nil

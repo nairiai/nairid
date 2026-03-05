@@ -12,8 +12,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"eksecd/clients"
-	"eksecd/core/log"
+	"nairid/clients"
+	"nairid/core/log"
 )
 
 // ErrPoolEmpty is returned when the pool has no available worktrees.
@@ -31,7 +31,7 @@ var ErrWorktreeInvalid = errors.New("pooled worktree is no longer valid")
 // PooledWorktree represents a pre-created worktree ready for use
 type PooledWorktree struct {
 	Path       string // e.g., ~/.eksec_worktrees/pool-{uuid}
-	BranchName string // e.g., eksecd/pool-ready-{uuid}
+	BranchName string // e.g., nairid/pool-ready-{uuid}
 	BaseCommit string // Commit hash when created (for staleness check)
 	CreatedAt  time.Time
 }
@@ -105,7 +105,7 @@ func (p *WorktreePool) isStopping() bool {
 //
 // Parameters:
 //   - jobID: the unique identifier for the job (used as directory name)
-//   - branchName: the target branch name for the job (e.g., "eksecd/adjective-noun-timestamp")
+//   - branchName: the target branch name for the job (e.g., "nairid/adjective-noun-timestamp")
 //
 // Returns:
 //   - worktreePath: the path to the ready-to-use worktree
@@ -171,7 +171,7 @@ func (p *WorktreePool) Acquire(jobID, branchName string) (string, error) {
 		return "", fmt.Errorf("failed to move worktree: %w", err)
 	}
 
-	// Rename branch: eksecd/pool-ready-{uuid} -> eksecd/{branchName}
+	// Rename branch: nairid/pool-ready-{uuid} -> nairid/{branchName}
 	if err := p.renameBranch(newPath, pooledWT.BranchName, branchName); err != nil {
 		log.Error("❌ Failed to rename branch from %s to %s: %v", pooledWT.BranchName, branchName, err)
 		// Try to revert the worktree move
@@ -260,7 +260,7 @@ func (p *WorktreePool) replenish() error {
 	// Generate unique ID
 	id := uuid.New().String()[:8]
 	wtPath := filepath.Join(p.basePath, fmt.Sprintf("pool-%s", id))
-	branchName := fmt.Sprintf("eksecd/pool-ready-%s", id)
+	branchName := fmt.Sprintf("nairid/pool-ready-%s", id)
 
 	// Ensure base directory exists
 	if err := os.MkdirAll(p.basePath, 0755); err != nil {
@@ -616,8 +616,8 @@ func (p *WorktreePool) ReclaimOrphanedPoolWorktrees() error {
 			continue
 		}
 
-		// Only reclaim if it has a pool-ready branch
-		if !strings.HasPrefix(branchName, "eksecd/pool-ready-") {
+		// Only reclaim if it has a pool-ready branch (nairid/ or legacy eksecd/ prefix)
+		if !strings.HasPrefix(branchName, "nairid/pool-ready-") && !strings.HasPrefix(branchName, "eksecd/pool-ready-") {
 			log.Info("⚠️ Worktree %s has non-pool branch %s, removing", wtPath, branchName)
 			if err := p.gitClient.RemoveWorktree(wtPath); err != nil {
 				log.Warn("⚠️ Failed to remove worktree: %v", err)

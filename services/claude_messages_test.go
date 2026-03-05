@@ -336,7 +336,7 @@ func TestExitPlanModeMessageParsing(t *testing.T) {
 func TestRealWorldExample(t *testing.T) {
 	// Based on the actual output-finish-todo.jsonl structure
 	input := `{"type":"system","subtype":"init","cwd":"/Users/pmihaylov/prg/ccpg/cc1","session_id":"79fac4e0-79bd-4489-afb5-6023fa22cc47","tools":["Task","Bash","Glob","Grep","LS","ExitPlanMode","Read","Edit","MultiEdit","Write","NotebookRead","NotebookEdit","WebFetch","TodoWrite","WebSearch"],"mcp_servers":[],"model":"claude-sonnet-4-20250514","permissionMode":"acceptEdits","apiKeySource":"ANTHROPIC_API_KEY"}
-{"type":"assistant","message":{"id":"msg_01HCL8z1N6MtR4Z4P9puyAua","type":"message","role":"assistant","model":"claude-sonnet-4-20250514","content":[{"type":"text","text":"I'll study the eksecd codebase to understand its logging architecture and propose options for implementing persistent logging."}],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":4,"cache_creation_input_tokens":16747,"cache_read_input_tokens":0,"output_tokens":3,"service_tier":"standard"}},"parent_tool_use_id":null,"session_id":"79fac4e0-79bd-4489-afb5-6023fa22cc47"}
+{"type":"assistant","message":{"id":"msg_01HCL8z1N6MtR4Z4P9puyAua","type":"message","role":"assistant","model":"claude-sonnet-4-20250514","content":[{"type":"text","text":"I'll study the nairid codebase to understand its logging architecture and propose options for implementing persistent logging."}],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":4,"cache_creation_input_tokens":16747,"cache_read_input_tokens":0,"output_tokens":3,"service_tier":"standard"}},"parent_tool_use_id":null,"session_id":"79fac4e0-79bd-4489-afb5-6023fa22cc47"}
 {"type":"result","subtype":"error_during_execution","duration_ms":70219,"duration_api_ms":69749,"is_error":false,"num_turns":0,"session_id":"79fac4e0-79bd-4489-afb5-6023fa22cc47","total_cost_usd":0.21045915,"usage":{"input_tokens":337,"cache_creation_input_tokens":33704,"cache_read_input_tokens":286445,"output_tokens":4075,"server_tool_use":{"web_search_requests":0},"service_tier":"standard"}}`
 
 	messages, err := MapClaudeOutputToMessages(input)
@@ -363,7 +363,7 @@ func TestRealWorldExample(t *testing.T) {
 		t.Fatalf("Expected AssistantMessage, got %T", messages[1])
 	}
 
-	expectedText := "I'll study the eksecd codebase to understand its logging architecture and propose options for implementing persistent logging."
+	expectedText := "I'll study the nairid codebase to understand its logging architecture and propose options for implementing persistent logging."
 	if len(assistantMsg.Message.Content) == 0 {
 		t.Errorf("Expected content in assistant message")
 	} else {

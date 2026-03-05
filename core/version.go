@@ -8,7 +8,7 @@ import (
 //go:embed VERSION
 var versionContent string
 
-// GetVersion returns the current version of eksecd
+// GetVersion returns the current version of nairid
 func GetVersion() string {
 	return strings.TrimSpace(versionContent)
 }

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"eksecd/clients"
-	"eksecd/core"
-	"eksecd/core/log"
+	"nairid/clients"
+	"nairid/core"
+	"nairid/core/log"
 )
 
 type CursorClient struct {

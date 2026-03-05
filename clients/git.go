@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"eksecd/core/log"
+	"nairid/core/log"
 
 	"github.com/cenkalti/backoff/v4"
 )
@@ -563,7 +563,7 @@ func (g *GitClient) IsGitRepositoryRoot() error {
 	if gitRoot != targetDir {
 		log.Error("❌ Not at Git repository root. Target: %s, Git root: %s", targetDir, gitRoot)
 		return fmt.Errorf(
-			"eksecd must be run from the Git repository root directory. Target: %s, Git root: %s",
+			"nairid must be run from the Git repository root directory. Target: %s, Git root: %s",
 			targetDir,
 			gitRoot,
 		)

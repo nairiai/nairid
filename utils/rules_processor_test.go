@@ -233,9 +233,9 @@ Write tests.`
 // Test GetRuleFiles
 
 func TestGetRuleFiles_EmptyDirectory(t *testing.T) {
-	// Create temporary eksecd rules directory
+	// Create temporary nairid rules directory
 	tempDir := t.TempDir()
-	rulesDir := filepath.Join(tempDir, ".config", "eksecd", "rules")
+	rulesDir := filepath.Join(tempDir, ".config", "nairid", "rules")
 
 	if err := os.MkdirAll(rulesDir, 0755); err != nil {
 		t.Fatalf("Failed to create rules directory: %v", err)
@@ -258,9 +258,9 @@ func TestGetRuleFiles_EmptyDirectory(t *testing.T) {
 }
 
 func TestGetRuleFiles_WithMarkdownFiles(t *testing.T) {
-	// Create temporary eksecd rules directory
+	// Create temporary nairid rules directory
 	tempDir := t.TempDir()
-	rulesDir := filepath.Join(tempDir, ".config", "eksecd", "rules")
+	rulesDir := filepath.Join(tempDir, ".config", "nairid", "rules")
 
 	if err := os.MkdirAll(rulesDir, 0755); err != nil {
 		t.Fatalf("Failed to create rules directory: %v", err)
@@ -316,12 +316,12 @@ func TestGetRuleFiles_NonexistentDirectory(t *testing.T) {
 	}
 }
 
-// Test CleanCcagentRulesDir
+// Test CleanNairidRulesDir
 
-func TestCleanCcagentRulesDir_WithExistingRules(t *testing.T) {
-	// Create temporary eksecd rules directory with files
+func TestCleanNairidRulesDir_WithExistingRules(t *testing.T) {
+	// Create temporary nairid rules directory with files
 	tempDir := t.TempDir()
-	rulesDir := filepath.Join(tempDir, ".config", "eksecd", "rules")
+	rulesDir := filepath.Join(tempDir, ".config", "nairid", "rules")
 
 	if err := os.MkdirAll(rulesDir, 0755); err != nil {
 		t.Fatalf("Failed to create rules directory: %v", err)
@@ -342,7 +342,7 @@ func TestCleanCcagentRulesDir_WithExistingRules(t *testing.T) {
 	defer os.Setenv("HOME", originalHome)
 
 	// Clean the rules directory
-	if err := CleanCcagentRulesDir(); err != nil {
+	if err := CleanNairidRulesDir(); err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 
@@ -357,7 +357,7 @@ func TestCleanCcagentRulesDir_WithExistingRules(t *testing.T) {
 	}
 }
 
-func TestCleanCcagentRulesDir_NonexistentDirectory(t *testing.T) {
+func TestCleanNairidRulesDir_NonexistentDirectory(t *testing.T) {
 	// Use temporary directory that doesn't have rules directory
 	tempDir := t.TempDir()
 
@@ -367,15 +367,15 @@ func TestCleanCcagentRulesDir_NonexistentDirectory(t *testing.T) {
 	defer os.Setenv("HOME", originalHome)
 
 	// Clean should succeed even if directory doesn't exist
-	if err := CleanCcagentRulesDir(); err != nil {
+	if err := CleanNairidRulesDir(); err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 }
 
-func TestCleanCcagentRulesDir_RecreatesDirectory(t *testing.T) {
-	// Create temporary eksecd rules directory
+func TestCleanNairidRulesDir_RecreatesDirectory(t *testing.T) {
+	// Create temporary nairid rules directory
 	tempDir := t.TempDir()
-	rulesDir := filepath.Join(tempDir, ".config", "eksecd", "rules")
+	rulesDir := filepath.Join(tempDir, ".config", "nairid", "rules")
 
 	if err := os.MkdirAll(rulesDir, 0755); err != nil {
 		t.Fatalf("Failed to create rules directory: %v", err)
@@ -387,7 +387,7 @@ func TestCleanCcagentRulesDir_RecreatesDirectory(t *testing.T) {
 	defer os.Setenv("HOME", originalHome)
 
 	// Clean the rules directory
-	if err := CleanCcagentRulesDir(); err != nil {
+	if err := CleanNairidRulesDir(); err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 
@@ -435,7 +435,7 @@ func TestClaudeCodeRulesProcessor_WithRules(t *testing.T) {
 	// Create temporary directories
 	tempDir := t.TempDir()
 	workDir := filepath.Join(tempDir, "workspace")
-	rulesDir := filepath.Join(tempDir, ".config", "eksecd", "rules")
+	rulesDir := filepath.Join(tempDir, ".config", "nairid", "rules")
 
 	if err := os.MkdirAll(workDir, 0755); err != nil {
 		t.Fatalf("Failed to create work directory: %v", err)
@@ -495,7 +495,7 @@ func TestClaudeCodeRulesProcessor_RemovesStaleRules(t *testing.T) {
 	// Create temporary directories
 	tempDir := t.TempDir()
 	workDir := filepath.Join(tempDir, "workspace")
-	rulesDir := filepath.Join(tempDir, ".config", "eksecd", "rules")
+	rulesDir := filepath.Join(tempDir, ".config", "nairid", "rules")
 	claudeRulesDir := filepath.Join(tempDir, ".claude", "rules")
 
 	if err := os.MkdirAll(workDir, 0755); err != nil {
@@ -516,7 +516,7 @@ func TestClaudeCodeRulesProcessor_RemovesStaleRules(t *testing.T) {
 		t.Fatalf("Failed to create stale rule: %v", err)
 	}
 
-	// Create a fresh rule in eksecd rules directory
+	// Create a fresh rule in nairid rules directory
 	freshRulePath := filepath.Join(rulesDir, "fresh-rule.md")
 	if err := os.WriteFile(freshRulePath, []byte("# Fresh"), 0644); err != nil {
 		t.Fatalf("Failed to create fresh rule: %v", err)
@@ -578,7 +578,7 @@ func TestOpenCodeRulesProcessor_WithRules(t *testing.T) {
 	// Create temporary directories
 	tempDir := t.TempDir()
 	workDir := filepath.Join(tempDir, "workspace")
-	rulesDir := filepath.Join(tempDir, ".config", "eksecd", "rules")
+	rulesDir := filepath.Join(tempDir, ".config", "nairid", "rules")
 
 	if err := os.MkdirAll(workDir, 0755); err != nil {
 		t.Fatalf("Failed to create work directory: %v", err)
@@ -679,7 +679,7 @@ func TestOpenCodeRulesProcessor_CleansOldArtifacts(t *testing.T) {
 	// Create temporary directories
 	tempDir := t.TempDir()
 	workDir := filepath.Join(tempDir, "workspace")
-	rulesDir := filepath.Join(tempDir, ".config", "eksecd", "rules")
+	rulesDir := filepath.Join(tempDir, ".config", "nairid", "rules")
 	opencodeRulesDir := filepath.Join(tempDir, ".config", "opencode", "rules")
 	opencodeConfigDir := filepath.Join(tempDir, ".config", "opencode")
 
@@ -707,7 +707,7 @@ func TestOpenCodeRulesProcessor_CleansOldArtifacts(t *testing.T) {
 		t.Fatalf("Failed to create old opencode.json: %v", err)
 	}
 
-	// Create a fresh rule in eksecd rules directory
+	// Create a fresh rule in nairid rules directory
 	freshRulePath := filepath.Join(rulesDir, "fresh-rule.md")
 	if err := os.WriteFile(freshRulePath, []byte("# Fresh"), 0644); err != nil {
 		t.Fatalf("Failed to create fresh rule: %v", err)
@@ -740,9 +740,9 @@ func TestOpenCodeRulesProcessor_CleansOldArtifacts(t *testing.T) {
 		t.Errorf("Expected AGENTS.md to be created")
 	}
 
-	// Verify fresh rule still exists in eksecd rules directory
+	// Verify fresh rule still exists in nairid rules directory
 	if _, err := os.Stat(freshRulePath); os.IsNotExist(err) {
-		t.Errorf("Expected fresh rule in eksecd directory to still exist")
+		t.Errorf("Expected fresh rule in nairid directory to still exist")
 	}
 }
 
@@ -768,7 +768,7 @@ func TestCodexRulesProcessor_NoRules(t *testing.T) {
 
 func TestCodexRulesProcessor_WithRules(t *testing.T) {
 	tempDir := t.TempDir()
-	rulesDir := filepath.Join(tempDir, ".config", "eksecd", "rules")
+	rulesDir := filepath.Join(tempDir, ".config", "nairid", "rules")
 
 	if err := os.MkdirAll(rulesDir, 0755); err != nil {
 		t.Fatalf("Failed to create rules directory: %v", err)
@@ -839,7 +839,7 @@ Write tests for everything.`
 func TestCodexRulesProcessor_WithTargetHomeDir(t *testing.T) {
 	tempDir := t.TempDir()
 	targetHome := filepath.Join(tempDir, "target-home")
-	rulesDir := filepath.Join(tempDir, ".config", "eksecd", "rules")
+	rulesDir := filepath.Join(tempDir, ".config", "nairid", "rules")
 
 	if err := os.MkdirAll(rulesDir, 0755); err != nil {
 		t.Fatalf("Failed to create rules directory: %v", err)

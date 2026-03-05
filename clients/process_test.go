@@ -10,9 +10,9 @@ import (
 func TestFilterEnvForAgent(t *testing.T) {
 	env := []string{
 		"PATH=/usr/bin",
-		"EKSEC_API_KEY=secret_api_key",
+		"NAIRI_API_KEY=secret_api_key",
 		"ANTHROPIC_API_KEY=sk-ant-xxx",
-		"EKSEC_WS_API_URL=wss://api.example.com",
+		"NAIRI_WS_API_URL=wss://api.example.com",
 		"AGENT_EXEC_USER=agentrunner",
 		"HOME=/home/user",
 	}
@@ -52,6 +52,29 @@ func TestFilterEnvForAgent(t *testing.T) {
 	// Verify count: 6 original - 3 blocked = 3 remaining
 	if len(filtered) != 3 {
 		t.Errorf("Expected 3 filtered vars, got %d", len(filtered))
+	}
+}
+
+func TestFilterEnvForAgent_LegacyEksecVars(t *testing.T) {
+	env := []string{
+		"PATH=/usr/bin",
+		"EKSEC_API_KEY=secret_api_key",
+		"EKSEC_WS_API_URL=wss://api.example.com",
+		"HOME=/home/user",
+	}
+
+	filtered := FilterEnvForAgent(env)
+
+	// Legacy EKSEC_* vars should also be blocked
+	for _, e := range filtered {
+		if strings.HasPrefix(e, "EKSEC_API_KEY=") || strings.HasPrefix(e, "EKSEC_WS_API_URL=") {
+			t.Errorf("Legacy EKSEC var should be filtered out, but found: %s", e)
+		}
+	}
+
+	// Verify count: 4 original - 2 blocked = 2 remaining
+	if len(filtered) != 2 {
+		t.Errorf("Expected 2 filtered vars, got %d", len(filtered))
 	}
 }
 
@@ -219,8 +242,8 @@ func TestBuildAgentCommandWithContext_Managed(t *testing.T) {
 func TestUpdateHomeForUser(t *testing.T) {
 	env := []string{
 		"PATH=/usr/bin",
-		"HOME=/home/eksecd",
-		"USER=eksecd",
+		"HOME=/home/nairid",
+		"USER=nairid",
 	}
 
 	result := UpdateHomeForUser(env, "agentrunner")
@@ -237,7 +260,7 @@ func TestUpdateHomeForUser(t *testing.T) {
 		if e == "HOME=/home/agentrunner" {
 			hasNewHome = true
 		}
-		if e == "HOME=/home/eksecd" {
+		if e == "HOME=/home/nairid" {
 			hasOldHome = true
 		}
 	}
@@ -254,7 +277,7 @@ func TestUpdateHomeForUser_NoHomeInEnv(t *testing.T) {
 	// Test case where HOME is not in the environment at all
 	env := []string{
 		"PATH=/usr/bin",
-		"USER=eksecd",
+		"USER=nairid",
 	}
 
 	result := UpdateHomeForUser(env, "agentrunner")

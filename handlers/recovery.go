@@ -4,10 +4,10 @@ import (
 	"sort"
 	"time"
 
-	"eksecd/core"
-	"eksecd/core/log"
-	"eksecd/models"
-	"eksecd/usecases"
+	"nairid/core"
+	"nairid/core/log"
+	"nairid/models"
+	"nairid/usecases"
 )
 
 // RecoverJobs recovers both in-progress jobs and queued messages after agent restart

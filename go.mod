@@ -1,4 +1,4 @@
-module eksecd
+module nairid
 
 go 1.24.1
 

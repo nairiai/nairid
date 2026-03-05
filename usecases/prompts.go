@@ -77,7 +77,7 @@ INSTRUCTIONS:
 - Use proper markdown formatting
 
 IMPORTANT:
-- Do NOT include any "Generated with eksecd" or similar footer text. I will add that separately.
+- Do NOT include any "Generated with nairid" or similar footer text. I will add that separately.
 - Do NOT include any introductory text like "Here is your description"
 
 CRITICAL: Your response must contain ONLY the PR description in markdown format. Do not include:
@@ -105,7 +105,7 @@ Keep it professional but brief. Focus on WHAT changed at a high level and WHY th
 Use proper markdown formatting. Base it on what we actually worked on in our conversation.
 
 IMPORTANT:
-- Do NOT include any "Generated with eksecd" or similar footer text. I will add that separately.
+- Do NOT include any "Generated with nairid" or similar footer text. I will add that separately.
 - Keep the summary concise - avoid listing every single file or detailed code changes
 - Focus on the business/functional purpose of the changes
 - Do NOT include any introductory text like "Here is your description"
@@ -186,7 +186,7 @@ Examples of when NOT to update:
 - Current description mentions "Performance improvements" → New work makes minor tweaks → Keep current
 
 IMPORTANT: 
-- Do NOT include any "Generated with eksecd" or similar footer text. I will add that separately.
+- Do NOT include any "Generated with nairid" or similar footer text. I will add that separately.
 - Return only the description content in markdown format, nothing else.
 - If no update is needed, return the current description exactly as provided (minus any footer).
 

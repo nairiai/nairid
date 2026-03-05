@@ -90,7 +90,7 @@ func TestOpenCodePermissionsProcessor_PreservesExistingConfig(t *testing.T) {
 				"enabled": true,
 			},
 		},
-		"instructions": []string{"~/.config/eksecd/rules/*.md"},
+		"instructions": []string{"~/.config/nairid/rules/*.md"},
 	}
 
 	existingJSON, _ := json.MarshalIndent(existingConfig, "", "  ")
@@ -132,7 +132,7 @@ func TestOpenCodePermissionsProcessor_PreservesExistingConfig(t *testing.T) {
 	if !ok {
 		t.Fatalf("Expected 'instructions' key to be preserved, got: %v", config)
 	}
-	if len(instructions) == 0 || instructions[0] != "~/.config/eksecd/rules/*.md" {
+	if len(instructions) == 0 || instructions[0] != "~/.config/nairid/rules/*.md" {
 		t.Error("Expected instructions to be preserved")
 	}
 

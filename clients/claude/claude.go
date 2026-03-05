@@ -6,9 +6,9 @@ import (
 	"os/exec"
 	"strings"
 
-	"eksecd/clients"
-	"eksecd/core"
-	"eksecd/core/log"
+	"nairid/clients"
+	"nairid/core"
+	"nairid/core/log"
 )
 
 type ClaudeClient struct {

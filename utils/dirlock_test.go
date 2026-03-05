@@ -38,18 +38,18 @@ func TestNewDirLock(t *testing.T) {
 
 	// Verify lock path contains expected components
 	lockPath := lock.GetLockPath()
-	if !strings.Contains(lockPath, "eksecd") {
-		t.Errorf("Lock path should contain 'eksecd': %s", lockPath)
+	if !strings.Contains(lockPath, "nairid") {
+		t.Errorf("Lock path should contain 'nairid': %s", lockPath)
 	}
 
 	if !strings.HasSuffix(lockPath, ".lock") {
 		t.Errorf("Lock path should end with '.lock': %s", lockPath)
 	}
 
-	// Verify the eksecd directory was created
-	eksecDir := filepath.Dir(lockPath)
-	if _, err := os.Stat(eksecDir); os.IsNotExist(err) {
-		t.Errorf("eksecd directory should be created: %s", eksecDir)
+	// Verify the nairid directory was created
+	nairiDir := filepath.Dir(lockPath)
+	if _, err := os.Stat(nairiDir); os.IsNotExist(err) {
+		t.Errorf("nairid directory should be created: %s", nairiDir)
 	}
 }
 

@@ -9,7 +9,7 @@ import (
 
 	"github.com/gammazero/workerpool"
 
-	"eksecd/models"
+	"nairid/models"
 )
 
 // createTestAppState creates an AppState with a temp file for persistence

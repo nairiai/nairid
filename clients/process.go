@@ -18,13 +18,15 @@ const DefaultSessionTimeout = 1 * time.Hour
 // BlockedEnvVars lists environment variables that should never be passed to agent processes.
 // These contain sensitive credentials that agents should not have access to.
 var BlockedEnvVars = map[string]bool{
-	"EKSEC_API_KEY":    true,
-	"EKSEC_WS_API_URL": true,
+	"NAIRI_API_KEY":      true,
+	"NAIRI_WS_API_URL":   true,
+	"EKSEC_API_KEY":      true, // Legacy env var
+	"EKSEC_WS_API_URL":   true, // Legacy env var
 	"CCAGENT_API_KEY":    true, // Legacy env var
 	"CCAGENT_WS_API_URL": true, // Legacy env var
 	"AGENT_EXEC_USER":    true,
-	"AGENT_HTTP_PROXY":   true, // This is for eksecd to read, not for agents
-	"AGENT_MCP_PROXY":    true, // This is for eksecd to read, not for agents
+	"AGENT_HTTP_PROXY":   true, // This is for nairid to read, not for agents
+	"AGENT_MCP_PROXY":    true, // This is for nairid to read, not for agents
 }
 
 // AgentExecUser returns the configured user for running agent processes.
@@ -34,7 +36,7 @@ func AgentExecUser() string {
 }
 
 // AgentMCPProxy returns the MCP proxy URL for proxying MCP server connections.
-// When set, eksecd configures agents to use HTTP URLs pointing to the MCP proxy
+// When set, nairid configures agents to use HTTP URLs pointing to the MCP proxy
 // instead of spawning local stdio MCP server processes.
 // Returns empty string if not configured.
 func AgentMCPProxy() string {
@@ -107,7 +109,7 @@ func buildShellCommand(name string, args []string) string {
 }
 
 // FilterEnvForAgent removes sensitive variables from environment.
-// This prevents agent processes from accessing credentials like EKSEC_API_KEY.
+// This prevents agent processes from accessing credentials like NAIRI_API_KEY.
 func FilterEnvForAgent(env []string) []string {
 	var filtered []string
 	for _, e := range env {
@@ -151,7 +153,7 @@ func UpdateHomeForUser(env []string, username string) []string {
 
 // InjectProxyEnv adds HTTP_PROXY and HTTPS_PROXY to the environment if AGENT_HTTP_PROXY is set.
 // This ensures agent processes route their traffic through the secret proxy while the
-// eksecd process itself does not use the proxy (allowing it to reach the backend).
+// nairid process itself does not use the proxy (allowing it to reach the backend).
 // When AGENT_MCP_PROXY is also set, it adds the MCP proxy hostname to NO_PROXY so that
 // agent processes can reach the MCP proxy directly without going through the secret proxy.
 func InjectProxyEnv(env []string) []string {

@@ -57,9 +57,9 @@ func NewAgentsApiClient(apiKey, baseURL, agentID string) *AgentsApiClient {
 }
 
 // IsSelfHosted returns true if the API key indicates a self-hosted installation
-// Self-hosted installations use API keys with the "eksecd_" or legacy "ccagent_" prefix
+// Self-hosted installations use API keys with the "nairid_", legacy "eksecd_", or legacy "ccagent_" prefix
 func (c *AgentsApiClient) IsSelfHosted() bool {
-	return strings.HasPrefix(c.apiKey, "eksecd_") || strings.HasPrefix(c.apiKey, "ccagent_")
+	return strings.HasPrefix(c.apiKey, "nairid_") || strings.HasPrefix(c.apiKey, "eksecd_") || strings.HasPrefix(c.apiKey, "ccagent_")
 }
 
 // FetchAttachment fetches an attachment by ID from the Claude Control API

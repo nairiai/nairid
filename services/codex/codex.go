@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"eksecd/clients"
-	"eksecd/core"
-	"eksecd/core/log"
-	"eksecd/services"
+	"nairid/clients"
+	"nairid/core"
+	"nairid/core/log"
+	"nairid/services"
 )
 
 type CodexService struct {

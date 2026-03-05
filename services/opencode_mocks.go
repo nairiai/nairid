@@ -1,6 +1,6 @@
 package services
 
-import "eksecd/clients"
+import "nairid/clients"
 
 // MockOpenCodeClient implements the OpenCodeClient interface for testing
 type MockOpenCodeClient struct {
