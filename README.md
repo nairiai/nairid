@@ -1,5 +1,7 @@
 # eksecd
 
+fake revision 1
+
 The eksec daemon - runs your AI coding agents and connects them to the [eksec platform](https://eksec.ai). eksecd bridges AI assistants (Claude Code, Cursor, Codex, OpenCode) with team collaboration platforms like Slack and Discord.
 
 ### Supported AI Assistants
