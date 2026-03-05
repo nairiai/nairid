@@ -267,7 +267,9 @@ func TestExtractZipToDirectory_PreservesExecutePermission(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create regular file header: %v", err)
 	}
-	rf.Write([]byte("# README"))
+	if _, err := rf.Write([]byte("# README")); err != nil {
+		t.Fatalf("Failed to write regular file: %v", err)
+	}
 
 	// Add an executable script (with execute bit)
 	scriptHeader := &zip.FileHeader{Name: "scripts/deploy.sh"}
@@ -276,7 +278,9 @@ func TestExtractZipToDirectory_PreservesExecutePermission(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create script file header: %v", err)
 	}
-	sf.Write([]byte("#!/bin/bash\necho deploy"))
+	if _, err := sf.Write([]byte("#!/bin/bash\necho deploy")); err != nil {
+		t.Fatalf("Failed to write script file: %v", err)
+	}
 
 	w.Close()
 	zipFile.Close()
