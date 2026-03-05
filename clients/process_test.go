@@ -55,6 +55,29 @@ func TestFilterEnvForAgent(t *testing.T) {
 	}
 }
 
+func TestFilterEnvForAgent_LegacyEksecVars(t *testing.T) {
+	env := []string{
+		"PATH=/usr/bin",
+		"EKSEC_API_KEY=secret_api_key",
+		"EKSEC_WS_API_URL=wss://api.example.com",
+		"HOME=/home/user",
+	}
+
+	filtered := FilterEnvForAgent(env)
+
+	// Legacy EKSEC_* vars should also be blocked
+	for _, e := range filtered {
+		if strings.HasPrefix(e, "EKSEC_API_KEY=") || strings.HasPrefix(e, "EKSEC_WS_API_URL=") {
+			t.Errorf("Legacy EKSEC var should be filtered out, but found: %s", e)
+		}
+	}
+
+	// Verify count: 4 original - 2 blocked = 2 remaining
+	if len(filtered) != 2 {
+		t.Errorf("Expected 2 filtered vars, got %d", len(filtered))
+	}
+}
+
 func TestFilterEnvForAgent_EmptyEnv(t *testing.T) {
 	filtered := FilterEnvForAgent([]string{})
 	if len(filtered) != 0 {

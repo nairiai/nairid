@@ -43,10 +43,14 @@ func NewEnvManager() (*EnvManager, error) {
 }
 
 // GetConfigDir returns the config directory path, either from NAIRI_CONFIG_DIR
-// environment variable or the default ~/.config/nairid
+// environment variable (or legacy EKSEC_CONFIG_DIR) or the default ~/.config/nairid
 func GetConfigDir() (string, error) {
-	// Check if NAIRI_CONFIG_DIR is set
-	if configDir := os.Getenv("NAIRI_CONFIG_DIR"); configDir != "" {
+	// Check if NAIRI_CONFIG_DIR is set, fall back to legacy EKSEC_CONFIG_DIR
+	configDir := os.Getenv("NAIRI_CONFIG_DIR")
+	if configDir == "" {
+		configDir = os.Getenv("EKSEC_CONFIG_DIR") // Legacy env var
+	}
+	if configDir != "" {
 		// Expand ~ if present
 		if len(configDir) >= 2 && configDir[:2] == "~/" {
 			homeDir, err := os.UserHomeDir()
@@ -69,7 +73,7 @@ func GetConfigDir() (string, error) {
 		return "", err
 	}
 
-	configDir := filepath.Join(homeDir, ".config", "nairid")
+	configDir = filepath.Join(homeDir, ".config", "nairid")
 
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create config directory: %w", err)

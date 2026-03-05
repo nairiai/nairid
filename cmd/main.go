@@ -432,12 +432,19 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 	envManager.StartPeriodicRefresh(1 * time.Minute)
 
 	// Get API key and WS URL for agents API client
+	// Support legacy EKSEC_* env vars for backwards compatibility
 	nairiAPIKey := envManager.Get("NAIRI_API_KEY")
+	if nairiAPIKey == "" {
+		nairiAPIKey = envManager.Get("EKSEC_API_KEY") // Legacy env var
+	}
 	if nairiAPIKey == "" {
 		return nil, fmt.Errorf("NAIRI_API_KEY environment variable is required but not set")
 	}
 
 	wsURL := envManager.Get("NAIRI_WS_API_URL")
+	if wsURL == "" {
+		wsURL = envManager.Get("EKSEC_WS_API_URL") // Legacy env var
+	}
 	if wsURL == "" {
 		wsURL = "https://api.nairi.ai/socketio/"
 	}
@@ -446,6 +453,9 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 	apiBaseURL := strings.TrimSuffix(wsURL, "/socketio/")
 	// Get agent ID for X-AGENT-ID header (used to disambiguate containers sharing API keys)
 	agentIDForAPI := envManager.Get("NAIRI_AGENT_ID")
+	if agentIDForAPI == "" {
+		agentIDForAPI = envManager.Get("EKSEC_AGENT_ID") // Legacy env var
+	}
 	agentsApiClient := clients.NewAgentsApiClient(nairiAPIKey, apiBaseURL, agentIDForAPI)
 	log.Info("🔗 Configured agents API client with base URL: %s", apiBaseURL)
 
@@ -952,7 +962,11 @@ func (cr *CmdRunner) startSocketIOClient(serverURLStr, apiKey string) error {
 	repoIdentifier := repoContext.RepositoryIdentifier
 
 	// Determine agent ID value - use env var if set, otherwise use repo identifier
+	// Support legacy EKSEC_AGENT_ID for backwards compatibility
 	agentID := cr.envManager.Get("NAIRI_AGENT_ID")
+	if agentID == "" {
+		agentID = cr.envManager.Get("EKSEC_AGENT_ID") // Legacy env var
+	}
 	if agentID == "" {
 		if repoIdentifier != "" {
 			agentID = repoIdentifier

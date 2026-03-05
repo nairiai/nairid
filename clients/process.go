@@ -18,8 +18,10 @@ const DefaultSessionTimeout = 1 * time.Hour
 // BlockedEnvVars lists environment variables that should never be passed to agent processes.
 // These contain sensitive credentials that agents should not have access to.
 var BlockedEnvVars = map[string]bool{
-	"NAIRI_API_KEY":    true,
-	"NAIRI_WS_API_URL": true,
+	"NAIRI_API_KEY":      true,
+	"NAIRI_WS_API_URL":   true,
+	"EKSEC_API_KEY":      true, // Legacy env var
+	"EKSEC_WS_API_URL":   true, // Legacy env var
 	"CCAGENT_API_KEY":    true, // Legacy env var
 	"CCAGENT_WS_API_URL": true, // Legacy env var
 	"AGENT_EXEC_USER":    true,
