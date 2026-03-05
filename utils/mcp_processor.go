@@ -94,26 +94,26 @@ func mkdirAllAsTargetUser(dirPath string) error {
 
 // MCPProcessor defines the interface for processing agent-specific MCP configurations
 type MCPProcessor interface {
-	// ProcessMCPConfigs processes MCP configs from the nairid MCP directory
+	// ProcessMCPConfigs processes MCP configs from the eksecd MCP directory
 	// and applies them to the agent-specific location.
 	// targetHomeDir specifies the home directory to deploy configs to.
 	// If empty, uses the current user's home directory.
 	ProcessMCPConfigs(targetHomeDir string) error
 }
 
-// GetNairidMCPDir returns the path to the nairid MCP directory
-func GetNairidMCPDir() (string, error) {
+// GetEksecdMCPDir returns the path to the eksecd MCP directory
+func GetEksecdMCPDir() (string, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get home directory: %w", err)
 	}
 
-	return filepath.Join(homeDir, ".config", "nairid", "mcp"), nil
+	return filepath.Join(homeDir, ".config", "eksecd", "mcp"), nil
 }
 
-// GetMCPConfigFiles returns a list of JSON files in the nairid MCP directory
+// GetMCPConfigFiles returns a list of JSON files in the eksecd MCP directory
 func GetMCPConfigFiles() ([]string, error) {
-	mcpDir, err := GetNairidMCPDir()
+	mcpDir, err := GetEksecdMCPDir()
 	if err != nil {
 		return nil, err
 	}
@@ -145,11 +145,11 @@ func GetMCPConfigFiles() ([]string, error) {
 	return mcpFiles, nil
 }
 
-// CleanNairidMCPDir removes all files from the nairid MCP directory
+// CleanEksecdMCPDir removes all files from the eksecd MCP directory
 // This should be called before downloading new MCP configs from the server to ensure
 // stale configs that were deleted on the server are also removed locally.
-func CleanNairidMCPDir() error {
-	mcpDir, err := GetNairidMCPDir()
+func CleanEksecdMCPDir() error {
+	mcpDir, err := GetEksecdMCPDir()
 	if err != nil {
 		return err
 	}
@@ -160,7 +160,7 @@ func CleanNairidMCPDir() error {
 		return nil
 	}
 
-	log.Info("🔌 Cleaning nairid MCP directory: %s", mcpDir)
+	log.Info("🔌 Cleaning eksecd MCP directory: %s", mcpDir)
 
 	// Remove and recreate the directory to ensure a clean state
 	if err := os.RemoveAll(mcpDir); err != nil {
@@ -172,7 +172,7 @@ func CleanNairidMCPDir() error {
 		return fmt.Errorf("failed to recreate MCP directory: %w", err)
 	}
 
-	log.Info("✅ Successfully cleaned nairid MCP directory")
+	log.Info("✅ Successfully cleaned eksecd MCP directory")
 	return nil
 }
 
@@ -255,7 +255,7 @@ func (p *ClaudeCodeMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 	}
 
 	if len(mcpServers) == 0 {
-		log.Info("🔌 No MCP configs found in nairid MCP directory")
+		log.Info("🔌 No MCP configs found in eksecd MCP directory")
 		return nil
 	}
 
@@ -334,7 +334,7 @@ func (p *OpenCodeMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 	}
 
 	if len(mcpServers) == 0 {
-		log.Info("🔌 No MCP configs found in nairid MCP directory")
+		log.Info("🔌 No MCP configs found in eksecd MCP directory")
 		return nil
 	}
 

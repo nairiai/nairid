@@ -15,9 +15,9 @@ import (
 // Test GetMCPConfigFiles
 
 func TestGetMCPConfigFiles_EmptyDirectory(t *testing.T) {
-	// Create temporary nairid MCP directory
+	// Create temporary eksecd MCP directory
 	tempDir := t.TempDir()
-	mcpDir := filepath.Join(tempDir, ".config", "nairid", "mcp")
+	mcpDir := filepath.Join(tempDir, ".config", "eksecd", "mcp")
 
 	if err := os.MkdirAll(mcpDir, 0755); err != nil {
 		t.Fatalf("Failed to create MCP directory: %v", err)
@@ -40,9 +40,9 @@ func TestGetMCPConfigFiles_EmptyDirectory(t *testing.T) {
 }
 
 func TestGetMCPConfigFiles_WithJSONFiles(t *testing.T) {
-	// Create temporary nairid MCP directory
+	// Create temporary eksecd MCP directory
 	tempDir := t.TempDir()
-	mcpDir := filepath.Join(tempDir, ".config", "nairid", "mcp")
+	mcpDir := filepath.Join(tempDir, ".config", "eksecd", "mcp")
 
 	if err := os.MkdirAll(mcpDir, 0755); err != nil {
 		t.Fatalf("Failed to create MCP directory: %v", err)
@@ -98,12 +98,12 @@ func TestGetMCPConfigFiles_NonexistentDirectory(t *testing.T) {
 	}
 }
 
-// Test CleanNairidMCPDir
+// Test CleanEksecdMCPDir
 
-func TestCleanNairidMCPDir_WithExistingConfigs(t *testing.T) {
-	// Create temporary nairid MCP directory with files
+func TestCleanEksecdMCPDir_WithExistingConfigs(t *testing.T) {
+	// Create temporary eksecd MCP directory with files
 	tempDir := t.TempDir()
-	mcpDir := filepath.Join(tempDir, ".config", "nairid", "mcp")
+	mcpDir := filepath.Join(tempDir, ".config", "eksecd", "mcp")
 
 	if err := os.MkdirAll(mcpDir, 0755); err != nil {
 		t.Fatalf("Failed to create MCP directory: %v", err)
@@ -124,7 +124,7 @@ func TestCleanNairidMCPDir_WithExistingConfigs(t *testing.T) {
 	defer os.Setenv("HOME", originalHome)
 
 	// Clean the MCP directory
-	if err := CleanNairidMCPDir(); err != nil {
+	if err := CleanEksecdMCPDir(); err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 
@@ -139,7 +139,7 @@ func TestCleanNairidMCPDir_WithExistingConfigs(t *testing.T) {
 	}
 }
 
-func TestCleanNairidMCPDir_NonexistentDirectory(t *testing.T) {
+func TestCleanEksecdMCPDir_NonexistentDirectory(t *testing.T) {
 	// Use temporary directory that doesn't have MCP directory
 	tempDir := t.TempDir()
 
@@ -149,15 +149,15 @@ func TestCleanNairidMCPDir_NonexistentDirectory(t *testing.T) {
 	defer os.Setenv("HOME", originalHome)
 
 	// Clean should succeed even if directory doesn't exist
-	if err := CleanNairidMCPDir(); err != nil {
+	if err := CleanEksecdMCPDir(); err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 }
 
-func TestCleanNairidMCPDir_RecreatesDirectory(t *testing.T) {
-	// Create temporary nairid MCP directory
+func TestCleanEksecdMCPDir_RecreatesDirectory(t *testing.T) {
+	// Create temporary eksecd MCP directory
 	tempDir := t.TempDir()
-	mcpDir := filepath.Join(tempDir, ".config", "nairid", "mcp")
+	mcpDir := filepath.Join(tempDir, ".config", "eksecd", "mcp")
 
 	if err := os.MkdirAll(mcpDir, 0755); err != nil {
 		t.Fatalf("Failed to create MCP directory: %v", err)
@@ -169,7 +169,7 @@ func TestCleanNairidMCPDir_RecreatesDirectory(t *testing.T) {
 	defer os.Setenv("HOME", originalHome)
 
 	// Clean the MCP directory
-	if err := CleanNairidMCPDir(); err != nil {
+	if err := CleanEksecdMCPDir(); err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 
@@ -182,9 +182,9 @@ func TestCleanNairidMCPDir_RecreatesDirectory(t *testing.T) {
 // Test MergeMCPConfigs
 
 func TestMergeMCPConfigs_EmptyDirectory(t *testing.T) {
-	// Create temporary nairid MCP directory
+	// Create temporary eksecd MCP directory
 	tempDir := t.TempDir()
-	mcpDir := filepath.Join(tempDir, ".config", "nairid", "mcp")
+	mcpDir := filepath.Join(tempDir, ".config", "eksecd", "mcp")
 
 	if err := os.MkdirAll(mcpDir, 0755); err != nil {
 		t.Fatalf("Failed to create MCP directory: %v", err)
@@ -207,9 +207,9 @@ func TestMergeMCPConfigs_EmptyDirectory(t *testing.T) {
 }
 
 func TestMergeMCPConfigs_WithMultipleConfigs(t *testing.T) {
-	// Create temporary nairid MCP directory
+	// Create temporary eksecd MCP directory
 	tempDir := t.TempDir()
-	mcpDir := filepath.Join(tempDir, ".config", "nairid", "mcp")
+	mcpDir := filepath.Join(tempDir, ".config", "eksecd", "mcp")
 
 	if err := os.MkdirAll(mcpDir, 0755); err != nil {
 		t.Fatalf("Failed to create MCP directory: %v", err)
@@ -278,9 +278,9 @@ func TestMergeMCPConfigs_WithMultipleConfigs(t *testing.T) {
 }
 
 func TestMergeMCPConfigs_WithDuplicateServerNames(t *testing.T) {
-	// Create temporary nairid MCP directory
+	// Create temporary eksecd MCP directory
 	tempDir := t.TempDir()
-	mcpDir := filepath.Join(tempDir, ".config", "nairid", "mcp")
+	mcpDir := filepath.Join(tempDir, ".config", "eksecd", "mcp")
 
 	if err := os.MkdirAll(mcpDir, 0755); err != nil {
 		t.Fatalf("Failed to create MCP directory: %v", err)
@@ -380,9 +380,9 @@ func TestMergeMCPConfigs_WithDuplicateServerNames(t *testing.T) {
 }
 
 func TestMergeMCPConfigs_WithInvalidJSON(t *testing.T) {
-	// Create temporary nairid MCP directory
+	// Create temporary eksecd MCP directory
 	tempDir := t.TempDir()
-	mcpDir := filepath.Join(tempDir, ".config", "nairid", "mcp")
+	mcpDir := filepath.Join(tempDir, ".config", "eksecd", "mcp")
 
 	if err := os.MkdirAll(mcpDir, 0755); err != nil {
 		t.Fatalf("Failed to create MCP directory: %v", err)
@@ -407,9 +407,9 @@ func TestMergeMCPConfigs_WithInvalidJSON(t *testing.T) {
 }
 
 func TestMergeMCPConfigs_WithMissingMCPServersKey(t *testing.T) {
-	// Create temporary nairid MCP directory
+	// Create temporary eksecd MCP directory
 	tempDir := t.TempDir()
-	mcpDir := filepath.Join(tempDir, ".config", "nairid", "mcp")
+	mcpDir := filepath.Join(tempDir, ".config", "eksecd", "mcp")
 
 	if err := os.MkdirAll(mcpDir, 0755); err != nil {
 		t.Fatalf("Failed to create MCP directory: %v", err)
@@ -441,9 +441,9 @@ func TestMergeMCPConfigs_WithMissingMCPServersKey(t *testing.T) {
 }
 
 func TestMergeMCPConfigs_WithEmptyMCPServersObject(t *testing.T) {
-	// Create temporary nairid MCP directory
+	// Create temporary eksecd MCP directory
 	tempDir := t.TempDir()
-	mcpDir := filepath.Join(tempDir, ".config", "nairid", "mcp")
+	mcpDir := filepath.Join(tempDir, ".config", "eksecd", "mcp")
 
 	if err := os.MkdirAll(mcpDir, 0755); err != nil {
 		t.Fatalf("Failed to create MCP directory: %v", err)
@@ -475,9 +475,9 @@ func TestMergeMCPConfigs_WithEmptyMCPServersObject(t *testing.T) {
 }
 
 func TestMergeMCPConfigs_WithMultipleServersInSingleFile(t *testing.T) {
-	// Create temporary nairid MCP directory
+	// Create temporary eksecd MCP directory
 	tempDir := t.TempDir()
-	mcpDir := filepath.Join(tempDir, ".config", "nairid", "mcp")
+	mcpDir := filepath.Join(tempDir, ".config", "eksecd", "mcp")
 
 	if err := os.MkdirAll(mcpDir, 0755); err != nil {
 		t.Fatalf("Failed to create MCP directory: %v", err)
@@ -563,7 +563,7 @@ func TestClaudeCodeMCPProcessor_WithConfigs(t *testing.T) {
 	// Create temporary directories
 	tempDir := t.TempDir()
 	workDir := filepath.Join(tempDir, "workspace")
-	mcpDir := filepath.Join(tempDir, ".config", "nairid", "mcp")
+	mcpDir := filepath.Join(tempDir, ".config", "eksecd", "mcp")
 
 	if err := os.MkdirAll(workDir, 0755); err != nil {
 		t.Fatalf("Failed to create work directory: %v", err)
@@ -632,7 +632,7 @@ func TestClaudeCodeMCPProcessor_WithMultipleMCPConfigs(t *testing.T) {
 	// Create temporary directories
 	tempDir := t.TempDir()
 	workDir := filepath.Join(tempDir, "workspace")
-	mcpDir := filepath.Join(tempDir, ".config", "nairid", "mcp")
+	mcpDir := filepath.Join(tempDir, ".config", "eksecd", "mcp")
 
 	if err := os.MkdirAll(workDir, 0755); err != nil {
 		t.Fatalf("Failed to create work directory: %v", err)
@@ -724,7 +724,7 @@ func TestClaudeCodeMCPProcessor_PreservesExistingConfig(t *testing.T) {
 	// Create temporary directories
 	tempDir := t.TempDir()
 	workDir := filepath.Join(tempDir, "workspace")
-	mcpDir := filepath.Join(tempDir, ".config", "nairid", "mcp")
+	mcpDir := filepath.Join(tempDir, ".config", "eksecd", "mcp")
 
 	if err := os.MkdirAll(workDir, 0755); err != nil {
 		t.Fatalf("Failed to create work directory: %v", err)
@@ -829,7 +829,7 @@ func TestOpenCodeMCPProcessor_WithConfigs(t *testing.T) {
 	// Create temporary directories
 	tempDir := t.TempDir()
 	workDir := filepath.Join(tempDir, "workspace")
-	mcpDir := filepath.Join(tempDir, ".config", "nairid", "mcp")
+	mcpDir := filepath.Join(tempDir, ".config", "eksecd", "mcp")
 
 	if err := os.MkdirAll(workDir, 0755); err != nil {
 		t.Fatalf("Failed to create work directory: %v", err)
@@ -934,7 +934,7 @@ func TestOpenCodeMCPProcessor_WithMultipleMCPConfigs(t *testing.T) {
 	// Create temporary directories
 	tempDir := t.TempDir()
 	workDir := filepath.Join(tempDir, "workspace")
-	mcpDir := filepath.Join(tempDir, ".config", "nairid", "mcp")
+	mcpDir := filepath.Join(tempDir, ".config", "eksecd", "mcp")
 
 	if err := os.MkdirAll(workDir, 0755); err != nil {
 		t.Fatalf("Failed to create work directory: %v", err)
@@ -1026,7 +1026,7 @@ func TestOpenCodeMCPProcessor_PreservesExistingConfig(t *testing.T) {
 	// Create temporary directories
 	tempDir := t.TempDir()
 	workDir := filepath.Join(tempDir, "workspace")
-	mcpDir := filepath.Join(tempDir, ".config", "nairid", "mcp")
+	mcpDir := filepath.Join(tempDir, ".config", "eksecd", "mcp")
 	opencodeConfigDir := filepath.Join(tempDir, ".config", "opencode")
 
 	if err := os.MkdirAll(workDir, 0755); err != nil {
@@ -1044,7 +1044,7 @@ func TestOpenCodeMCPProcessor_PreservesExistingConfig(t *testing.T) {
 	// Create existing opencode.json with other keys (e.g., instructions)
 	opencodeConfigPath := filepath.Join(opencodeConfigDir, "opencode.json")
 	existingConfig := map[string]interface{}{
-		"instructions": []string{"~/.config/nairid/rules/*.md"},
+		"instructions": []string{"~/.config/eksecd/rules/*.md"},
 		"theme":        "dark",
 	}
 	existingJSON, _ := json.Marshal(existingConfig)
@@ -1114,7 +1114,7 @@ func TestOpenCodeMCPProcessor_LocalServerTransformation(t *testing.T) {
 	// Create temporary directories
 	tempDir := t.TempDir()
 	workDir := filepath.Join(tempDir, "workspace")
-	mcpDir := filepath.Join(tempDir, ".config", "nairid", "mcp")
+	mcpDir := filepath.Join(tempDir, ".config", "eksecd", "mcp")
 
 	if err := os.MkdirAll(workDir, 0755); err != nil {
 		t.Fatalf("Failed to create work directory: %v", err)
@@ -1234,7 +1234,7 @@ func TestOpenCodeMCPProcessor_RemoteServerTransformation(t *testing.T) {
 	// Create temporary directories
 	tempDir := t.TempDir()
 	workDir := filepath.Join(tempDir, "workspace")
-	mcpDir := filepath.Join(tempDir, ".config", "nairid", "mcp")
+	mcpDir := filepath.Join(tempDir, ".config", "eksecd", "mcp")
 
 	if err := os.MkdirAll(workDir, 0755); err != nil {
 		t.Fatalf("Failed to create work directory: %v", err)
@@ -1334,7 +1334,7 @@ func TestOpenCodeMCPProcessor_MixedLocalAndRemoteServers(t *testing.T) {
 	// Create temporary directories
 	tempDir := t.TempDir()
 	workDir := filepath.Join(tempDir, "workspace")
-	mcpDir := filepath.Join(tempDir, ".config", "nairid", "mcp")
+	mcpDir := filepath.Join(tempDir, ".config", "eksecd", "mcp")
 
 	if err := os.MkdirAll(workDir, 0755); err != nil {
 		t.Fatalf("Failed to create work directory: %v", err)
@@ -1434,7 +1434,7 @@ func TestOpenCodeMCPProcessor_LocalServerWithoutEnv(t *testing.T) {
 	// Create temporary directories
 	tempDir := t.TempDir()
 	workDir := filepath.Join(tempDir, "workspace")
-	mcpDir := filepath.Join(tempDir, ".config", "nairid", "mcp")
+	mcpDir := filepath.Join(tempDir, ".config", "eksecd", "mcp")
 
 	if err := os.MkdirAll(workDir, 0755); err != nil {
 		t.Fatalf("Failed to create work directory: %v", err)
@@ -1523,7 +1523,7 @@ func TestOpenCodeMCPProcessor_RemoteServerWithoutHeaders(t *testing.T) {
 	// Create temporary directories
 	tempDir := t.TempDir()
 	workDir := filepath.Join(tempDir, "workspace")
-	mcpDir := filepath.Join(tempDir, ".config", "nairid", "mcp")
+	mcpDir := filepath.Join(tempDir, ".config", "eksecd", "mcp")
 
 	if err := os.MkdirAll(workDir, 0755); err != nil {
 		t.Fatalf("Failed to create work directory: %v", err)
@@ -1644,7 +1644,7 @@ func TestCodexMCPProcessor_NoConfigs(t *testing.T) {
 
 func TestCodexMCPProcessor_WithConfigs(t *testing.T) {
 	tempDir := t.TempDir()
-	mcpDir := filepath.Join(tempDir, ".config", "nairid", "mcp")
+	mcpDir := filepath.Join(tempDir, ".config", "eksecd", "mcp")
 
 	if err := os.MkdirAll(mcpDir, 0755); err != nil {
 		t.Fatalf("Failed to create MCP directory: %v", err)
@@ -1714,7 +1714,7 @@ func TestCodexMCPProcessor_WithConfigs(t *testing.T) {
 
 func TestCodexMCPProcessor_RemoteServer(t *testing.T) {
 	tempDir := t.TempDir()
-	mcpDir := filepath.Join(tempDir, ".config", "nairid", "mcp")
+	mcpDir := filepath.Join(tempDir, ".config", "eksecd", "mcp")
 
 	if err := os.MkdirAll(mcpDir, 0755); err != nil {
 		t.Fatalf("Failed to create MCP directory: %v", err)

@@ -286,16 +286,16 @@ func findSubstring(s, substr string) bool {
 }
 
 func TestGetSkillFiles(t *testing.T) {
-	// Create a temporary directory to simulate ~/.config/nairid/skills/
+	// Create a temporary directory to simulate ~/.config/eksecd/skills/
 	tmpDir := t.TempDir()
 
 	// Override the home directory for testing
 	originalHome := os.Getenv("HOME")
 	t.Setenv("HOME", tmpDir)
 
-	// Create the .config/nairid/skills structure
-	nairiSkillsDir := filepath.Join(tmpDir, ".config", "nairid", "skills")
-	if err := os.MkdirAll(nairiSkillsDir, 0755); err != nil {
+	// Create the .config/eksecd/skills structure
+	eksecdSkillsDir := filepath.Join(tmpDir, ".config", "eksecd", "skills")
+	if err := os.MkdirAll(eksecdSkillsDir, 0755); err != nil {
 		t.Fatalf("Failed to create skills directory: %v", err)
 	}
 
@@ -379,16 +379,16 @@ func TestGetSkillFiles(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Clean skills directory before each test
-			if err := os.RemoveAll(nairiSkillsDir); err != nil {
+			if err := os.RemoveAll(eksecdSkillsDir); err != nil {
 				t.Fatalf("Failed to clean skills directory: %v", err)
 			}
-			if err := os.MkdirAll(nairiSkillsDir, 0755); err != nil {
+			if err := os.MkdirAll(eksecdSkillsDir, 0755); err != nil {
 				t.Fatalf("Failed to create skills directory: %v", err)
 			}
 
 			// Create test files
 			for filename, content := range tt.setupFiles {
-				filePath := filepath.Join(nairiSkillsDir, filename)
+				filePath := filepath.Join(eksecdSkillsDir, filename)
 				if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
 					t.Fatalf("Failed to create test file %s: %v", filename, err)
 				}
@@ -440,7 +440,7 @@ func TestGetSkillFiles(t *testing.T) {
 func TestClaudeCodeSkillsProcessor_Integration(t *testing.T) {
 	// Create temporary directories
 	tmpDir := t.TempDir()
-	nairiSkillsDir := filepath.Join(tmpDir, ".config", "nairid", "skills")
+	eksecdSkillsDir := filepath.Join(tmpDir, ".config", "eksecd", "skills")
 	claudeSkillsDir := filepath.Join(tmpDir, ".claude", "skills")
 
 	// Override home directory
@@ -448,13 +448,13 @@ func TestClaudeCodeSkillsProcessor_Integration(t *testing.T) {
 	t.Setenv("HOME", tmpDir)
 	defer os.Setenv("HOME", originalHome)
 
-	// Create nairid skills directory
-	if err := os.MkdirAll(nairiSkillsDir, 0755); err != nil {
-		t.Fatalf("Failed to create nairid skills directory: %v", err)
+	// Create eksecd skills directory
+	if err := os.MkdirAll(eksecdSkillsDir, 0755); err != nil {
+		t.Fatalf("Failed to create eksecd skills directory: %v", err)
 	}
 
 	// Create a test skill ZIP file
-	skillZipPath := filepath.Join(nairiSkillsDir, "test-skill-abc123.zip")
+	skillZipPath := filepath.Join(eksecdSkillsDir, "test-skill-abc123.zip")
 	skillContent := map[string]string{
 		"SKILL.md":           "# Test Skill\n\nSkill content here",
 		"scripts/run.sh":     "#!/bin/bash\necho 'running'",
@@ -492,7 +492,7 @@ func TestClaudeCodeSkillsProcessor_Integration(t *testing.T) {
 func TestOpenCodeSkillsProcessor_Integration(t *testing.T) {
 	// Create temporary directories
 	tmpDir := t.TempDir()
-	nairiSkillsDir := filepath.Join(tmpDir, ".config", "nairid", "skills")
+	eksecdSkillsDir := filepath.Join(tmpDir, ".config", "eksecd", "skills")
 	opencodeSkillsDir := filepath.Join(tmpDir, ".config", "opencode", "skill")
 
 	// Override home directory
@@ -500,13 +500,13 @@ func TestOpenCodeSkillsProcessor_Integration(t *testing.T) {
 	t.Setenv("HOME", tmpDir)
 	defer os.Setenv("HOME", originalHome)
 
-	// Create nairid skills directory
-	if err := os.MkdirAll(nairiSkillsDir, 0755); err != nil {
-		t.Fatalf("Failed to create nairid skills directory: %v", err)
+	// Create eksecd skills directory
+	if err := os.MkdirAll(eksecdSkillsDir, 0755); err != nil {
+		t.Fatalf("Failed to create eksecd skills directory: %v", err)
 	}
 
 	// Create a test skill ZIP file with root directory
-	skillZipPath := filepath.Join(nairiSkillsDir, "my-skill-xyz789.zip")
+	skillZipPath := filepath.Join(eksecdSkillsDir, "my-skill-xyz789.zip")
 	skillContent := map[string]string{
 		"my-skill/SKILL.md":          "# My Skill\n\nContent",
 		"my-skill/scripts/script.sh": "#!/bin/bash\necho 'test'",
@@ -550,18 +550,18 @@ func TestOpenCodeSkillsProcessor_Integration(t *testing.T) {
 
 func TestCodexSkillsProcessor_Integration(t *testing.T) {
 	tmpDir := t.TempDir()
-	nairiSkillsDir := filepath.Join(tmpDir, ".config", "nairid", "skills")
+	eksecdSkillsDir := filepath.Join(tmpDir, ".config", "eksecd", "skills")
 	codexSkillsDir := filepath.Join(tmpDir, ".codex", "skills")
 
 	originalHome := os.Getenv("HOME")
 	t.Setenv("HOME", tmpDir)
 	defer os.Setenv("HOME", originalHome)
 
-	if err := os.MkdirAll(nairiSkillsDir, 0755); err != nil {
-		t.Fatalf("Failed to create nairid skills directory: %v", err)
+	if err := os.MkdirAll(eksecdSkillsDir, 0755); err != nil {
+		t.Fatalf("Failed to create eksecd skills directory: %v", err)
 	}
 
-	skillZipPath := filepath.Join(nairiSkillsDir, "test-skill-abc123.zip")
+	skillZipPath := filepath.Join(eksecdSkillsDir, "test-skill-abc123.zip")
 	skillContent := map[string]string{
 		"SKILL.md":          "# Test Skill\n\nSkill content here",
 		"scripts/run.sh":    "#!/bin/bash\necho 'running'",
@@ -595,18 +595,18 @@ func TestCodexSkillsProcessor_Integration(t *testing.T) {
 
 func TestCodexSkillsProcessor_WithRootDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
-	nairiSkillsDir := filepath.Join(tmpDir, ".config", "nairid", "skills")
+	eksecdSkillsDir := filepath.Join(tmpDir, ".config", "eksecd", "skills")
 	codexSkillsDir := filepath.Join(tmpDir, ".codex", "skills")
 
 	originalHome := os.Getenv("HOME")
 	t.Setenv("HOME", tmpDir)
 	defer os.Setenv("HOME", originalHome)
 
-	if err := os.MkdirAll(nairiSkillsDir, 0755); err != nil {
-		t.Fatalf("Failed to create nairid skills directory: %v", err)
+	if err := os.MkdirAll(eksecdSkillsDir, 0755); err != nil {
+		t.Fatalf("Failed to create eksecd skills directory: %v", err)
 	}
 
-	skillZipPath := filepath.Join(nairiSkillsDir, "my-skill-xyz789.zip")
+	skillZipPath := filepath.Join(eksecdSkillsDir, "my-skill-xyz789.zip")
 	skillContent := map[string]string{
 		"my-skill/SKILL.md":          "# My Skill\n\nContent",
 		"my-skill/scripts/script.sh": "#!/bin/bash\necho 'test'",
@@ -669,7 +669,7 @@ func TestNoOpSkillsProcessor(t *testing.T) {
 	}
 }
 
-func TestCleanNairidSkillsDir(t *testing.T) {
+func TestCleanEksecdSkillsDir(t *testing.T) {
 	// Create temporary directory
 	tmpDir := t.TempDir()
 
@@ -679,7 +679,7 @@ func TestCleanNairidSkillsDir(t *testing.T) {
 	defer os.Setenv("HOME", originalHome)
 
 	// Create skills directory with some files
-	skillsDir := filepath.Join(tmpDir, ".config", "nairid", "skills")
+	skillsDir := filepath.Join(tmpDir, ".config", "eksecd", "skills")
 	if err := os.MkdirAll(skillsDir, 0755); err != nil {
 		t.Fatalf("Failed to create skills directory: %v", err)
 	}
@@ -694,8 +694,8 @@ func TestCleanNairidSkillsDir(t *testing.T) {
 	}
 
 	// Clean the directory
-	if err := CleanNairidSkillsDir(); err != nil {
-		t.Fatalf("CleanNairidSkillsDir failed: %v", err)
+	if err := CleanEksecdSkillsDir(); err != nil {
+		t.Fatalf("CleanEksecdSkillsDir failed: %v", err)
 	}
 
 	// Verify directory exists but is empty
@@ -709,7 +709,7 @@ func TestCleanNairidSkillsDir(t *testing.T) {
 	}
 }
 
-func TestCleanNairidSkillsDir_NonExistent(t *testing.T) {
+func TestCleanEksecdSkillsDir_NonExistent(t *testing.T) {
 	// Create temporary directory
 	tmpDir := t.TempDir()
 
@@ -719,15 +719,15 @@ func TestCleanNairidSkillsDir_NonExistent(t *testing.T) {
 	defer os.Setenv("HOME", originalHome)
 
 	// Don't create the skills directory - test cleaning non-existent directory
-	err := CleanNairidSkillsDir()
+	err := CleanEksecdSkillsDir()
 
 	// Should not fail when directory doesn't exist
 	if err != nil {
-		t.Errorf("CleanNairidSkillsDir should not fail for non-existent directory, got: %v", err)
+		t.Errorf("CleanEksecdSkillsDir should not fail for non-existent directory, got: %v", err)
 	}
 
 	// Verify directory was NOT created (function returns early if dir doesn't exist)
-	skillsDir := filepath.Join(tmpDir, ".config", "nairid", "skills")
+	skillsDir := filepath.Join(tmpDir, ".config", "eksecd", "skills")
 	if _, err := os.Stat(skillsDir); !os.IsNotExist(err) {
 		t.Error("Skills directory should not be created if it didn't exist (early return expected)")
 	}
