@@ -236,7 +236,7 @@ func TestFetchAndStoreAttachment_ValidPNG(t *testing.T) {
 	}
 
 	// Cleanup
-	os.RemoveAll(filepath.Join("/tmp", "nairid", "attachments", sessionID))
+	os.RemoveAll(filepath.Join("/tmp", "eksecd", "attachments", sessionID))
 }
 
 func TestFetchAndStoreAttachment_APIError(t *testing.T) {
@@ -256,7 +256,7 @@ func TestFetchAndStoreAttachment_APIError(t *testing.T) {
 	}
 
 	// Cleanup
-	os.RemoveAll(filepath.Join("/tmp", "nairid", "attachments", sessionID))
+	os.RemoveAll(filepath.Join("/tmp", "eksecd", "attachments", sessionID))
 }
 
 func TestFetchAndStoreAttachment_InvalidBase64(t *testing.T) {
@@ -285,7 +285,7 @@ func TestFetchAndStoreAttachment_InvalidBase64(t *testing.T) {
 	}
 
 	// Cleanup
-	os.RemoveAll(filepath.Join("/tmp", "nairid", "attachments", sessionID))
+	os.RemoveAll(filepath.Join("/tmp", "eksecd", "attachments", sessionID))
 }
 
 // Test directory functions
@@ -298,13 +298,13 @@ func TestGetAttachmentsDir_CreatesPath(t *testing.T) {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 
-	expectedPath := filepath.Join("/tmp", "nairid", "attachments", sessionID)
+	expectedPath := filepath.Join("/tmp", "eksecd", "attachments", sessionID)
 	if dir != expectedPath {
 		t.Errorf("Expected path %s, got %s", expectedPath, dir)
 	}
 
 	// Cleanup
-	os.RemoveAll(filepath.Join("/tmp", "nairid", "attachments", sessionID))
+	os.RemoveAll(filepath.Join("/tmp", "eksecd", "attachments", sessionID))
 }
 
 func TestGetAttachmentsDir_CreatesDirectory(t *testing.T) {
@@ -326,19 +326,19 @@ func TestGetAttachmentsDir_CreatesDirectory(t *testing.T) {
 	}
 
 	// Cleanup
-	os.RemoveAll(filepath.Join("/tmp", "nairid", "attachments", sessionID))
+	os.RemoveAll(filepath.Join("/tmp", "eksecd", "attachments", sessionID))
 }
 
 // Test formatting functions
 
 func TestFormatAttachmentsText_SingleFile(t *testing.T) {
-	paths := []string{"/tmp/nairid/attachments/sess1/attachment_0.png"}
+	paths := []string{"/tmp/eksecd/attachments/sess1/attachment_0.png"}
 	text := FormatAttachmentsText(paths)
 
 	expectedSubstrings := []string{
 		"---",
 		"Attachments:",
-		"/tmp/nairid/attachments/sess1/attachment_0.png",
+		"/tmp/eksecd/attachments/sess1/attachment_0.png",
 	}
 
 	for _, substr := range expectedSubstrings {
@@ -350,18 +350,18 @@ func TestFormatAttachmentsText_SingleFile(t *testing.T) {
 
 func TestFormatAttachmentsText_MultipleFiles(t *testing.T) {
 	paths := []string{
-		"/tmp/nairid/attachments/sess1/attachment_0.png",
-		"/tmp/nairid/attachments/sess1/attachment_1.pdf",
-		"/tmp/nairid/attachments/sess1/attachment_2.txt",
+		"/tmp/eksecd/attachments/sess1/attachment_0.png",
+		"/tmp/eksecd/attachments/sess1/attachment_1.pdf",
+		"/tmp/eksecd/attachments/sess1/attachment_2.txt",
 	}
 	text := FormatAttachmentsText(paths)
 
 	expectedSubstrings := []string{
 		"---",
 		"Attachments:",
-		"/tmp/nairid/attachments/sess1/attachment_0.png",
-		"/tmp/nairid/attachments/sess1/attachment_1.pdf",
-		"/tmp/nairid/attachments/sess1/attachment_2.txt",
+		"/tmp/eksecd/attachments/sess1/attachment_0.png",
+		"/tmp/eksecd/attachments/sess1/attachment_1.pdf",
+		"/tmp/eksecd/attachments/sess1/attachment_2.txt",
 	}
 
 	for _, substr := range expectedSubstrings {
@@ -400,7 +400,7 @@ func TestFormatAttachmentsText_NilList(t *testing.T) {
 // Test home directory expansion
 
 func TestExpandHomeDir_WithTilde(t *testing.T) {
-	path := "~/.config/nairid/rules/test.md"
+	path := "~/.config/eksecd/rules/test.md"
 	expanded, err := ExpandHomeDir(path)
 
 	if err != nil {
@@ -413,8 +413,8 @@ func TestExpandHomeDir_WithTilde(t *testing.T) {
 	}
 
 	// Should end with the relative part
-	if !strings.HasSuffix(expanded, ".config/nairid/rules/test.md") {
-		t.Errorf("Expected path to end with .config/nairid/rules/test.md, got: %s", expanded)
+	if !strings.HasSuffix(expanded, ".config/eksecd/rules/test.md") {
+		t.Errorf("Expected path to end with .config/eksecd/rules/test.md, got: %s", expanded)
 	}
 }
 

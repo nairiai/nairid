@@ -14,26 +14,26 @@ import (
 
 // SkillsProcessor defines the interface for processing agent-specific skills
 type SkillsProcessor interface {
-	// ProcessSkills processes skills from the nairid skills directory
+	// ProcessSkills processes skills from the eksecd skills directory
 	// and extracts them to the agent-specific location.
 	// targetHomeDir specifies the home directory to deploy skills to.
 	// If empty, uses the current user's home directory.
 	ProcessSkills(targetHomeDir string) error
 }
 
-// GetNairidSkillsDir returns the path to the nairid skills directory
-func GetNairidSkillsDir() (string, error) {
+// GetEksecdSkillsDir returns the path to the eksecd skills directory
+func GetEksecdSkillsDir() (string, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get home directory: %w", err)
 	}
 
-	return filepath.Join(homeDir, ".config", "nairid", "skills"), nil
+	return filepath.Join(homeDir, ".config", "eksecd", "skills"), nil
 }
 
-// GetSkillFiles returns a list of skill files (.zip or .skill) in the nairid skills directory
+// GetSkillFiles returns a list of skill files (.zip or .skill) in the eksecd skills directory
 func GetSkillFiles() ([]string, error) {
-	skillsDir, err := GetNairidSkillsDir()
+	skillsDir, err := GetEksecdSkillsDir()
 	if err != nil {
 		return nil, err
 	}
@@ -66,11 +66,11 @@ func GetSkillFiles() ([]string, error) {
 	return skillFiles, nil
 }
 
-// CleanNairidSkillsDir removes all files from the nairid skills directory
+// CleanEksecdSkillsDir removes all files from the eksecd skills directory
 // This should be called before downloading new skills from the server to ensure
 // stale skills that were deleted on the server are also removed locally.
-func CleanNairidSkillsDir() error {
-	skillsDir, err := GetNairidSkillsDir()
+func CleanEksecdSkillsDir() error {
+	skillsDir, err := GetEksecdSkillsDir()
 	if err != nil {
 		return err
 	}
@@ -81,7 +81,7 @@ func CleanNairidSkillsDir() error {
 		return nil
 	}
 
-	log.Info("🎯 Cleaning nairid skills directory: %s", skillsDir)
+	log.Info("🎯 Cleaning eksecd skills directory: %s", skillsDir)
 
 	// Remove and recreate the directory to ensure a clean state
 	if err := os.RemoveAll(skillsDir); err != nil {
@@ -93,7 +93,7 @@ func CleanNairidSkillsDir() error {
 		return fmt.Errorf("failed to recreate skills directory: %w", err)
 	}
 
-	log.Info("✅ Successfully cleaned nairid skills directory")
+	log.Info("✅ Successfully cleaned eksecd skills directory")
 	return nil
 }
 
@@ -266,7 +266,7 @@ func (p *ClaudeCodeSkillsProcessor) ProcessSkills(targetHomeDir string) error {
 	}
 
 	if len(skillFiles) == 0 {
-		log.Info("🎯 No skills found in nairid skills directory")
+		log.Info("🎯 No skills found in eksecd skills directory")
 		return nil
 	}
 
@@ -350,7 +350,7 @@ func (p *OpenCodeSkillsProcessor) ProcessSkills(targetHomeDir string) error {
 	}
 
 	if len(skillFiles) == 0 {
-		log.Info("🎯 No skills found in nairid skills directory")
+		log.Info("🎯 No skills found in eksecd skills directory")
 		return nil
 	}
 
@@ -434,7 +434,7 @@ func (p *CodexSkillsProcessor) ProcessSkills(targetHomeDir string) error {
 	}
 
 	if len(skillFiles) == 0 {
-		log.Info("🎯 No skills found in nairid skills directory")
+		log.Info("🎯 No skills found in eksecd skills directory")
 		return nil
 	}
 

@@ -18,7 +18,7 @@ type RuleFrontMatter struct {
 
 // RulesProcessor defines the interface for processing agent-specific rules
 type RulesProcessor interface {
-	// ProcessRules processes rules from the nairid rules directory
+	// ProcessRules processes rules from the eksecd rules directory
 	// and copies them to the agent-specific location.
 	// targetHomeDir specifies the home directory to deploy rules to.
 	// If empty, uses the current user's home directory.
@@ -135,19 +135,19 @@ func ReadRuleBody(filePath string) (title string, description string, body strin
 	return title, description, body, nil
 }
 
-// GetNairidRulesDir returns the path to the nairid rules directory
-func GetNairidRulesDir() (string, error) {
+// GetEksecdRulesDir returns the path to the eksecd rules directory
+func GetEksecdRulesDir() (string, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get home directory: %w", err)
 	}
 
-	return filepath.Join(homeDir, ".config", "nairid", "rules"), nil
+	return filepath.Join(homeDir, ".config", "eksecd", "rules"), nil
 }
 
-// GetRuleFiles returns a list of markdown files in the nairid rules directory
+// GetRuleFiles returns a list of markdown files in the eksecd rules directory
 func GetRuleFiles() ([]string, error) {
-	rulesDir, err := GetNairidRulesDir()
+	rulesDir, err := GetEksecdRulesDir()
 	if err != nil {
 		return nil, err
 	}
@@ -179,11 +179,11 @@ func GetRuleFiles() ([]string, error) {
 	return ruleFiles, nil
 }
 
-// CleanNairidRulesDir removes all files from the nairid rules directory
+// CleanEksecdRulesDir removes all files from the eksecd rules directory
 // This should be called before downloading new rules from the server to ensure
 // stale rules that were deleted on the server are also removed locally.
-func CleanNairidRulesDir() error {
-	rulesDir, err := GetNairidRulesDir()
+func CleanEksecdRulesDir() error {
+	rulesDir, err := GetEksecdRulesDir()
 	if err != nil {
 		return err
 	}
@@ -194,7 +194,7 @@ func CleanNairidRulesDir() error {
 		return nil
 	}
 
-	log.Info("📋 Cleaning nairid rules directory: %s", rulesDir)
+	log.Info("📋 Cleaning eksecd rules directory: %s", rulesDir)
 
 	// Remove and recreate the directory to ensure a clean state
 	if err := os.RemoveAll(rulesDir); err != nil {
@@ -206,7 +206,7 @@ func CleanNairidRulesDir() error {
 		return fmt.Errorf("failed to recreate rules directory: %w", err)
 	}
 
-	log.Info("✅ Successfully cleaned nairid rules directory")
+	log.Info("✅ Successfully cleaned eksecd rules directory")
 	return nil
 }
 
@@ -231,7 +231,7 @@ func (p *ClaudeCodeRulesProcessor) ProcessRules(targetHomeDir string) error {
 	}
 
 	if len(ruleFiles) == 0 {
-		log.Info("📋 No rules found in nairid rules directory")
+		log.Info("📋 No rules found in eksecd rules directory")
 		return nil
 	}
 
@@ -314,7 +314,7 @@ func (p *OpenCodeRulesProcessor) ProcessRules(targetHomeDir string) error {
 	}
 
 	if len(ruleFiles) == 0 {
-		log.Info("📋 No rules found in nairid rules directory")
+		log.Info("📋 No rules found in eksecd rules directory")
 		return nil
 	}
 
@@ -408,7 +408,7 @@ func (p *CodexRulesProcessor) ProcessRules(targetHomeDir string) error {
 	}
 
 	if len(ruleFiles) == 0 {
-		log.Info("📋 No rules found in nairid rules directory")
+		log.Info("📋 No rules found in eksecd rules directory")
 		return nil
 	}
 

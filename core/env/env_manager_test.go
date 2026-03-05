@@ -291,7 +291,7 @@ func TestGetConfigDir_Default(t *testing.T) {
 		t.Fatalf("Failed to get home directory: %v", err)
 	}
 
-	expectedDir := filepath.Join(homeDir, ".config", "nairid")
+	expectedDir := filepath.Join(homeDir, ".config", "eksecd")
 	if configDir != expectedDir {
 		t.Errorf("Expected config dir '%s', got '%s'", expectedDir, configDir)
 	}

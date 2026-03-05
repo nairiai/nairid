@@ -164,22 +164,22 @@ func fetchAndStoreArtifacts(agentsApiClient *clients.AgentsApiClient) error {
 
 	// Clean up existing rules, MCP configs, and skills before downloading new ones
 	// This ensures stale items deleted on the server are removed locally
-	if err := utils.CleanNairidRulesDir(); err != nil {
-		return fmt.Errorf("failed to clean nairid rules directory: %w", err)
+	if err := utils.CleanEksecdRulesDir(); err != nil {
+		return fmt.Errorf("failed to clean eksecd rules directory: %w", err)
 	}
 
 	// Skip MCP config cleanup and download when MCP proxy is enabled
 	// (configs will be fetched from the proxy at processing time)
 	if clients.AgentMCPProxy() == "" {
-		if err := utils.CleanNairidMCPDir(); err != nil {
-			return fmt.Errorf("failed to clean nairid MCP directory: %w", err)
+		if err := utils.CleanEksecdMCPDir(); err != nil {
+			return fmt.Errorf("failed to clean eksecd MCP directory: %w", err)
 		}
 	} else {
 		log.Info("📦 MCP proxy enabled, skipping MCP config artifact downloads")
 	}
 
-	if err := utils.CleanNairidSkillsDir(); err != nil {
-		return fmt.Errorf("failed to clean nairid skills directory: %w", err)
+	if err := utils.CleanEksecdSkillsDir(); err != nil {
+		return fmt.Errorf("failed to clean eksecd skills directory: %w", err)
 	}
 
 	artifacts, err := agentsApiClient.FetchArtifacts()
@@ -224,7 +224,7 @@ func fetchAndStoreArtifacts(agentsApiClient *clients.AgentsApiClient) error {
 	return nil
 }
 
-// processAgentRules processes rules from nairid directory based on agent type
+// processAgentRules processes rules from eksecd directory based on agent type
 // targetHomeDir specifies the home directory to deploy rules to.
 // If empty, uses the current user's home directory.
 func processAgentRules(agentType, workDir, targetHomeDir string) error {
@@ -252,7 +252,7 @@ func processAgentRules(agentType, workDir, targetHomeDir string) error {
 	return nil
 }
 
-// processMCPConfigs processes MCP configs from nairid directory based on agent type
+// processMCPConfigs processes MCP configs from eksecd directory based on agent type
 // targetHomeDir specifies the home directory to deploy configs to.
 // If empty, uses the current user's home directory.
 func processMCPConfigs(agentType, workDir, targetHomeDir string) error {
@@ -298,7 +298,7 @@ func processMCPConfigs(agentType, workDir, targetHomeDir string) error {
 	return nil
 }
 
-// processSkills processes skills from nairid directory based on agent type
+// processSkills processes skills from eksecd directory based on agent type
 // targetHomeDir specifies the home directory to deploy skills to.
 // If empty, uses the current user's home directory.
 func processSkills(agentType, targetHomeDir string) error {
@@ -1128,7 +1128,7 @@ func (cr *CmdRunner) setupProgramLogging() (string, error) {
 	rotatingWriter, err := log.NewRotatingWriter(log.RotatingWriterConfig{
 		LogDir:      logsDir,
 		MaxFileSize: 1024, // 10MB
-		FilePrefix:  "nairid",
+		FilePrefix:  "eksecd",
 		Stdout:      os.Stdout,
 	})
 	if err != nil {
