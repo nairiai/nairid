@@ -8,14 +8,20 @@ import (
 	"nairid/models"
 )
 
+const (
+	// maxConsecutiveFailures caps the backoff multiplier
+	maxConsecutiveFailures = 3 // 30s → 60s → 120s → 120s
+)
+
 // MessagePoller polls the HTTP API for unacked messages as a redundancy layer.
 // WS remains the primary real-time channel; polling catches any missed messages.
 type MessagePoller struct {
-	apiClient      *clients.AgentsApiClient
-	dispatcher     *JobDispatcher
-	messageHandler *MessageHandler
-	pollInterval   time.Duration
-	stopChan       chan struct{}
+	apiClient           *clients.AgentsApiClient
+	dispatcher          *JobDispatcher
+	messageHandler      *MessageHandler
+	pollInterval        time.Duration
+	stopChan            chan struct{}
+	consecutiveFailures int
 }
 
 // NewMessagePoller creates a new MessagePoller instance.
@@ -40,28 +46,51 @@ func (mp *MessagePoller) Start() {
 }
 
 func (mp *MessagePoller) run() {
-	ticker := time.NewTicker(mp.pollInterval)
-	defer ticker.Stop()
-
 	log.Info("📡 MessagePoller: Started polling every %s", mp.pollInterval)
 
 	for {
+		interval := mp.currentInterval()
+		timer := time.NewTimer(interval)
+
 		select {
-		case <-ticker.C:
+		case <-timer.C:
 			mp.pollAndDispatch()
 		case <-mp.stopChan:
+			timer.Stop()
 			log.Info("📡 MessagePoller: Stopped")
 			return
 		}
 	}
 }
 
+// currentInterval returns the poll interval with exponential backoff on failures.
+func (mp *MessagePoller) currentInterval() time.Duration {
+	if mp.consecutiveFailures == 0 {
+		return mp.pollInterval
+	}
+
+	backoff := mp.pollInterval
+	failures := mp.consecutiveFailures
+	if failures > maxConsecutiveFailures {
+		failures = maxConsecutiveFailures
+	}
+	for i := 0; i < failures; i++ {
+		backoff *= 2
+	}
+
+	return backoff
+}
+
 func (mp *MessagePoller) pollAndDispatch() {
 	resp, err := mp.apiClient.FetchAgentJobs()
 	if err != nil {
-		log.Warn("📡 MessagePoller: Failed to fetch agent jobs: %v", err)
+		mp.consecutiveFailures++
+		nextInterval := mp.currentInterval()
+		log.Warn("📡 MessagePoller: Failed to fetch agent jobs (retry in %s): %v", nextInterval, err)
 		return
 	}
+
+	mp.consecutiveFailures = 0
 
 	for _, job := range resp.Jobs {
 		for _, msg := range job.Messages {
