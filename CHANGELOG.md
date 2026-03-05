@@ -1,3 +1,12 @@
+## [v0.0.93] - 2026-03-05
+
+### Bugfixes
+
+- Preserve execute permissions when extracting skill ZIP files ([#185](https://github.com/nairiai/eksecd/pull/185))
+  - Read file mode from ZIP entry instead of hardcoding 0644, preserving the execute bit for shell scripts
+  - Add explicit chmod via sudo after tee write when permissions differ from default
+  - Prevents agents from wasting a turn running `chmod +x` on freshly provisioned skill scripts
+
 ## [v0.0.92] - 2026-03-05
 
 ### Features
