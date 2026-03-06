@@ -402,6 +402,12 @@ func TestGetOutboundAttachmentsDir_CreatesDirectory(t *testing.T) {
 	if !info.IsDir() {
 		t.Errorf("Expected %s to be a directory", dir)
 	}
+
+	// Verify directory is group-writable (0775) so agentrunner can write attachments
+	perm := info.Mode().Perm()
+	if perm&0020 == 0 {
+		t.Errorf("Expected directory to be group-writable (0775), got %o", perm)
+	}
 }
 
 func TestGetOutboundAttachmentsDir_DifferentJobs(t *testing.T) {

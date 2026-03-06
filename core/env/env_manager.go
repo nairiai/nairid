@@ -90,9 +90,19 @@ func GetOutboundAttachmentsDir(jobID string) (string, error) {
 		return "", fmt.Errorf("failed to get config directory: %w", err)
 	}
 
-	dir := filepath.Join(configDir, "attachments", jobID)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	attachmentsDir := filepath.Join(configDir, "attachments")
+	dir := filepath.Join(attachmentsDir, jobID)
+	if err := os.MkdirAll(dir, 0775); err != nil {
 		return "", fmt.Errorf("failed to create outbound attachments directory: %w", err)
+	}
+
+	// Explicitly chmod to ensure group-writable regardless of umask.
+	// In managed mode, eksecd runs as ccagent but agents run as agentrunner
+	// (which is in the ccagent group). Without group-write, agents can't save files.
+	for _, d := range []string{attachmentsDir, dir} {
+		if err := os.Chmod(d, 0775); err != nil {
+			return "", fmt.Errorf("failed to set permissions on %s: %w", d, err)
+		}
 	}
 
 	return dir, nil
