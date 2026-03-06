@@ -1093,6 +1093,13 @@ func (cr *CmdRunner) startSocketIOClient(serverURLStr, apiKey string) error {
 
 			// Route through dispatcher for per-job sequential processing
 			cr.dispatcher.Dispatch(msg)
+
+			// Ack the message so the HTTP poller won't re-fetch it
+			if msg.ID != "" {
+				if err := cr.agentsApiClient.AckMessage(msg.ID); err != nil {
+					log.Warn("⚠️ Failed to ack WS message %s: %v", msg.ID, err)
+				}
+			}
 		case models.MessageTypeCheckIdleJobs:
 			// PR status checks can run in parallel without blocking conversations
 			instantWorkerPool.Submit(func() {
