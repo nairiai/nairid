@@ -1,3 +1,15 @@
+## [v0.0.96] - 2026-03-06
+
+### Bugfixes
+
+- Prevent goroutine leak in MessagePoller and MessageSender on WS reconnect ([#190](https://github.com/nairiai/eksecd/pull/190))
+  - Stop old poller and sender goroutines before starting new ones when the WebSocket connection is re-established
+  - Prevents unbounded goroutine growth during repeated reconnections
+
+- Make outbound attachments dir group-writable for agentrunner ([#191](https://github.com/nairiai/eksecd/pull/191))
+  - Set group-writable permissions on the outbound attachments directory so the agentrunner user can write files to it
+  - Fixes attachment delivery failure when running as the unprivileged agentrunner user
+
 ## [v0.0.95] - 2026-03-06
 
 ### Features
