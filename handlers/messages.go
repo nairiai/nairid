@@ -322,6 +322,18 @@ func (mh *MessageHandler) handleStartConversation(msg models.BaseMessage) error 
 	// Prepend sender metadata if available
 	finalPrompt = prependSenderMetadata(finalPrompt, payload.SenderMetadata)
 
+	// Set up progress emitter for this job
+	mh.claudeService.SetProgressEmitter(func(progress models.AgentProgressPayload) {
+		progress.JobID = payload.JobID
+		progress.ProcessedMessageID = payload.ProcessedMessageID
+		progressMsg := models.BaseMessage{
+			ID:      core.NewID("prg"),
+			Type:    models.MessageTypeAgentProgress,
+			Payload: progress,
+		}
+		mh.messageSender.QueueProgressMessage("cc_message", progressMsg)
+	})
+
 	// Start Claude session - use worktree directory if in worktree mode
 	var claudeResult *services.CLIAgentResult
 	if worktreePath != "" {
@@ -641,6 +653,18 @@ func (mh *MessageHandler) handleUserMessage(msg models.BaseMessage) error {
 	}
 	// Prepend sender metadata if available
 	finalPrompt = prependSenderMetadata(finalPrompt, payload.SenderMetadata)
+
+	// Set up progress emitter for this job
+	mh.claudeService.SetProgressEmitter(func(progress models.AgentProgressPayload) {
+		progress.JobID = payload.JobID
+		progress.ProcessedMessageID = payload.ProcessedMessageID
+		progressMsg := models.BaseMessage{
+			ID:      core.NewID("prg"),
+			Type:    models.MessageTypeAgentProgress,
+			Payload: progress,
+		}
+		mh.messageSender.QueueProgressMessage("cc_message", progressMsg)
+	})
 
 	// Continue Claude session - use worktree directory if in worktree mode
 	var claudeResult *services.CLIAgentResult

@@ -80,6 +80,7 @@ const (
 	MessageTypeProcessingMessage         = "processing_message_v1"
 	MessageTypeCheckIdleJobs             = "check_idle_jobs_v1"
 	MessageTypeJobComplete               = "job_complete_v1"
+	MessageTypeAgentProgress             = "agent_progress_v1"
 )
 
 type BaseMessage struct {
@@ -150,4 +151,27 @@ type CheckIdleJobsPayload struct {
 type JobCompletePayload struct {
 	JobID  string `json:"job_id"`
 	Reason string `json:"reason"`
+}
+
+// AgentProgressType identifies the kind of progress event
+type AgentProgressType string
+
+const (
+	ProgressTypeToolUse       AgentProgressType = "tool_use"
+	ProgressTypeText          AgentProgressType = "text"
+	ProgressTypeStep          AgentProgressType = "step"
+	ProgressTypeToolHeartbeat AgentProgressType = "tool_heartbeat"
+	ProgressTypeSubagent      AgentProgressType = "subagent"
+)
+
+// AgentProgressPayload is a uniform format for agent progress events from all CLI agents
+type AgentProgressPayload struct {
+	JobID              string            `json:"job_id"`
+	ProcessedMessageID string            `json:"processed_message_id"`
+	ProgressType       AgentProgressType `json:"progress_type"`
+	ToolName           string            `json:"tool_name,omitempty"`
+	ToolInput          string            `json:"tool_input,omitempty"`
+	ToolStatus         string            `json:"tool_status,omitempty"`
+	TextDelta          string            `json:"text_delta,omitempty"`
+	Summary            string            `json:"summary,omitempty"`
 }

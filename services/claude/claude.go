@@ -20,6 +20,7 @@ type ClaudeService struct {
 	model           string
 	agentsApiClient *clients.AgentsApiClient
 	envManager      EnvManager
+	progressEmitter services.ProgressEmitter
 }
 
 // EnvManager defines the interface for environment variable management
@@ -139,7 +140,18 @@ func (c *ClaudeService) StartNewConversationWithOptions(
 	// Merge service model with options
 	mergedOptions := c.mergeOptions(options)
 
-	rawOutput, err := c.claudeClient.StartNewSession(prompt, mergedOptions)
+	// Create progress callback if emitter is set
+	var onLine clients.ProgressCallback
+	if c.progressEmitter != nil {
+		emitter := c.progressEmitter
+		onLine = func(line []byte) {
+			if progress := services.MapClaudeLineToProgress(line); progress != nil {
+				emitter(*progress)
+			}
+		}
+	}
+
+	rawOutput, err := c.claudeClient.StartNewSession(prompt, mergedOptions, onLine)
 	if err != nil {
 		log.Error("Failed to start new Claude session: %v", err)
 		handledErr := c.handleClaudeClientError(err, "failed to start new Claude session")
@@ -247,7 +259,18 @@ func (c *ClaudeService) ContinueConversationWithOptions(
 	// Merge service model with options
 	mergedOptions := c.mergeOptions(options)
 
-	rawOutput, err := c.claudeClient.ContinueSession(sessionID, prompt, mergedOptions)
+	// Create progress callback if emitter is set
+	var onLine clients.ProgressCallback
+	if c.progressEmitter != nil {
+		emitter := c.progressEmitter
+		onLine = func(line []byte) {
+			if progress := services.MapClaudeLineToProgress(line); progress != nil {
+				emitter(*progress)
+			}
+		}
+	}
+
+	rawOutput, err := c.claudeClient.ContinueSession(sessionID, prompt, mergedOptions, onLine)
 	if err != nil {
 		log.Error("Failed to continue Claude session: %v", err)
 		handledErr := c.handleClaudeClientError(err, "failed to continue Claude session")
@@ -566,6 +589,11 @@ func (c *ClaudeService) handleClaudeClientError(err error, operation string) err
 	// No assistant message found, return original error wrapped
 	log.Info("⚠️ No assistant message found in Claude command output, returning original error")
 	return fmt.Errorf("%s: %w", operation, err)
+}
+
+// SetProgressEmitter sets the progress emitter for streaming progress updates
+func (c *ClaudeService) SetProgressEmitter(emitter services.ProgressEmitter) {
+	c.progressEmitter = emitter
 }
 
 // AgentName identifies this service implementation

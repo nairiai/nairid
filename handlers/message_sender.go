@@ -24,6 +24,7 @@ type OutgoingMessage struct {
 type MessageSender struct {
 	connectionState *ConnectionState
 	messageQueue    chan OutgoingMessage
+	progressQueue   chan OutgoingMessage
 	socketClient    *socket.Socket
 	apiClient       *clients.AgentsApiClient
 }
@@ -35,6 +36,7 @@ func NewMessageSender(connectionState *ConnectionState, apiClient *clients.Agent
 	return &MessageSender{
 		connectionState: connectionState,
 		messageQueue:    make(chan OutgoingMessage, 1),
+		progressQueue:   make(chan OutgoingMessage, 50),
 		socketClient:    nil, // Set later via Run()
 		apiClient:       apiClient,
 	}
@@ -45,6 +47,7 @@ func NewMessageSender(connectionState *ConnectionState, apiClient *clients.Agent
 // It blocks until the message queue is closed.
 func (ms *MessageSender) Run(socketClient *socket.Socket) {
 	ms.socketClient = socketClient
+	go ms.runProgressSender()
 	log.Info("📤 MessageSender: Started processing queue")
 
 	for msg := range ms.messageQueue {
@@ -138,6 +141,42 @@ func (ms *MessageSender) sendHTTPWithRetry(msg OutgoingMessage) {
 	}
 }
 
+// runProgressSender processes the progress queue in a separate goroutine.
+// Progress messages use best-effort delivery (single attempt, no retry).
+func (ms *MessageSender) runProgressSender() {
+	for msg := range ms.progressQueue {
+		ms.sendHTTPBestEffort(msg)
+	}
+}
+
+// sendHTTPBestEffort sends via HTTP with a single attempt (no retries).
+// Used for progress messages where occasional loss is acceptable.
+func (ms *MessageSender) sendHTTPBestEffort(msg OutgoingMessage) {
+	msgBytes, err := json.Marshal(msg.Data)
+	if err != nil {
+		return
+	}
+
+	var baseMsg models.BaseMessage
+	if err := json.Unmarshal(msgBytes, &baseMsg); err != nil {
+		return
+	}
+
+	if err := ms.apiClient.SubmitMessage(baseMsg); err != nil {
+		log.Warn("⚠️ MessageSender: Progress HTTP send failed: %v", err)
+	}
+}
+
+// QueueProgressMessage sends a progress message without blocking.
+// If the channel is full, the message is dropped (acceptable for progress).
+func (ms *MessageSender) QueueProgressMessage(event string, data any) {
+	select {
+	case ms.progressQueue <- OutgoingMessage{Event: event, Data: data}:
+	default:
+		log.Warn("⚠️ MessageSender: Progress queue full, dropping message")
+	}
+}
+
 // QueueMessage adds a message to the send queue.
 // Blocks until the message is consumed and sent by the MessageSender goroutine.
 // This ensures the caller knows the message has been processed before continuing.
@@ -154,4 +193,5 @@ func (ms *MessageSender) QueueMessage(event string, data any) {
 // Should be called during graceful shutdown.
 func (ms *MessageSender) Close() {
 	close(ms.messageQueue)
+	close(ms.progressQueue)
 }

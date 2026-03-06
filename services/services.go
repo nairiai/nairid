@@ -1,10 +1,15 @@
 package services
 
+import "nairid/models"
+
 // CLIAgentResult represents the result of a CLI agent conversation
 type CLIAgentResult struct {
 	Output    string
 	SessionID string
 }
+
+// ProgressEmitter is a callback for emitting progress messages during agent execution
+type ProgressEmitter func(progress models.AgentProgressPayload)
 
 // CLIAgent defines the interface for CLI agent operations like Claude Code, Cursor, etc.
 type CLIAgent interface {
@@ -35,4 +40,8 @@ type CLIAgent interface {
 	// AgentName returns the identifier for the concrete agent implementation
 	// (e.g., "claude" or "cursor") so callers can adapt behavior per agent
 	AgentName() string
+
+	// SetProgressEmitter sets a callback that is called for each progress event during CLI execution.
+	// The emitter is invoked in real-time as the CLI produces output lines.
+	SetProgressEmitter(emitter ProgressEmitter)
 }

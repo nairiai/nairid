@@ -1,5 +1,9 @@
 package clients
 
+// ProgressCallback is called for each NDJSON line read from CLI stdout during execution.
+// The line is trimmed of whitespace but not parsed — parsing is done at the service layer.
+type ProgressCallback func(line []byte)
+
 // ClaudeOptions contains optional parameters for Claude CLI interactions
 type ClaudeOptions struct {
 	SystemPrompt    string
@@ -23,8 +27,8 @@ type CodexOptions struct {
 
 // ClaudeClient defines the interface for Claude CLI interactions
 type ClaudeClient interface {
-	StartNewSession(prompt string, options *ClaudeOptions) (string, error)
-	ContinueSession(sessionID, prompt string, options *ClaudeOptions) (string, error)
+	StartNewSession(prompt string, options *ClaudeOptions, onLine ProgressCallback) (string, error)
+	ContinueSession(sessionID, prompt string, options *ClaudeOptions, onLine ProgressCallback) (string, error)
 }
 
 // CursorClient defines the interface for Cursor CLI interactions
@@ -35,8 +39,8 @@ type CursorClient interface {
 
 // CodexClient defines the interface for Codex CLI interactions
 type CodexClient interface {
-	StartNewSession(prompt string, options *CodexOptions) (string, error)
-	ContinueSession(threadID, prompt string, options *CodexOptions) (string, error)
+	StartNewSession(prompt string, options *CodexOptions, onLine ProgressCallback) (string, error)
+	ContinueSession(threadID, prompt string, options *CodexOptions, onLine ProgressCallback) (string, error)
 }
 
 // OpenCodeOptions contains optional parameters for OpenCode CLI interactions
@@ -47,6 +51,6 @@ type OpenCodeOptions struct {
 
 // OpenCodeClient defines the interface for OpenCode CLI interactions
 type OpenCodeClient interface {
-	StartNewSession(prompt string, options *OpenCodeOptions) (string, error)
-	ContinueSession(sessionID, prompt string, options *OpenCodeOptions) (string, error)
+	StartNewSession(prompt string, options *OpenCodeOptions, onLine ProgressCallback) (string, error)
+	ContinueSession(sessionID, prompt string, options *OpenCodeOptions, onLine ProgressCallback) (string, error)
 }

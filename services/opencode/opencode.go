@@ -14,9 +14,10 @@ import (
 )
 
 type OpenCodeService struct {
-	openCodeClient clients.OpenCodeClient
-	logDir         string
-	model          string
+	openCodeClient  clients.OpenCodeClient
+	logDir          string
+	model           string
+	progressEmitter services.ProgressEmitter
 }
 
 func NewOpenCodeService(openCodeClient clients.OpenCodeClient, logDir, model string) *OpenCodeService {
@@ -130,7 +131,18 @@ func (o *OpenCodeService) StartNewConversationWithOptions(
 
 	finalOptions := o.deriveOpenCodeOptions(options)
 
-	rawOutput, err := o.openCodeClient.StartNewSession(prompt, finalOptions)
+	// Create progress callback if emitter is set
+	var onLine clients.ProgressCallback
+	if o.progressEmitter != nil {
+		emitter := o.progressEmitter
+		onLine = func(line []byte) {
+			if progress := MapOpenCodeLineToProgress(line); progress != nil {
+				emitter(*progress)
+			}
+		}
+	}
+
+	rawOutput, err := o.openCodeClient.StartNewSession(prompt, finalOptions, onLine)
 	if err != nil {
 		log.Error("Failed to start new OpenCode session: %v", err)
 		return nil, o.handleOpenCodeClientError(err, "failed to start new OpenCode session")
@@ -234,7 +246,18 @@ func (o *OpenCodeService) ContinueConversationWithOptions(
 
 	finalOptions := o.deriveOpenCodeOptions(options)
 
-	rawOutput, err := o.openCodeClient.ContinueSession(sessionID, prompt, finalOptions)
+	// Create progress callback if emitter is set
+	var onLine clients.ProgressCallback
+	if o.progressEmitter != nil {
+		emitter := o.progressEmitter
+		onLine = func(line []byte) {
+			if progress := MapOpenCodeLineToProgress(line); progress != nil {
+				emitter(*progress)
+			}
+		}
+	}
+
+	rawOutput, err := o.openCodeClient.ContinueSession(sessionID, prompt, finalOptions, onLine)
 	if err != nil {
 		log.Error("Failed to continue OpenCode session: %v", err)
 		return nil, o.handleOpenCodeClientError(err, "failed to continue OpenCode session")
@@ -305,6 +328,11 @@ func (o *OpenCodeService) handleOpenCodeClientError(err error, operation string)
 	// No result found, return original error wrapped
 	log.Info("⚠️ No result found in OpenCode command output, returning original error")
 	return fmt.Errorf("%s: %w", operation, err)
+}
+
+// SetProgressEmitter sets the progress emitter for streaming progress updates
+func (o *OpenCodeService) SetProgressEmitter(emitter services.ProgressEmitter) {
+	o.progressEmitter = emitter
 }
 
 // AgentName identifies this service implementation

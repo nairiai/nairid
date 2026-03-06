@@ -14,9 +14,10 @@ import (
 )
 
 type CodexService struct {
-	codexClient clients.CodexClient
-	logDir      string
-	model       string
+	codexClient     clients.CodexClient
+	logDir          string
+	model           string
+	progressEmitter services.ProgressEmitter
 }
 
 func NewCodexService(codexClient clients.CodexClient, logDir, model string) *CodexService {
@@ -124,7 +125,18 @@ func (c *CodexService) StartNewConversationWithOptions(
 
 	finalOptions := c.deriveCodexOptions(options)
 
-	rawOutput, err := c.codexClient.StartNewSession(prompt, finalOptions)
+	// Create progress callback if emitter is set
+	var onLine clients.ProgressCallback
+	if c.progressEmitter != nil {
+		emitter := c.progressEmitter
+		onLine = func(line []byte) {
+			if progress := MapCodexLineToProgress(line); progress != nil {
+				emitter(*progress)
+			}
+		}
+	}
+
+	rawOutput, err := c.codexClient.StartNewSession(prompt, finalOptions, onLine)
 	if err != nil {
 		log.Error("Failed to start new Codex session: %v", err)
 		return nil, c.handleCodexClientError(err, "failed to start new Codex session")
@@ -221,7 +233,18 @@ func (c *CodexService) ContinueConversationWithOptions(
 
 	finalOptions := c.deriveCodexOptions(options)
 
-	rawOutput, err := c.codexClient.ContinueSession(sessionID, prompt, finalOptions)
+	// Create progress callback if emitter is set
+	var onLine clients.ProgressCallback
+	if c.progressEmitter != nil {
+		emitter := c.progressEmitter
+		onLine = func(line []byte) {
+			if progress := MapCodexLineToProgress(line); progress != nil {
+				emitter(*progress)
+			}
+		}
+	}
+
+	rawOutput, err := c.codexClient.ContinueSession(sessionID, prompt, finalOptions, onLine)
 	if err != nil {
 		log.Error("Failed to continue Codex session: %v", err)
 		return nil, c.handleCodexClientError(err, "failed to continue Codex session")
@@ -292,6 +315,11 @@ func (c *CodexService) handleCodexClientError(err error, operation string) error
 	// No agent message found, return original error wrapped
 	log.Info("⚠️ No agent message found in Codex command output, returning original error")
 	return fmt.Errorf("%s: %w", operation, err)
+}
+
+// SetProgressEmitter sets the progress emitter for streaming progress updates
+func (c *CodexService) SetProgressEmitter(emitter services.ProgressEmitter) {
+	c.progressEmitter = emitter
 }
 
 // AgentName identifies this service implementation

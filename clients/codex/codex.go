@@ -2,8 +2,8 @@ package codex
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"strings"
 
 	"nairid/clients"
 	"nairid/core"
@@ -22,7 +22,7 @@ func NewCodexClient(permissionMode, workDir string) *CodexClient {
 	}
 }
 
-func (c *CodexClient) StartNewSession(prompt string, options *clients.CodexOptions) (string, error) {
+func (c *CodexClient) StartNewSession(prompt string, options *clients.CodexOptions, onLine clients.ProgressCallback) (string, error) {
 	log.Info("📋 Starting to create new Codex session")
 
 	args := c.buildBaseArgs(options)
@@ -40,28 +40,17 @@ func (c *CodexClient) StartNewSession(prompt string, options *clients.CodexOptio
 	}
 
 	log.Info("Running Codex command (timeout: %s)", clients.DefaultSessionTimeout)
-	output, err := cmd.CombinedOutput()
+	result, err := clients.RunCommandStreaming(ctx, cmd, onLine)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			log.Error("⏰ Codex session timed out after %s", clients.DefaultSessionTimeout)
-			return "", &core.ErrClaudeCommandErr{
-				Err:    fmt.Errorf("session timed out after %s: %w", clients.DefaultSessionTimeout, err),
-				Output: string(output),
-			}
-		}
-		return "", &core.ErrClaudeCommandErr{
-			Err:    err,
-			Output: string(output),
-		}
+		return "", handleCommandError(ctx, err, "Codex")
 	}
 
-	result := strings.TrimSpace(string(output))
 	log.Info("Codex command completed successfully, outputLength: %d", len(result))
 	log.Info("📋 Completed successfully - created new Codex session")
 	return result, nil
 }
 
-func (c *CodexClient) ContinueSession(threadID, prompt string, options *clients.CodexOptions) (string, error) {
+func (c *CodexClient) ContinueSession(threadID, prompt string, options *clients.CodexOptions, onLine clients.ProgressCallback) (string, error) {
 	log.Info("📋 Starting to continue Codex session: %s", threadID)
 
 	// Command structure: codex [GLOBAL_OPTIONS] exec [EXEC_OPTIONS] resume [SESSION_ID] [PROMPT]
@@ -82,25 +71,34 @@ func (c *CodexClient) ContinueSession(threadID, prompt string, options *clients.
 	}
 
 	log.Info("Running Codex command (timeout: %s)", clients.DefaultSessionTimeout)
-	output, err := cmd.CombinedOutput()
+	result, err := clients.RunCommandStreaming(ctx, cmd, onLine)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			log.Error("⏰ Codex session timed out after %s", clients.DefaultSessionTimeout)
-			return "", &core.ErrClaudeCommandErr{
-				Err:    fmt.Errorf("session timed out after %s: %w", clients.DefaultSessionTimeout, err),
-				Output: string(output),
-			}
-		}
-		return "", &core.ErrClaudeCommandErr{
-			Err:    err,
-			Output: string(output),
-		}
+		return "", handleCommandError(ctx, err, "Codex")
 	}
 
-	result := strings.TrimSpace(string(output))
 	log.Info("Codex command completed successfully, outputLength: %d", len(result))
 	log.Info("📋 Completed successfully - continued Codex session")
 	return result, nil
+}
+
+// handleCommandError converts a clients.CommandError to a core.ErrClaudeCommandErr,
+// including timeout detection via context deadline.
+func handleCommandError(ctx context.Context, err error, agentName string) error {
+	var cmdErr *clients.CommandError
+	if errors.As(err, &cmdErr) {
+		if ctx.Err() == context.DeadlineExceeded {
+			log.Error("⏰ %s session timed out after %s", agentName, clients.DefaultSessionTimeout)
+			return &core.ErrClaudeCommandErr{
+				Err:    fmt.Errorf("session timed out after %s: %w", clients.DefaultSessionTimeout, cmdErr.Err),
+				Output: cmdErr.Output,
+			}
+		}
+		return &core.ErrClaudeCommandErr{
+			Err:    cmdErr.Err,
+			Output: cmdErr.Output,
+		}
+	}
+	return err
 }
 
 // buildBaseArgs constructs the base command arguments for Codex sessions (both new and resume)

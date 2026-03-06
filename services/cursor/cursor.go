@@ -291,6 +291,12 @@ func (c *CursorService) handleCursorClientError(err error, operation string) err
 	return fmt.Errorf("%s: %w", operation, err)
 }
 
+// SetProgressEmitter sets the progress emitter for streaming progress updates
+// Note: Cursor is excluded from progress streaming, so this is a no-op
+func (c *CursorService) SetProgressEmitter(emitter services.ProgressEmitter) {
+	// No-op: Cursor doesn't support progress streaming
+}
+
 // AgentName identifies this service implementation
 func (c *CursorService) AgentName() string {
 	return "cursor"
