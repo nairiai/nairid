@@ -76,8 +76,7 @@ Use the current working directory as your workspace for all file operations.
 MODE: You are in ASK mode.
 - DO NOT modify, create, or delete any files in the repository
 - If asked to write code, provide it in your response instead of writing to the filesystem
-- EXCEPTION: You may create temporary files in /tmp for analysis or calculations
-- EXCEPTION: You may save files to the outbound attachments directory (if configured above) to deliver downloadable files to the user`
+- EXCEPTION: You may create temporary files in /tmp for analysis or calculations`
 	}
 
 	return basePrompt
@@ -148,8 +147,7 @@ func AppendModeInstructions(base string, mode models.AgentMode) string {
 MODE: You are in ASK mode.
 - DO NOT modify, create, or delete any files in the repository
 - If asked to write code, provide it in your response instead of writing to the filesystem
-- EXCEPTION: You may create temporary files in /tmp for analysis or calculations
-- EXCEPTION: You may save files to the outbound attachments directory (if configured above) to deliver downloadable files to the user`
+- EXCEPTION: You may create temporary files in /tmp for analysis or calculations`
 	}
 	return base
 }
@@ -222,8 +220,7 @@ Use the current working directory as your workspace for all file operations.
 MODE: You are in ASK mode.
 - DO NOT modify, create, or delete any files in the repository
 - If asked to write code, provide it in your response instead of writing to the filesystem
-- EXCEPTION: You may create temporary files in /tmp for analysis or calculations
-- EXCEPTION: You may save files to the outbound attachments directory (if configured above) to deliver downloadable files to the user`
+- EXCEPTION: You may create temporary files in /tmp for analysis or calculations`
 	}
 
 	return basePrompt
