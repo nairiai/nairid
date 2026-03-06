@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"sync"
 	"time"
 
 	"nairid/clients"
@@ -24,6 +25,7 @@ type MessagePoller struct {
 	pollInterval        time.Duration
 	stopChan            chan struct{}
 	consecutiveFailures int
+	once                sync.Once
 }
 
 // NewMessagePoller creates a new MessagePoller instance.
@@ -45,8 +47,11 @@ func NewMessagePoller(
 }
 
 // Start begins the polling loop in a goroutine.
+// Safe to call multiple times (e.g. on WS reconnect) — only the first call spawns the goroutine.
 func (mp *MessagePoller) Start() {
-	go mp.run()
+	mp.once.Do(func() {
+		go mp.run()
+	})
 }
 
 func (mp *MessagePoller) run() {
