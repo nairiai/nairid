@@ -144,8 +144,9 @@ func (c *ClaudeService) StartNewConversationWithOptions(
 	var onLine clients.ProgressCallback
 	if c.progressEmitter != nil {
 		emitter := c.progressEmitter
+		tracker := services.NewClaudeProgressTracker()
 		onLine = func(line []byte) {
-			if progress := services.MapClaudeLineToProgress(line); progress != nil {
+			if progress := tracker.MapLine(line); progress != nil {
 				emitter(*progress)
 			}
 		}
@@ -276,8 +277,9 @@ func (c *ClaudeService) ContinueConversationWithOptions(
 	var onLine clients.ProgressCallback
 	if c.progressEmitter != nil {
 		emitter := c.progressEmitter
+		tracker := services.NewClaudeProgressTracker()
 		onLine = func(line []byte) {
-			if progress := services.MapClaudeLineToProgress(line); progress != nil {
+			if progress := tracker.MapLine(line); progress != nil {
 				emitter(*progress)
 			}
 		}

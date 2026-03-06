@@ -6,9 +6,28 @@ import (
 	"nairid/models"
 )
 
-// MapClaudeLineToProgress maps a single NDJSON line from Claude Code to a progress payload.
-// Returns nil if the line is not progress-relevant (system init, result, etc.).
-func MapClaudeLineToProgress(line []byte) *models.AgentProgressPayload {
+// toolMeta stores metadata about a pending tool_use call
+type toolMeta struct {
+	name  string
+	input string
+}
+
+// ClaudeProgressTracker is a stateful mapper that pairs tool_use events with their tool_result events.
+// It is NOT safe for concurrent use — it is designed to be called sequentially from a single stdout reader goroutine.
+type ClaudeProgressTracker struct {
+	pendingTools map[string]toolMeta
+}
+
+// NewClaudeProgressTracker creates a new tracker for pairing tool_use/tool_result events.
+func NewClaudeProgressTracker() *ClaudeProgressTracker {
+	return &ClaudeProgressTracker{
+		pendingTools: make(map[string]toolMeta),
+	}
+}
+
+// MapLine maps a single NDJSON line from Claude Code to a progress payload,
+// tracking tool_use IDs to pair them with their corresponding tool_result events.
+func (t *ClaudeProgressTracker) MapLine(line []byte) *models.AgentProgressPayload {
 	var typeCheck struct {
 		Type    string `json:"type"`
 		Subtype string `json:"subtype,omitempty"`
@@ -19,9 +38,9 @@ func MapClaudeLineToProgress(line []byte) *models.AgentProgressPayload {
 
 	switch typeCheck.Type {
 	case "assistant":
-		return mapClaudeAssistant(line)
+		return t.mapClaudeAssistant(line)
 	case "user":
-		return mapClaudeUser(line)
+		return t.mapClaudeUser(line)
 	case "tool_progress":
 		return mapClaudeToolProgress(line)
 	case "system":
@@ -31,9 +50,10 @@ func MapClaudeLineToProgress(line []byte) *models.AgentProgressPayload {
 	}
 }
 
-func mapClaudeAssistant(line []byte) *models.AgentProgressPayload {
+func (t *ClaudeProgressTracker) mapClaudeAssistant(line []byte) *models.AgentProgressPayload {
 	var msg struct {
-		Message struct {
+		ParentToolUseID string `json:"parent_tool_use_id"`
+		Message         struct {
 			Content []json.RawMessage `json:"content"`
 		} `json:"message"`
 	}
@@ -44,6 +64,7 @@ func mapClaudeAssistant(line []byte) *models.AgentProgressPayload {
 	for _, raw := range msg.Message.Content {
 		var block struct {
 			Type  string          `json:"type"`
+			ID    string          `json:"id,omitempty"`
 			Text  string          `json:"text,omitempty"`
 			Name  string          `json:"name,omitempty"`
 			Input json.RawMessage `json:"input,omitempty"`
@@ -54,17 +75,24 @@ func mapClaudeAssistant(line []byte) *models.AgentProgressPayload {
 
 		switch block.Type {
 		case "tool_use":
+			toolInput := summarizeToolInput(block.Name, block.Input)
+			if block.ID != "" {
+				t.pendingTools[block.ID] = toolMeta{name: block.Name, input: toolInput}
+			}
 			return &models.AgentProgressPayload{
-				ProgressType: models.ProgressTypeToolUse,
-				ToolName:     block.Name,
-				ToolInput:    summarizeToolInput(block.Name, block.Input),
-				ToolStatus:   "running",
+				ProgressType:    models.ProgressTypeToolUse,
+				ToolName:        block.Name,
+				ToolInput:       toolInput,
+				ToolStatus:      "running",
+				ToolUseID:       block.ID,
+				ParentToolUseID: msg.ParentToolUseID,
 			}
 		case "text":
 			if block.Text != "" {
 				return &models.AgentProgressPayload{
-					ProgressType: models.ProgressTypeText,
-					TextDelta:    truncate(block.Text, 500),
+					ProgressType:    models.ProgressTypeText,
+					TextDelta:       truncate(block.Text, 500),
+					ParentToolUseID: msg.ParentToolUseID,
 				}
 			}
 		}
@@ -73,9 +101,10 @@ func mapClaudeAssistant(line []byte) *models.AgentProgressPayload {
 	return nil
 }
 
-func mapClaudeUser(line []byte) *models.AgentProgressPayload {
+func (t *ClaudeProgressTracker) mapClaudeUser(line []byte) *models.AgentProgressPayload {
 	var msg struct {
-		Message struct {
+		ParentToolUseID string `json:"parent_tool_use_id"`
+		Message         struct {
 			Content json.RawMessage `json:"content"`
 		} `json:"message"`
 	}
@@ -85,8 +114,10 @@ func mapClaudeUser(line []byte) *models.AgentProgressPayload {
 
 	// Check if this is a tool result (array of tool_result blocks)
 	var blocks []struct {
-		Type    string `json:"type"`
-		IsError bool   `json:"is_error,omitempty"`
+		Type      string          `json:"type"`
+		ToolUseID string          `json:"tool_use_id,omitempty"`
+		IsError   bool            `json:"is_error,omitempty"`
+		Content   json.RawMessage `json:"content,omitempty"`
 	}
 	if err := json.Unmarshal(msg.Message.Content, &blocks); err != nil {
 		return nil
@@ -98,10 +129,25 @@ func mapClaudeUser(line []byte) *models.AgentProgressPayload {
 			if block.IsError {
 				status = "error"
 			}
-			return &models.AgentProgressPayload{
-				ProgressType: models.ProgressTypeToolUse,
-				ToolStatus:   status,
+
+			payload := &models.AgentProgressPayload{
+				ProgressType:    models.ProgressTypeToolUse,
+				ToolStatus:      status,
+				ToolUseID:       block.ToolUseID,
+				ToolOutput:      extractToolOutput(block.Content, 500),
+				ParentToolUseID: msg.ParentToolUseID,
 			}
+
+			// Look up the pending tool_use to populate name and input
+			if block.ToolUseID != "" {
+				if meta, ok := t.pendingTools[block.ToolUseID]; ok {
+					payload.ToolName = meta.name
+					payload.ToolInput = meta.input
+					delete(t.pendingTools, block.ToolUseID)
+				}
+			}
+
+			return payload
 		}
 	}
 
@@ -225,6 +271,37 @@ func extractString(fields map[string]json.RawMessage, key string) string {
 		return ""
 	}
 	return s
+}
+
+// extractToolOutput extracts text content from a tool_result content field.
+// Content can be a JSON string or an array of content blocks with "text" type.
+func extractToolOutput(raw json.RawMessage, maxLen int) string {
+	if len(raw) == 0 {
+		return ""
+	}
+
+	// Try as a plain string first
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return truncate(s, maxLen)
+	}
+
+	// Try as array of content blocks
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		return ""
+	}
+
+	for _, b := range blocks {
+		if b.Type == "text" && b.Text != "" {
+			return truncate(b.Text, maxLen)
+		}
+	}
+
+	return ""
 }
 
 func truncate(s string, maxLen int) string {
