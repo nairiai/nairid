@@ -1,3 +1,17 @@
+## [v0.0.95] - 2026-03-06
+
+### Features
+
+- Add outbound attachment support for agent responses ([#188](https://github.com/nairiai/eksecd/pull/188))
+  - Allow agents to send file attachments (images, documents) back to users alongside text responses
+  - Files placed in the outbound attachments directory are automatically uploaded and delivered
+
+### Improvements
+
+- Persist dedup state to disk and increase TTL to 60min ([#187](https://github.com/nairiai/eksecd/pull/187))
+  - Save message deduplication state to disk so it survives agent restarts
+  - Increase dedup TTL from previous value to 60 minutes for better duplicate rejection
+
 ## [v0.0.94] - 2026-03-06
 
 ### Features
