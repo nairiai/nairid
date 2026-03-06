@@ -58,6 +58,7 @@ type PersistedState struct {
 	AgentID        string                    `json:"agent_id"`
 	Jobs           map[string]*JobData       `json:"jobs"`
 	QueuedMessages map[string]*QueuedMessage `json:"queued_messages"` // Key: ProcessedMessageID
+	SeenMessages   map[string]time.Time      `json:"seen_messages"`   // ProcessedMessageID → first seen time (for deduplication)
 }
 
 // LoadedState represents the result of loading persisted state from disk
@@ -65,6 +66,7 @@ type LoadedState struct {
 	AgentID        string
 	Jobs           map[string]*JobData
 	QueuedMessages map[string]*QueuedMessage
+	SeenMessages   map[string]time.Time
 	Loaded         bool // Indicates whether state was successfully loaded from disk
 }
 
@@ -73,6 +75,7 @@ type AppState struct {
 	agentID        string
 	jobs           map[string]*JobData
 	queuedMessages map[string]*QueuedMessage
+	seenMessages   map[string]time.Time // ProcessedMessageID → first seen time (for deduplication)
 	statePath      string
 	repoContext    *RepositoryContext
 	mutex          sync.RWMutex
@@ -84,6 +87,7 @@ func NewAppState(agentID string, statePath string) *AppState {
 		agentID:        agentID,
 		jobs:           make(map[string]*JobData),
 		queuedMessages: make(map[string]*QueuedMessage),
+		seenMessages:   make(map[string]time.Time),
 		statePath:      statePath,
 		repoContext:    &RepositoryContext{}, // Initialize with empty context
 	}
@@ -238,6 +242,56 @@ func (a *AppState) GetAllQueuedMessages() []QueuedMessage {
 	return result
 }
 
+// MarkMessageSeen records a ProcessedMessageID as seen for deduplication and persists state
+func (a *AppState) MarkMessageSeen(processedMessageID string, seenAt time.Time) error {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+	a.seenMessages[processedMessageID] = seenAt
+
+	if err := a.persistStateLocked(); err != nil {
+		return fmt.Errorf("failed to persist state: %w", err)
+	}
+
+	return nil
+}
+
+// IsMessageSeen checks if a ProcessedMessageID has already been seen
+func (a *AppState) IsMessageSeen(processedMessageID string) (time.Time, bool) {
+	a.mutex.RLock()
+	defer a.mutex.RUnlock()
+	seenAt, exists := a.seenMessages[processedMessageID]
+	return seenAt, exists
+}
+
+// CleanupSeenMessages removes entries older than the given cutoff and persists state
+func (a *AppState) CleanupSeenMessages(cutoff time.Time) error {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+
+	for msgID, seenAt := range a.seenMessages {
+		if seenAt.Before(cutoff) {
+			delete(a.seenMessages, msgID)
+		}
+	}
+
+	if err := a.persistStateLocked(); err != nil {
+		return fmt.Errorf("failed to persist state: %w", err)
+	}
+
+	return nil
+}
+
+// GetAllSeenMessages returns a copy of all seen messages
+func (a *AppState) GetAllSeenMessages() map[string]time.Time {
+	a.mutex.RLock()
+	defer a.mutex.RUnlock()
+	result := make(map[string]time.Time, len(a.seenMessages))
+	for msgID, seenAt := range a.seenMessages {
+		result[msgID] = seenAt
+	}
+	return result
+}
+
 // persistStateLocked persists the current state to disk
 // MUST be called with mutex already locked
 func (a *AppState) persistStateLocked() error {
@@ -250,6 +304,7 @@ func (a *AppState) persistStateLocked() error {
 		AgentID:        a.agentID,
 		Jobs:           a.jobs,
 		QueuedMessages: a.queuedMessages,
+		SeenMessages:   a.seenMessages,
 	}
 
 	// Marshal to JSON with pretty printing
@@ -307,6 +362,7 @@ func LoadState(statePath string) (*LoadedState, error) {
 		AgentID:        state.AgentID,
 		Jobs:           state.Jobs,
 		QueuedMessages: state.QueuedMessages,
+		SeenMessages:   state.SeenMessages,
 		Loaded:         true,
 	}, nil
 }
