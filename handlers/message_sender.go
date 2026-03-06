@@ -39,7 +39,7 @@ func NewMessageSender(connectionState *ConnectionState, apiClient *clients.Agent
 	return &MessageSender{
 		connectionState: connectionState,
 		messageQueue:    make(chan OutgoingMessage, 1),
-		progressQueue:   make(chan OutgoingMessage, 50),
+		progressQueue:   make(chan OutgoingMessage, 1000),
 		socketClient:    nil, // Set later via Run()
 		apiClient:       apiClient,
 	}
@@ -167,28 +167,9 @@ func (ms *MessageSender) sendHTTPWithRetry(msg OutgoingMessage) {
 }
 
 // runProgressSender processes the progress queue in a separate goroutine.
-// Progress messages use best-effort delivery (single attempt, no retry).
 func (ms *MessageSender) runProgressSender() {
 	for msg := range ms.progressQueue {
-		ms.sendHTTPBestEffort(msg)
-	}
-}
-
-// sendHTTPBestEffort sends via HTTP with a single attempt (no retries).
-// Used for progress messages where occasional loss is acceptable.
-func (ms *MessageSender) sendHTTPBestEffort(msg OutgoingMessage) {
-	msgBytes, err := json.Marshal(msg.Data)
-	if err != nil {
-		return
-	}
-
-	var baseMsg models.BaseMessage
-	if err := json.Unmarshal(msgBytes, &baseMsg); err != nil {
-		return
-	}
-
-	if err := ms.apiClient.SubmitMessage(baseMsg); err != nil {
-		log.Warn("⚠️ MessageSender: Progress HTTP send failed: %v", err)
+		ms.sendHTTPWithRetry(msg)
 	}
 }
 
