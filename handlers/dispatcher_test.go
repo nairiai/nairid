@@ -653,7 +653,7 @@ func TestMultipleJobsProcessInParallel(t *testing.T) {
 }
 
 func TestDispatcher_DuplicateStartConversation(t *testing.T) {
-	appState := createTestAppStateNoPath()
+	appState := createTestAppState(t)
 	wp := workerpool.New(2)
 	defer wp.StopWait()
 
@@ -682,7 +682,7 @@ func TestDispatcher_DuplicateStartConversation(t *testing.T) {
 }
 
 func TestDispatcher_DuplicateUserMessage(t *testing.T) {
-	appState := createTestAppStateNoPath()
+	appState := createTestAppState(t)
 	wp := workerpool.New(2)
 	defer wp.StopWait()
 
@@ -709,7 +709,7 @@ func TestDispatcher_DuplicateUserMessage(t *testing.T) {
 }
 
 func TestDispatcher_DifferentMessagesNotDeduplicated(t *testing.T) {
-	appState := createTestAppStateNoPath()
+	appState := createTestAppState(t)
 	wp := workerpool.New(2)
 	defer wp.StopWait()
 
@@ -742,7 +742,7 @@ func TestDispatcher_DifferentMessagesNotDeduplicated(t *testing.T) {
 }
 
 func TestDispatcher_SeenMessageCleanup(t *testing.T) {
-	appState := createTestAppStateNoPath()
+	appState := createTestAppState(t)
 	wp := workerpool.New(2)
 	defer wp.StopWait()
 
@@ -755,8 +755,8 @@ func TestDispatcher_SeenMessageCleanup(t *testing.T) {
 
 	// Add a message to seenMessages with an old timestamp
 	dispatcher.mutex.Lock()
-	dispatcher.seenMessages["old-msg-id"] = time.Now().Add(-10 * time.Minute)
-	dispatcher.lastCleanup = time.Now().Add(-10 * time.Minute) // Force cleanup to run
+	dispatcher.seenMessages["old-msg-id"] = time.Now().Add(-90 * time.Minute)
+	dispatcher.lastCleanup = time.Now().Add(-15 * time.Minute) // Force cleanup to run (older than 10min interval)
 	dispatcher.mutex.Unlock()
 
 	// Dispatch a new message to trigger cleanup
@@ -782,7 +782,7 @@ func TestDispatcher_SeenMessageCleanup(t *testing.T) {
 }
 
 func TestDispatcher_EmptyProcessedMessageID(t *testing.T) {
-	appState := createTestAppStateNoPath()
+	appState := createTestAppState(t)
 	wp := workerpool.New(2)
 	defer wp.StopWait()
 
@@ -820,6 +820,61 @@ func TestDispatcher_EmptyProcessedMessageID(t *testing.T) {
 
 	if exists {
 		t.Error("Empty ProcessedMessageID should not be stored in seenMessages")
+	}
+}
+
+func TestDispatcher_SeenMessagesSurviveRestart(t *testing.T) {
+	tmpDir := t.TempDir()
+	statePath := filepath.Join(tmpDir, "test_state.json")
+	appState := models.NewAppState("test-agent", statePath)
+	wp := workerpool.New(2)
+	defer wp.StopWait()
+
+	dispatcher := NewJobDispatcher(nil, wp, appState)
+
+	ch := make(chan models.BaseMessage, 100)
+	dispatcher.mutex.Lock()
+	dispatcher.activeJobs["job-persist"] = ch
+	dispatcher.mutex.Unlock()
+
+	msg := createTestMessageWithProcessedID(
+		models.MessageTypeStartConversation,
+		"job-persist",
+		"persist-msg-001",
+	)
+	dispatcher.Dispatch(msg)
+
+	if len(ch) != 1 {
+		t.Fatalf("Expected 1 message in channel, got %d", len(ch))
+	}
+
+	appState2 := models.NewAppState("test-agent", statePath)
+	loadedState, err := models.LoadState(statePath)
+	if err != nil {
+		t.Fatalf("Failed to load state: %v", err)
+	}
+	if loadedState.SeenMessages == nil {
+		t.Fatal("Expected seen messages in loaded state, got nil")
+	}
+	for msgID, seenAt := range loadedState.SeenMessages {
+		if err := appState2.MarkMessageSeen(msgID, seenAt); err != nil {
+			t.Fatalf("Failed to restore seen message: %v", err)
+		}
+	}
+
+	wp2 := workerpool.New(2)
+	defer wp2.StopWait()
+	dispatcher2 := NewJobDispatcher(nil, wp2, appState2)
+
+	ch2 := make(chan models.BaseMessage, 100)
+	dispatcher2.mutex.Lock()
+	dispatcher2.activeJobs["job-persist"] = ch2
+	dispatcher2.mutex.Unlock()
+
+	dispatcher2.Dispatch(msg)
+
+	if len(ch2) != 0 {
+		t.Errorf("Expected 0 messages after restart (duplicate should be filtered), got %d", len(ch2))
 	}
 }
 

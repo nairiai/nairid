@@ -13,9 +13,9 @@ import (
 
 const (
 	// seenMessageTTL is how long we remember message IDs for deduplication
-	seenMessageTTL = 5 * time.Minute
+	seenMessageTTL = 60 * time.Minute
 	// cleanupInterval is how often we run cleanup of old seen messages
-	cleanupInterval = 5 * time.Minute
+	cleanupInterval = 10 * time.Minute
 )
 
 // JobDispatcher routes messages to per-job channels to ensure sequential processing
@@ -30,15 +30,22 @@ type JobDispatcher struct {
 	appState     *models.AppState
 }
 
-// NewJobDispatcher creates a new JobDispatcher instance
+// NewJobDispatcher creates a new JobDispatcher instance.
+// It restores previously seen messages from app state for crash-resilient deduplication.
 func NewJobDispatcher(
 	handler *MessageHandler,
 	workerPool *workerpool.WorkerPool,
 	appState *models.AppState,
 ) *JobDispatcher {
+	// Restore seen messages from persisted state
+	seenMessages := appState.GetAllSeenMessages()
+	if seenMessages == nil {
+		seenMessages = make(map[string]time.Time)
+	}
+
 	return &JobDispatcher{
 		activeJobs:   make(map[string]chan models.BaseMessage),
-		seenMessages: make(map[string]time.Time),
+		seenMessages: seenMessages,
 		lastCleanup:  time.Now(),
 		handler:      handler,
 		workerPool:   workerPool,
@@ -59,8 +66,14 @@ func (d *JobDispatcher) Dispatch(msg models.BaseMessage) {
 			log.Info("🔁 Duplicate message %s, skipping", processedMsgID)
 			return
 		}
-		d.seenMessages[processedMsgID] = time.Now()
+		now := time.Now()
+		d.seenMessages[processedMsgID] = now
 		d.mutex.Unlock()
+
+		// Persist to app state (outside mutex to avoid holding it during disk I/O)
+		if err := d.appState.MarkMessageSeen(processedMsgID, now); err != nil {
+			log.Warn("⚠️ Failed to persist seen message %s: %v", processedMsgID, err)
+		}
 	}
 
 	jobID := d.extractJobID(msg)
@@ -231,4 +244,9 @@ func (d *JobDispatcher) maybeCleanupSeenMessages() {
 		}
 	}
 	log.Info("🧹 Cleaned up seen messages, %d remaining", len(d.seenMessages))
+
+	// Sync cleanup to persisted state (best-effort, don't block on errors)
+	if err := d.appState.CleanupSeenMessages(cutoff); err != nil {
+		log.Warn("⚠️ Failed to persist seen messages cleanup: %v", err)
+	}
 }

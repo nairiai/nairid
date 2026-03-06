@@ -258,5 +258,20 @@ func RestoreAppState(statePath string) (*models.AppState, string, error) {
 		}
 	}
 
+	// Restore seen messages for deduplication if state was loaded
+	if loadedState.Loaded && loadedState.SeenMessages != nil {
+		restoredCount := 0
+		for msgID, seenAt := range loadedState.SeenMessages {
+			if err := appState.MarkMessageSeen(msgID, seenAt); err != nil {
+				log.Warn("⚠️ Failed to restore seen message %s: %v", msgID, err)
+				continue
+			}
+			restoredCount++
+		}
+		if restoredCount > 0 {
+			log.Info("📥 Restored %d seen messages for deduplication", restoredCount)
+		}
+	}
+
 	return appState, agentID, nil
 }
