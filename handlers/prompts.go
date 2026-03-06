@@ -110,6 +110,26 @@ Use the current working directory as your workspace for all file operations.
 	return base
 }
 
+// AppendOutboundAttachmentInstructions appends instructions for outbound attachments to a system prompt
+func AppendOutboundAttachmentInstructions(base string, attachmentsDir string) string {
+	if attachmentsDir == "" {
+		return base
+	}
+
+	base += fmt.Sprintf(`
+
+*Outbound Attachments:*
+To send files to the user, save them to: %s
+Files placed in this directory will be uploaded and delivered with your response.
+- Supported: images, PDFs, CSVs, text files, archives, other binary files
+- Max 50 MB per file
+- Files are removed after sending
+- Only place files here when you need to share a file with the user
+`, attachmentsDir)
+
+	return base
+}
+
 // AppendModeInstructions appends mode-specific instructions to a base prompt
 func AppendModeInstructions(base string, mode models.AgentMode) string {
 	if mode == models.AgentModeAsk {

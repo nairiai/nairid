@@ -82,6 +82,22 @@ func GetConfigDir() (string, error) {
 	return configDir, nil
 }
 
+// GetOutboundAttachmentsDir returns the directory path for storing outbound attachments for a given job
+// and creates the directory if it doesn't exist. Per-job subdirectories prevent file leakage between concurrent jobs.
+func GetOutboundAttachmentsDir(jobID string) (string, error) {
+	configDir, err := GetConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get config directory: %w", err)
+	}
+
+	dir := filepath.Join(configDir, "attachments", jobID)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create outbound attachments directory: %w", err)
+	}
+
+	return dir, nil
+}
+
 func (em *EnvManager) Load() error {
 	em.mu.Lock()
 	defer em.mu.Unlock()

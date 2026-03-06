@@ -283,18 +283,27 @@ func (mh *MessageHandler) handleStartConversation(msg models.BaseMessage) error 
 	// Get repository context
 	repoContext := mh.appState.GetRepositoryContext()
 
+	// Create outbound attachments directory for this job
+	outboundAttachmentsDir, outboundDirErr := env.GetOutboundAttachmentsDir(payload.JobID)
+	if outboundDirErr != nil {
+		log.Error("\u274c Failed to create outbound attachments directory: %v", outboundDirErr)
+		outboundAttachmentsDir = ""
+	}
+
 	// Get appropriate system prompt based on agent type and mode
 	// If the backend provided a custom system prompt, use it as base and append dynamic sections
 	// Otherwise, fall back to the built-in defaults
 	var systemPrompt string
 	if payload.SystemPrompt != "" {
 		systemPrompt = AppendRepoContext(payload.SystemPrompt, repoContext, worktreePath)
+		systemPrompt = AppendOutboundAttachmentInstructions(systemPrompt, outboundAttachmentsDir)
 		systemPrompt = AppendModeInstructions(systemPrompt, payload.Mode)
 	} else {
 		systemPrompt = GetClaudeSystemPrompt(payload.Mode, repoContext, worktreePath)
 		if mh.claudeService.AgentName() == "cursor" {
 			systemPrompt = GetCursorSystemPrompt(payload.Mode, repoContext, worktreePath)
 		}
+		systemPrompt = AppendOutboundAttachmentInstructions(systemPrompt, outboundAttachmentsDir)
 	}
 
 	// Process thread context (previous messages) and attachments

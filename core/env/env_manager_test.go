@@ -367,3 +367,71 @@ func TestGetConfigDir_CustomTilde(t *testing.T) {
 	// Clean up created directory
 	os.RemoveAll(configDir)
 }
+
+func TestGetOutboundAttachmentsDir_CreatesDirectory(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "nairid-outbound-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	originalValue := os.Getenv("NAIRI_CONFIG_DIR")
+	os.Setenv("NAIRI_CONFIG_DIR", tempDir)
+	defer func() {
+		if originalValue != "" {
+			os.Setenv("NAIRI_CONFIG_DIR", originalValue)
+		} else {
+			os.Unsetenv("NAIRI_CONFIG_DIR")
+		}
+	}()
+
+	dir, err := GetOutboundAttachmentsDir("test-job-123")
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+
+	expectedDir := filepath.Join(tempDir, "attachments", "test-job-123")
+	if dir != expectedDir {
+		t.Errorf("Expected dir '%s', got '%s'", expectedDir, dir)
+	}
+
+	info, err := os.Stat(dir)
+	if os.IsNotExist(err) {
+		t.Fatalf("Expected directory to exist at %s", dir)
+	}
+	if !info.IsDir() {
+		t.Errorf("Expected %s to be a directory", dir)
+	}
+}
+
+func TestGetOutboundAttachmentsDir_DifferentJobs(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "nairid-outbound-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	originalValue := os.Getenv("NAIRI_CONFIG_DIR")
+	os.Setenv("NAIRI_CONFIG_DIR", tempDir)
+	defer func() {
+		if originalValue != "" {
+			os.Setenv("NAIRI_CONFIG_DIR", originalValue)
+		} else {
+			os.Unsetenv("NAIRI_CONFIG_DIR")
+		}
+	}()
+
+	dir1, err := GetOutboundAttachmentsDir("job-aaa")
+	if err != nil {
+		t.Fatalf("Expected no error for job-aaa, got: %v", err)
+	}
+
+	dir2, err := GetOutboundAttachmentsDir("job-bbb")
+	if err != nil {
+		t.Fatalf("Expected no error for job-bbb, got: %v", err)
+	}
+
+	if dir1 == dir2 {
+		t.Errorf("Expected different directories for different jobs, both got: %s", dir1)
+	}
+}

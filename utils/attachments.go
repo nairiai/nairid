@@ -10,6 +10,8 @@ import (
 	"unicode/utf8"
 
 	"nairid/clients"
+	"nairid/core/env"
+	"nairid/core/log"
 )
 
 // DetermineFileExtensionFromMagicBytes inspects the first few bytes of content
@@ -212,6 +214,78 @@ func FormatAttachmentsText(filePaths []string) string {
 	}
 
 	return builder.String()
+}
+
+// ScanOutboundAttachments lists files in the outbound attachments directory for a given job.
+func ScanOutboundAttachments(jobID string) ([]string, error) {
+	dir, err := env.GetOutboundAttachmentsDir(jobID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get outbound attachments dir: %w", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read outbound attachments dir: %w", err)
+	}
+
+	var paths []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		paths = append(paths, filepath.Join(dir, entry.Name()))
+	}
+
+	return paths, nil
+}
+
+// UploadOutboundAttachments scans the outbound attachments directory for a job,
+// uploads each file to the backend, and returns the attachment IDs.
+func UploadOutboundAttachments(client *clients.AgentsApiClient, jobID string) ([]string, error) {
+	files, err := ScanOutboundAttachments(jobID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan outbound attachments: %w", err)
+	}
+
+	if len(files) == 0 {
+		return nil, nil
+	}
+
+	var attachmentIDs []string
+	for _, filePath := range files {
+		resp, err := client.UploadAttachment(filePath)
+		if err != nil {
+			log.Warn("\u26a0\ufe0f Failed to upload outbound attachment %s: %v", filePath, err)
+			continue
+		}
+		attachmentIDs = append(attachmentIDs, resp.AttachmentID)
+	}
+
+	return attachmentIDs, nil
+}
+
+// ClearOutboundAttachments removes all files from the outbound attachments directory for a job.
+func ClearOutboundAttachments(jobID string) error {
+	dir, err := env.GetOutboundAttachmentsDir(jobID)
+	if err != nil {
+		return fmt.Errorf("failed to get outbound attachments dir: %w", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("failed to read outbound attachments dir: %w", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil {
+			log.Warn("\u26a0\ufe0f Failed to remove outbound attachment %s: %v", entry.Name(), err)
+		}
+	}
+
+	return nil
 }
 
 // ExpandHomeDir expands the ~ character in a file path to the user's home directory

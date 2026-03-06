@@ -127,9 +127,10 @@ type UserMessagePayload struct {
 }
 
 type AssistantMessagePayload struct {
-	JobID              string `json:"job_id"`
-	Message            string `json:"message"`
-	ProcessedMessageID string `json:"processed_message_id"`
+	JobID              string   `json:"job_id"`
+	Message            string   `json:"message"`
+	ProcessedMessageID string   `json:"processed_message_id"`
+	AttachmentIDs      []string `json:"attachment_ids,omitempty"`
 }
 
 type SystemMessagePayload struct {
