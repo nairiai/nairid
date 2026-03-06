@@ -167,7 +167,8 @@ func RecoverJobs(
 
 			// Reconstruct message based on message type
 			var msg models.BaseMessage
-			if queuedMsg.MessageType == models.MessageTypeStartConversation {
+			switch queuedMsg.MessageType {
+			case models.MessageTypeStartConversation:
 				log.Info("🔄 Recovering queued StartConversation message %s (age: %v)", queuedMsg.ProcessedMessageID, msgAge)
 				msg = models.BaseMessage{
 					ID:   core.NewID("msg"),
@@ -179,7 +180,7 @@ func RecoverJobs(
 						MessageLink:        queuedMsg.MessageLink,
 					},
 				}
-			} else if queuedMsg.MessageType == models.MessageTypeUserMessage {
+			case models.MessageTypeUserMessage:
 				log.Info("🔄 Recovering queued UserMessage %s (age: %v)", queuedMsg.ProcessedMessageID, msgAge)
 				msg = models.BaseMessage{
 					ID:   core.NewID("msg"),
@@ -191,7 +192,7 @@ func RecoverJobs(
 						MessageLink:        queuedMsg.MessageLink,
 					},
 				}
-			} else {
+			default:
 				log.Warn("⚠️ Unknown message type %s for queued message %s, skipping", queuedMsg.MessageType, queuedMsg.ProcessedMessageID)
 				continue
 			}

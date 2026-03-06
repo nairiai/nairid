@@ -23,7 +23,7 @@ func setupTestGitRepo(t *testing.T) (string, func()) {
 	cmd := exec.Command("git", "init")
 	cmd.Dir = tmpDir
 	if err := cmd.Run(); err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to init git repo: %v", err)
 	}
 
@@ -36,7 +36,7 @@ func setupTestGitRepo(t *testing.T) (string, func()) {
 		cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
 		cmd.Dir = tmpDir
 		if err := cmd.Run(); err != nil {
-			os.RemoveAll(tmpDir)
+			_ = os.RemoveAll(tmpDir)
 			t.Fatalf("Failed to configure git: %v", err)
 		}
 	}
@@ -44,26 +44,26 @@ func setupTestGitRepo(t *testing.T) (string, func()) {
 	// Create initial commit
 	readmePath := filepath.Join(tmpDir, "README.md")
 	if err := os.WriteFile(readmePath, []byte("# Test Repo\n"), 0644); err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to create README: %v", err)
 	}
 
 	cmd = exec.Command("git", "add", "README.md")
 	cmd.Dir = tmpDir
 	if err := cmd.Run(); err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to add README: %v", err)
 	}
 
 	cmd = exec.Command("git", "commit", "-m", "Initial commit")
 	cmd.Dir = tmpDir
 	if err := cmd.Run(); err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to commit: %v", err)
 	}
 
 	cleanup := func() {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 	}
 
 	return tmpDir, cleanup
@@ -444,7 +444,7 @@ func TestCreateWorktree(t *testing.T) {
 
 	// Create a worktree directory
 	worktreePath := filepath.Join(os.TempDir(), "worktree-test-"+t.Name())
-	defer os.RemoveAll(worktreePath)
+	defer func() { _ = os.RemoveAll(worktreePath) }()
 
 	branchName := "test-worktree-branch"
 	err := client.CreateWorktree(worktreePath, branchName, "")
@@ -494,7 +494,7 @@ func TestCreateWorktree_ExistingBranch(t *testing.T) {
 
 	// Try to create worktree with existing branch name - should fail
 	worktreePath := filepath.Join(os.TempDir(), "worktree-test-"+t.Name())
-	defer os.RemoveAll(worktreePath)
+	defer func() { _ = os.RemoveAll(worktreePath) }()
 
 	err := client.CreateWorktree(worktreePath, branchName, "")
 	if err == nil {
@@ -558,8 +558,8 @@ func TestListWorktrees(t *testing.T) {
 		filepath.Join(os.TempDir(), "worktree-test-2-"+t.Name()),
 	}
 	for i, wtPath := range worktreePaths {
-		defer os.RemoveAll(wtPath)
-		branchName := "test-branch-" + strings.Replace(t.Name(), "/", "-", -1) + "-" + string(rune('a'+i))
+		defer func() { _ = os.RemoveAll(wtPath) }()
+		branchName := "test-branch-" + strings.ReplaceAll(t.Name(), "/", "-") + "-" + string(rune('a'+i))
 		if err := client.CreateWorktree(wtPath, branchName, ""); err != nil {
 			t.Fatalf("Failed to create worktree %s: %v", wtPath, err)
 		}
@@ -591,7 +591,7 @@ func TestWorktreeExists(t *testing.T) {
 
 	// Create a worktree
 	worktreePath := filepath.Join(os.TempDir(), "worktree-exists-test-"+t.Name())
-	defer os.RemoveAll(worktreePath)
+	defer func() { _ = os.RemoveAll(worktreePath) }()
 	branchName := "worktree-exists-branch"
 
 	if err := client.CreateWorktree(worktreePath, branchName, ""); err != nil {
@@ -650,7 +650,7 @@ func TestWorktreeGitOperations(t *testing.T) {
 
 	// Create a worktree
 	worktreePath := filepath.Join(os.TempDir(), "worktree-ops-test-"+t.Name())
-	defer os.RemoveAll(worktreePath)
+	defer func() { _ = os.RemoveAll(worktreePath) }()
 	branchName := "worktree-ops-branch"
 
 	if err := client.CreateWorktree(worktreePath, branchName, ""); err != nil {

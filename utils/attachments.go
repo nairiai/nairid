@@ -210,7 +210,7 @@ func FormatAttachmentsText(filePaths []string) string {
 	builder.WriteString("---\n")
 	builder.WriteString("Attachments:\n")
 	for _, path := range filePaths {
-		builder.WriteString(fmt.Sprintf("- %s\n", path))
+		fmt.Fprintf(&builder, "- %s\n", path)
 	}
 
 	return builder.String()

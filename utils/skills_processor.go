@@ -113,7 +113,7 @@ func ExtractSkillNameFromFilename(filename string) string {
 			// Verify the last 6 characters look like an attachment ID (alphanumeric)
 			isAttachmentID := true
 			for _, ch := range lastPart[1:] {
-				if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')) {
+				if (ch < 'a' || ch > 'z') && (ch < 'A' || ch > 'Z') && (ch < '0' || ch > '9') {
 					isAttachmentID = false
 					break
 				}
@@ -229,7 +229,7 @@ func extractZipFile(file *zip.File, targetPath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open file in zip: %w", err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	// Read entire content into memory
 	content, err := io.ReadAll(rc)

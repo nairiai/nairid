@@ -214,6 +214,12 @@ func (c *ClaudeService) ContinueConversation(sessionID, prompt string) (*service
 	return c.ContinueConversationWithOptions(sessionID, prompt, nil)
 }
 
+func (c *ClaudeService) ContinueConversationWithSystemPrompt(sessionID, prompt, systemPrompt string) (*services.CLIAgentResult, error) {
+	return c.ContinueConversationWithOptions(sessionID, prompt, &clients.ClaudeOptions{
+		SystemPrompt: systemPrompt,
+	})
+}
+
 // StartNewConversationInDir starts a new conversation in a specific working directory
 func (c *ClaudeService) StartNewConversationInDir(prompt, workDir string) (*services.CLIAgentResult, error) {
 	return c.StartNewConversationWithOptions(prompt, &clients.ClaudeOptions{
@@ -235,6 +241,13 @@ func (c *ClaudeService) StartNewConversationWithSystemPromptInDir(
 func (c *ClaudeService) ContinueConversationInDir(sessionID, prompt, workDir string) (*services.CLIAgentResult, error) {
 	return c.ContinueConversationWithOptions(sessionID, prompt, &clients.ClaudeOptions{
 		WorkDir: workDir,
+	})
+}
+
+func (c *ClaudeService) ContinueConversationWithSystemPromptInDir(sessionID, prompt, systemPrompt, workDir string) (*services.CLIAgentResult, error) {
+	return c.ContinueConversationWithOptions(sessionID, prompt, &clients.ClaudeOptions{
+		SystemPrompt: systemPrompt,
+		WorkDir:      workDir,
 	})
 }
 

@@ -85,7 +85,7 @@ func (c *AgentsApiClient) FetchAttachment(attachmentID string) (*AttachmentRespo
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Check for successful response
 	if resp.StatusCode != http.StatusOK {
@@ -113,7 +113,7 @@ func (c *AgentsApiClient) UploadAttachment(filePath string) (*UploadAttachmentRe
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file %s: %w", filePath, err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
@@ -147,7 +147,7 @@ func (c *AgentsApiClient) UploadAttachment(filePath string) (*UploadAttachmentRe
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -179,7 +179,7 @@ func (c *AgentsApiClient) FetchToken() (*TokenResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Check for successful response
 	if resp.StatusCode != http.StatusOK {
@@ -226,7 +226,7 @@ func (c *AgentsApiClient) FetchEnvVars() ([]EnvVarEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -262,7 +262,7 @@ func (c *AgentsApiClient) FetchArtifacts() ([]Artifact, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Check for successful response
 	if resp.StatusCode != http.StatusOK {
@@ -322,7 +322,7 @@ func (c *AgentsApiClient) FetchAgentJobs() (*AgentJobsResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -355,7 +355,7 @@ func (c *AgentsApiClient) AckMessage(messageID string) error {
 	if err != nil {
 		return fmt.Errorf("failed to execute request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -389,7 +389,7 @@ func (c *AgentsApiClient) SubmitMessage(msg models.BaseMessage) error {
 	if err != nil {
 		return fmt.Errorf("failed to execute request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)

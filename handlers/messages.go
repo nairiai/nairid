@@ -120,7 +120,7 @@ func (mh *MessageHandler) formatThreadContext(
 
 	attachmentIndex := 0
 	for i, prevMsg := range previousMessages {
-		builder.WriteString(fmt.Sprintf("Message %d:\n", i+1))
+		fmt.Fprintf(&builder, "Message %d:\n", i+1)
 		builder.WriteString(prevMsg.Message)
 		builder.WriteString("\n")
 
@@ -260,7 +260,7 @@ func (mh *MessageHandler) handleStartConversation(msg models.BaseMessage) error 
 		JobID:              payload.JobID,
 		BranchName:         branchName,
 		WorktreePath:       worktreePath, // Will be empty if not using worktrees
-		ClaudeSessionID:    "", // No session yet
+		ClaudeSessionID:    "",           // No session yet
 		PullRequestID:      "",
 		LastMessage:        payload.Message,
 		ProcessedMessageID: payload.ProcessedMessageID,
@@ -408,11 +408,32 @@ func (mh *MessageHandler) handleStartConversation(msg models.BaseMessage) error 
 		prID = commitResult.PullRequestID
 	}
 
+	// Upload outbound attachments if the agent produced any files
+	var attachmentIDs []string
+	outboundFiles, scanErr := utils.ScanOutboundAttachments(payload.JobID)
+	if scanErr != nil {
+		log.Warn("Failed to scan outbound attachments for job %s: %v", payload.JobID, scanErr)
+	} else if len(outboundFiles) > 0 {
+		log.Info("Found %d outbound attachment(s) for job %s, uploading...", len(outboundFiles), payload.JobID)
+		uploadedIDs, uploadErr := utils.UploadOutboundAttachments(mh.agentsApiClient, payload.JobID)
+		if uploadErr != nil {
+			log.Warn("Failed to upload outbound attachments for job %s: %v", payload.JobID, uploadErr)
+		} else {
+			attachmentIDs = uploadedIDs
+			log.Info("Uploaded %d outbound attachment(s) for job %s: %v", len(attachmentIDs), payload.JobID, attachmentIDs)
+		}
+
+		if clearErr := utils.ClearOutboundAttachments(payload.JobID); clearErr != nil {
+			log.Warn("Failed to clear outbound attachments for job %s: %v", payload.JobID, clearErr)
+		}
+	}
+
 	// Send assistant response back first
 	assistantPayload := models.AssistantMessagePayload{
 		JobID:              payload.JobID,
 		Message:            claudeResult.Output,
 		ProcessedMessageID: payload.ProcessedMessageID,
+		AttachmentIDs:      attachmentIDs,
 	}
 
 	assistantMsg := models.BaseMessage{
@@ -421,7 +442,7 @@ func (mh *MessageHandler) handleStartConversation(msg models.BaseMessage) error 
 		Payload: assistantPayload,
 	}
 	mh.messageSender.QueueMessage("cc_message", assistantMsg)
-	log.Info("🤖 Queued assistant response (message ID: %s)", assistantMsg.ID)
+	log.Info("🤖 Queued assistant response (message ID: %s, attachments: %d)", assistantMsg.ID, len(attachmentIDs))
 
 	// Persist final job state with "completed" status after successful message send
 	if err := mh.appState.UpdateJobData(payload.JobID, models.JobData{
@@ -651,13 +672,29 @@ func (mh *MessageHandler) handleUserMessage(msg models.BaseMessage) error {
 	// Prepend sender metadata if available
 	finalPrompt = prependSenderMetadata(finalPrompt, payload.SenderMetadata)
 
+	// Build outbound attachment system prompt for this job
+	outboundAttachmentsDir, outboundDirErr := env.GetOutboundAttachmentsDir(payload.JobID)
+	if outboundDirErr != nil {
+		log.Error("Failed to get outbound attachments directory: %v", outboundDirErr)
+		outboundAttachmentsDir = ""
+	}
+	outboundSystemPrompt := BuildOutboundAttachmentSystemPrompt(outboundAttachmentsDir)
+
 	// Continue Claude session - use worktree directory if in worktree mode
 	var claudeResult *services.CLIAgentResult
 	if jobData.WorktreePath != "" {
 		log.Info("🌳 Continuing Claude session in worktree: %s", jobData.WorktreePath)
-		claudeResult, err = mh.claudeService.ContinueConversationInDir(sessionID, finalPrompt, jobData.WorktreePath)
+		if outboundSystemPrompt != "" {
+			claudeResult, err = mh.claudeService.ContinueConversationWithSystemPromptInDir(sessionID, finalPrompt, outboundSystemPrompt, jobData.WorktreePath)
+		} else {
+			claudeResult, err = mh.claudeService.ContinueConversationInDir(sessionID, finalPrompt, jobData.WorktreePath)
+		}
 	} else {
-		claudeResult, err = mh.claudeService.ContinueConversation(sessionID, finalPrompt)
+		if outboundSystemPrompt != "" {
+			claudeResult, err = mh.claudeService.ContinueConversationWithSystemPrompt(sessionID, finalPrompt, outboundSystemPrompt)
+		} else {
+			claudeResult, err = mh.claudeService.ContinueConversation(sessionID, finalPrompt)
+		}
 	}
 	if err != nil {
 		log.Info("❌ Error continuing Claude session: %v", err)
@@ -727,11 +764,32 @@ func (mh *MessageHandler) handleUserMessage(msg models.BaseMessage) error {
 		prID = commitResult.PullRequestID
 	}
 
+	// Upload outbound attachments if the agent produced any files
+	var outboundAttachmentIDs []string
+	outboundFiles, scanErr := utils.ScanOutboundAttachments(payload.JobID)
+	if scanErr != nil {
+		log.Warn("Failed to scan outbound attachments for job %s: %v", payload.JobID, scanErr)
+	} else if len(outboundFiles) > 0 {
+		log.Info("Found %d outbound attachment(s) for job %s, uploading...", len(outboundFiles), payload.JobID)
+		uploadedIDs, uploadErr := utils.UploadOutboundAttachments(mh.agentsApiClient, payload.JobID)
+		if uploadErr != nil {
+			log.Warn("Failed to upload outbound attachments for job %s: %v", payload.JobID, uploadErr)
+		} else {
+			outboundAttachmentIDs = uploadedIDs
+			log.Info("Uploaded %d outbound attachment(s) for job %s: %v", len(outboundAttachmentIDs), payload.JobID, outboundAttachmentIDs)
+		}
+
+		if clearErr := utils.ClearOutboundAttachments(payload.JobID); clearErr != nil {
+			log.Warn("Failed to clear outbound attachments for job %s: %v", payload.JobID, clearErr)
+		}
+	}
+
 	// Send assistant response back first
 	assistantPayload := models.AssistantMessagePayload{
 		JobID:              payload.JobID,
 		Message:            claudeResult.Output,
 		ProcessedMessageID: payload.ProcessedMessageID,
+		AttachmentIDs:      outboundAttachmentIDs,
 	}
 
 	assistantMsg := models.BaseMessage{
@@ -740,7 +798,7 @@ func (mh *MessageHandler) handleUserMessage(msg models.BaseMessage) error {
 		Payload: assistantPayload,
 	}
 	mh.messageSender.QueueMessage("cc_message", assistantMsg)
-	log.Info("🤖 Queued assistant response (message ID: %s)", assistantMsg.ID)
+	log.Info("🤖 Queued assistant response (message ID: %s, attachments: %d)", assistantMsg.ID, len(outboundAttachmentIDs))
 
 	// Persist final job state with "completed" status after successful message send
 	if err := mh.appState.UpdateJobData(payload.JobID, models.JobData{

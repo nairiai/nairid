@@ -1,8 +1,8 @@
 package core
 
 import (
-	"nairid/utils"
 	"crypto/rand"
+	"nairid/utils"
 	"strings"
 	"time"
 
@@ -45,7 +45,7 @@ func IsValidULID(id string) bool {
 		return false
 	}
 	for _, r := range prefix {
-		if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')) {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') {
 			return false
 		}
 	}
@@ -57,7 +57,7 @@ func IsValidULID(id string) bool {
 
 	// Validate ULID characters: should be uppercase base32 (0-9, A-Z excluding I, L, O, U)
 	for _, r := range ulidPart {
-		if !((r >= '0' && r <= '9') || (r >= 'A' && r <= 'Z' && r != 'I' && r != 'L' && r != 'O' && r != 'U')) {
+		if (r < '0' || r > '9') && (r < 'A' || r > 'Z' || r == 'I' || r == 'L' || r == 'O' || r == 'U') {
 			return false
 		}
 	}

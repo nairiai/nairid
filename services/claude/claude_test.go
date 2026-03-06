@@ -82,7 +82,7 @@ func TestClaudeService_StartNewConversation(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create temp dir: %v", err)
 			}
-			defer os.RemoveAll(tmpDir)
+			defer func() { _ = os.RemoveAll(tmpDir) }()
 
 			// Set up mock client
 			mockClient := &services.MockClaudeClient{
@@ -160,7 +160,7 @@ func TestClaudeService_StartNewConversationWithSystemPrompt(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create temp dir: %v", err)
 			}
-			defer os.RemoveAll(tmpDir)
+			defer func() { _ = os.RemoveAll(tmpDir) }()
 
 			// Set up mock client
 			mockClient := &services.MockClaudeClient{
@@ -241,7 +241,7 @@ func TestClaudeService_ContinueConversation(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create temp dir: %v", err)
 			}
-			defer os.RemoveAll(tmpDir)
+			defer func() { _ = os.RemoveAll(tmpDir) }()
 
 			// Set up mock client
 			mockClient := &services.MockClaudeClient{
@@ -290,7 +290,7 @@ func TestClaudeService_writeClaudeSessionLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	service := NewClaudeService(mockClient, tmpDir, "", nil, nil)
 
@@ -326,7 +326,7 @@ func TestClaudeService_CleanupOldLogs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	service := NewClaudeService(mockClient, tmpDir, "", nil, nil)
 
@@ -386,7 +386,7 @@ func TestClaudeService_CleanupOldLogs_InvalidMaxAge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	service := NewClaudeService(mockClient, tmpDir, "", nil, nil)
 
@@ -828,7 +828,7 @@ func TestClaudeService_handleClaudeClientError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	service := NewClaudeService(mockClient, tmpDir, "", nil, nil)
 
@@ -916,7 +916,7 @@ func TestClaudeService_handleClaudeClientError_IsErrorFalse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	service := NewClaudeService(nil, tmpDir, "", nil, nil)
 
@@ -995,7 +995,7 @@ func TestClaudeService_handleClaudeClientError_NoResultEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	service := NewClaudeService(nil, tmpDir, "", nil, nil)
 
@@ -1091,7 +1091,7 @@ func TestClaudeService_ContinueConversation_RecoverFromCLICrash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	cliOutput := `{"type":"system","subtype":"init","session_id":"sess_crash"}
 {"type":"assistant","message":{"id":"msg_100","type":"message","content":[{"type":"text","text":"Examining the codebase now."}],"stop_reason":"tool_use"},"session_id":"sess_crash"}
@@ -1132,7 +1132,7 @@ func TestClaudeService_StartNewConversation_RecoverFromCLICrash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	cliOutput := `{"type":"system","subtype":"init","session_id":"sess_new_crash"}
 {"type":"assistant","message":{"id":"msg_200","type":"message","content":[{"type":"text","text":"Project configured successfully."}],"stop_reason":"end_turn"},"session_id":"sess_new_crash"}`
@@ -1170,7 +1170,7 @@ func TestClaudeService_ParseErrorHandling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Mock output that doesn't contain valid assistant message (will succeed with fallback message)
 	mockClient := &services.MockClaudeClient{
@@ -1209,7 +1209,7 @@ func TestClaudeService_LargeOutputParses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Previously a 5MB single line would cause "bufio.Scanner: token too long".
 	// With bufio.Reader, arbitrarily long lines are handled correctly.

@@ -247,7 +247,7 @@ func TestDetectSingleRootDirectory(t *testing.T) {
 
 func TestExtractZipToDirectory_PreservesExecutePermission(t *testing.T) {
 	// Ensure AGENT_EXEC_USER is unset so we use direct file writes
-	os.Unsetenv("AGENT_EXEC_USER")
+	_ = os.Unsetenv("AGENT_EXEC_USER")
 
 	tmpDir := t.TempDir()
 	zipPath := filepath.Join(tmpDir, "test.zip")
@@ -282,8 +282,8 @@ func TestExtractZipToDirectory_PreservesExecutePermission(t *testing.T) {
 		t.Fatalf("Failed to write script file: %v", err)
 	}
 
-	w.Close()
-	zipFile.Close()
+	_ = w.Close()
+	_ = zipFile.Close()
 
 	// Extract the ZIP
 	if err := ExtractZipToDirectory(zipPath, extractDir); err != nil {
@@ -315,10 +315,10 @@ func createTestZip(zipPath string, files map[string]string) error {
 	if err != nil {
 		return err
 	}
-	defer zipFile.Close()
+	defer func() { _ = zipFile.Close() }()
 
 	w := zip.NewWriter(zipFile)
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	for path, content := range files {
 		f, err := w.Create(path)
@@ -364,7 +364,7 @@ func TestGetSkillFiles(t *testing.T) {
 	}
 
 	// Restore original HOME after test
-	defer os.Setenv("HOME", originalHome)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	tests := []struct {
 		name          string
@@ -510,7 +510,7 @@ func TestClaudeCodeSkillsProcessor_Integration(t *testing.T) {
 	// Override home directory
 	originalHome := os.Getenv("HOME")
 	t.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", originalHome)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Create eksecd skills directory
 	if err := os.MkdirAll(eksecdSkillsDir, 0755); err != nil {
@@ -562,7 +562,7 @@ func TestOpenCodeSkillsProcessor_Integration(t *testing.T) {
 	// Override home directory
 	originalHome := os.Getenv("HOME")
 	t.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", originalHome)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Create eksecd skills directory
 	if err := os.MkdirAll(eksecdSkillsDir, 0755); err != nil {
@@ -619,7 +619,7 @@ func TestCodexSkillsProcessor_Integration(t *testing.T) {
 
 	originalHome := os.Getenv("HOME")
 	t.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", originalHome)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	if err := os.MkdirAll(eksecdSkillsDir, 0755); err != nil {
 		t.Fatalf("Failed to create eksecd skills directory: %v", err)
@@ -664,7 +664,7 @@ func TestCodexSkillsProcessor_WithRootDirectory(t *testing.T) {
 
 	originalHome := os.Getenv("HOME")
 	t.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", originalHome)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	if err := os.MkdirAll(eksecdSkillsDir, 0755); err != nil {
 		t.Fatalf("Failed to create eksecd skills directory: %v", err)
@@ -711,7 +711,7 @@ func TestCodexSkillsProcessor_NoSkills(t *testing.T) {
 
 	originalHome := os.Getenv("HOME")
 	t.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", originalHome)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	processor := NewCodexSkillsProcessor()
 	if err := processor.ProcessSkills(""); err != nil {
@@ -740,7 +740,7 @@ func TestCleanEksecdSkillsDir(t *testing.T) {
 	// Override home directory
 	originalHome := os.Getenv("HOME")
 	t.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", originalHome)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Create skills directory with some files
 	skillsDir := filepath.Join(tmpDir, ".config", "eksecd", "skills")
@@ -780,7 +780,7 @@ func TestCleanEksecdSkillsDir_NonExistent(t *testing.T) {
 	// Override home directory
 	originalHome := os.Getenv("HOME")
 	t.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", originalHome)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Don't create the skills directory - test cleaning non-existent directory
 	err := CleanEksecdSkillsDir()

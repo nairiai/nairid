@@ -85,7 +85,7 @@ func TestCodexService_StartNewConversation(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create temp dir: %v", err)
 			}
-			defer os.RemoveAll(tmpDir)
+			defer func() { _ = os.RemoveAll(tmpDir) }()
 
 			// Set up mock client
 			mockClient := &services.MockCodexClient{
@@ -176,7 +176,7 @@ func TestCodexService_StartNewConversationWithOptions(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create temp dir: %v", err)
 			}
-			defer os.RemoveAll(tmpDir)
+			defer func() { _ = os.RemoveAll(tmpDir) }()
 
 			// Set up mock client
 			mockClient := &services.MockCodexClient{
@@ -271,7 +271,7 @@ func TestCodexService_StartNewConversationWithSystemPrompt(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create temp dir: %v", err)
 			}
-			defer os.RemoveAll(tmpDir)
+			defer func() { _ = os.RemoveAll(tmpDir) }()
 
 			// Set up mock client
 			mockClient := &services.MockCodexClient{
@@ -315,7 +315,7 @@ func TestCodexService_StartNewConversationWithDisallowedTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Set up mock client
 	mockClient := &services.MockCodexClient{
@@ -378,7 +378,7 @@ func TestCodexService_ContinueConversation(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create temp dir: %v", err)
 			}
-			defer os.RemoveAll(tmpDir)
+			defer func() { _ = os.RemoveAll(tmpDir) }()
 
 			// Set up mock client
 			mockClient := &services.MockCodexClient{
@@ -456,7 +456,7 @@ func TestCodexService_ContinueConversationWithOptions(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create temp dir: %v", err)
 			}
-			defer os.RemoveAll(tmpDir)
+			defer func() { _ = os.RemoveAll(tmpDir) }()
 
 			// Set up mock client
 			mockClient := &services.MockCodexClient{
@@ -503,7 +503,7 @@ func TestCodexService_CleanupOldLogs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	service := NewCodexService(mockClient, tmpDir, "")
 
@@ -563,7 +563,7 @@ func TestCodexService_CleanupOldLogs_InvalidMaxAge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	service := NewCodexService(mockClient, tmpDir, "")
 

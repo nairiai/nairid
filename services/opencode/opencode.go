@@ -196,6 +196,11 @@ func (o *OpenCodeService) ContinueConversation(sessionID, prompt string) (*servi
 	return o.ContinueConversationWithOptions(sessionID, prompt, nil)
 }
 
+func (o *OpenCodeService) ContinueConversationWithSystemPrompt(sessionID, prompt, systemPrompt string) (*services.CLIAgentResult, error) {
+	// System prompt persists from turn 1 (prepended into user message), no action needed on continue
+	return o.ContinueConversation(sessionID, prompt)
+}
+
 // StartNewConversationInDir starts a new conversation in a specific working directory
 func (o *OpenCodeService) StartNewConversationInDir(prompt, workDir string) (*services.CLIAgentResult, error) {
 	return o.StartNewConversationWithOptions(prompt, &clients.OpenCodeOptions{
@@ -217,6 +222,11 @@ func (o *OpenCodeService) StartNewConversationWithSystemPromptInDir(
 	return o.StartNewConversationWithOptions(finalPrompt, &clients.OpenCodeOptions{
 		WorkDir: workDir,
 	})
+}
+
+func (o *OpenCodeService) ContinueConversationWithSystemPromptInDir(sessionID, prompt, systemPrompt, workDir string) (*services.CLIAgentResult, error) {
+	// System prompt persists from turn 1 (prepended into user message), no action needed on continue
+	return o.ContinueConversationInDir(sessionID, prompt, workDir)
 }
 
 // ContinueConversationInDir continues an existing conversation in a specific directory

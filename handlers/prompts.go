@@ -110,24 +110,34 @@ Use the current working directory as your workspace for all file operations.
 	return base
 }
 
+// outboundAttachmentInstructions returns the outbound attachment prompt text for a given directory.
+func outboundAttachmentInstructions(attachmentsDir string) string {
+	return fmt.Sprintf(`CRITICAL - File Attachments:
+You CAN send files and attachments to the user. To do so, save the file to this directory: %s
+Files placed there are automatically uploaded and delivered to the user as downloadable attachments.
+ALWAYS use this directory when the user wants a file, attachment, or downloadable output — this is the ONLY way to deliver files to them.
+NEVER tell the user you cannot send attachments or files — you can, by writing to the directory above.
+NEVER save files meant for the user to the working directory — always use the attachments directory.
+Supported formats: images, PDFs, CSVs, text files, archives, any binary file. Max 50 MB per file.`, attachmentsDir)
+}
+
 // AppendOutboundAttachmentInstructions appends instructions for outbound attachments to a system prompt
 func AppendOutboundAttachmentInstructions(base string, attachmentsDir string) string {
 	if attachmentsDir == "" {
 		return base
 	}
 
-	base += fmt.Sprintf(`
+	return base + "\n\n" + outboundAttachmentInstructions(attachmentsDir)
+}
 
-*Outbound Attachments:*
-To send files to the user, save them to: %s
-Files placed in this directory will be uploaded and delivered with your response.
-- Supported: images, PDFs, CSVs, text files, archives, other binary files
-- Max 50 MB per file
-- Files are removed after sending
-- Only place files here when you need to share a file with the user
-`, attachmentsDir)
+// BuildOutboundAttachmentSystemPrompt returns a standalone system prompt for outbound attachments,
+// used when continuing conversations (since --append-system-prompt is not persisted across --resume).
+func BuildOutboundAttachmentSystemPrompt(attachmentsDir string) string {
+	if attachmentsDir == "" {
+		return ""
+	}
 
-	return base
+	return outboundAttachmentInstructions(attachmentsDir)
 }
 
 // AppendModeInstructions appends mode-specific instructions to a base prompt

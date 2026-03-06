@@ -139,7 +139,7 @@ func TestNewDirLockWithExplicitPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	lock, err := NewDirLock(tempDir)
 	if err != nil {
@@ -171,13 +171,13 @@ func TestDirLockDifferentPathsAreIndependent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp directory 1: %v", err)
 	}
-	defer os.RemoveAll(tempDir1)
+	defer func() { _ = os.RemoveAll(tempDir1) }()
 
 	tempDir2, err := os.MkdirTemp("", "dirlock-test2-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp directory 2: %v", err)
 	}
-	defer os.RemoveAll(tempDir2)
+	defer func() { _ = os.RemoveAll(tempDir2) }()
 
 	// Create locks for both paths
 	lock1, err := NewDirLock(tempDir1)

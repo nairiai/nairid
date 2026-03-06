@@ -14,7 +14,7 @@ func TestEnvManager_Basic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Create a test .env file
 	envPath := filepath.Join(tempDir, ".env")
@@ -45,8 +45,8 @@ func TestEnvManager_Basic(t *testing.T) {
 	}
 
 	// Test Get for non-existent var (should fall back to os.Getenv)
-	os.Setenv("OS_VAR", "os_value")
-	defer os.Unsetenv("OS_VAR")
+	_ = os.Setenv("OS_VAR", "os_value")
+	defer func() { _ = os.Unsetenv("OS_VAR") }()
 
 	if got := em.Get("OS_VAR"); got != "os_value" {
 		t.Errorf("Expected 'os_value', got '%s'", got)
@@ -59,7 +59,7 @@ func TestEnvManager_Reload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Create initial test .env file
 	envPath := filepath.Join(tempDir, ".env")
@@ -112,7 +112,7 @@ func TestEnvManager_ThreadSafety(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Create test .env file
 	envPath := filepath.Join(tempDir, ".env")
@@ -182,8 +182,8 @@ func TestEnvManager_MissingFile(t *testing.T) {
 	}
 
 	// Should fall back to system env vars
-	os.Setenv("FALLBACK_VAR", "fallback_value")
-	defer os.Unsetenv("FALLBACK_VAR")
+	_ = os.Setenv("FALLBACK_VAR", "fallback_value")
+	defer func() { _ = os.Unsetenv("FALLBACK_VAR") }()
 
 	if got := em.Get("FALLBACK_VAR"); got != "fallback_value" {
 		t.Errorf("Expected 'fallback_value', got '%s'", got)
@@ -194,17 +194,17 @@ func TestGetConfigDir_LegacyEksecConfigDir(t *testing.T) {
 	// Ensure NAIRI_CONFIG_DIR is not set but EKSEC_CONFIG_DIR is
 	originalNairi := os.Getenv("NAIRI_CONFIG_DIR")
 	originalEksec := os.Getenv("EKSEC_CONFIG_DIR")
-	os.Unsetenv("NAIRI_CONFIG_DIR")
+	_ = os.Unsetenv("NAIRI_CONFIG_DIR")
 	defer func() {
 		if originalNairi != "" {
-			os.Setenv("NAIRI_CONFIG_DIR", originalNairi)
+			_ = os.Setenv("NAIRI_CONFIG_DIR", originalNairi)
 		} else {
-			os.Unsetenv("NAIRI_CONFIG_DIR")
+			_ = os.Unsetenv("NAIRI_CONFIG_DIR")
 		}
 		if originalEksec != "" {
-			os.Setenv("EKSEC_CONFIG_DIR", originalEksec)
+			_ = os.Setenv("EKSEC_CONFIG_DIR", originalEksec)
 		} else {
-			os.Unsetenv("EKSEC_CONFIG_DIR")
+			_ = os.Unsetenv("EKSEC_CONFIG_DIR")
 		}
 	}()
 
@@ -213,10 +213,10 @@ func TestGetConfigDir_LegacyEksecConfigDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	customDir := filepath.Join(tempDir, "legacy-config")
-	os.Setenv("EKSEC_CONFIG_DIR", customDir)
+	_ = os.Setenv("EKSEC_CONFIG_DIR", customDir)
 
 	configDir, err := GetConfigDir()
 	if err != nil {
@@ -234,14 +234,14 @@ func TestGetConfigDir_NairiOverridesEksec(t *testing.T) {
 	originalEksec := os.Getenv("EKSEC_CONFIG_DIR")
 	defer func() {
 		if originalNairi != "" {
-			os.Setenv("NAIRI_CONFIG_DIR", originalNairi)
+			_ = os.Setenv("NAIRI_CONFIG_DIR", originalNairi)
 		} else {
-			os.Unsetenv("NAIRI_CONFIG_DIR")
+			_ = os.Unsetenv("NAIRI_CONFIG_DIR")
 		}
 		if originalEksec != "" {
-			os.Setenv("EKSEC_CONFIG_DIR", originalEksec)
+			_ = os.Setenv("EKSEC_CONFIG_DIR", originalEksec)
 		} else {
-			os.Unsetenv("EKSEC_CONFIG_DIR")
+			_ = os.Unsetenv("EKSEC_CONFIG_DIR")
 		}
 	}()
 
@@ -249,12 +249,12 @@ func TestGetConfigDir_NairiOverridesEksec(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	nairiDir := filepath.Join(tempDir, "nairi-config")
 	eksecDir := filepath.Join(tempDir, "eksec-config")
-	os.Setenv("NAIRI_CONFIG_DIR", nairiDir)
-	os.Setenv("EKSEC_CONFIG_DIR", eksecDir)
+	_ = os.Setenv("NAIRI_CONFIG_DIR", nairiDir)
+	_ = os.Setenv("EKSEC_CONFIG_DIR", eksecDir)
 
 	configDir, err := GetConfigDir()
 	if err != nil {
@@ -270,14 +270,14 @@ func TestGetConfigDir_Default(t *testing.T) {
 	// Ensure NAIRI_CONFIG_DIR and EKSEC_CONFIG_DIR are not set
 	originalValue := os.Getenv("NAIRI_CONFIG_DIR")
 	originalEksec := os.Getenv("EKSEC_CONFIG_DIR")
-	os.Unsetenv("NAIRI_CONFIG_DIR")
-	os.Unsetenv("EKSEC_CONFIG_DIR")
+	_ = os.Unsetenv("NAIRI_CONFIG_DIR")
+	_ = os.Unsetenv("EKSEC_CONFIG_DIR")
 	defer func() {
 		if originalValue != "" {
-			os.Setenv("NAIRI_CONFIG_DIR", originalValue)
+			_ = os.Setenv("NAIRI_CONFIG_DIR", originalValue)
 		}
 		if originalEksec != "" {
-			os.Setenv("EKSEC_CONFIG_DIR", originalEksec)
+			_ = os.Setenv("EKSEC_CONFIG_DIR", originalEksec)
 		}
 	}()
 
@@ -308,17 +308,17 @@ func TestGetConfigDir_CustomAbsolute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Set custom config directory
 	customDir := filepath.Join(tempDir, "custom-config")
 	originalValue := os.Getenv("NAIRI_CONFIG_DIR")
-	os.Setenv("NAIRI_CONFIG_DIR", customDir)
+	_ = os.Setenv("NAIRI_CONFIG_DIR", customDir)
 	defer func() {
 		if originalValue != "" {
-			os.Setenv("NAIRI_CONFIG_DIR", originalValue)
+			_ = os.Setenv("NAIRI_CONFIG_DIR", originalValue)
 		} else {
-			os.Unsetenv("NAIRI_CONFIG_DIR")
+			_ = os.Unsetenv("NAIRI_CONFIG_DIR")
 		}
 	}()
 
@@ -340,12 +340,12 @@ func TestGetConfigDir_CustomAbsolute(t *testing.T) {
 func TestGetConfigDir_CustomTilde(t *testing.T) {
 	// Set custom config directory with tilde
 	originalValue := os.Getenv("NAIRI_CONFIG_DIR")
-	os.Setenv("NAIRI_CONFIG_DIR", "~/.nairid-custom")
+	_ = os.Setenv("NAIRI_CONFIG_DIR", "~/.nairid-custom")
 	defer func() {
 		if originalValue != "" {
-			os.Setenv("NAIRI_CONFIG_DIR", originalValue)
+			_ = os.Setenv("NAIRI_CONFIG_DIR", originalValue)
 		} else {
-			os.Unsetenv("NAIRI_CONFIG_DIR")
+			_ = os.Unsetenv("NAIRI_CONFIG_DIR")
 		}
 	}()
 
@@ -365,7 +365,7 @@ func TestGetConfigDir_CustomTilde(t *testing.T) {
 	}
 
 	// Clean up created directory
-	os.RemoveAll(configDir)
+	_ = os.RemoveAll(configDir)
 }
 
 func TestGetOutboundAttachmentsDir_CreatesDirectory(t *testing.T) {
@@ -373,15 +373,15 @@ func TestGetOutboundAttachmentsDir_CreatesDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	originalValue := os.Getenv("NAIRI_CONFIG_DIR")
-	os.Setenv("NAIRI_CONFIG_DIR", tempDir)
+	_ = os.Setenv("NAIRI_CONFIG_DIR", tempDir)
 	defer func() {
 		if originalValue != "" {
-			os.Setenv("NAIRI_CONFIG_DIR", originalValue)
+			_ = os.Setenv("NAIRI_CONFIG_DIR", originalValue)
 		} else {
-			os.Unsetenv("NAIRI_CONFIG_DIR")
+			_ = os.Unsetenv("NAIRI_CONFIG_DIR")
 		}
 	}()
 
@@ -409,15 +409,15 @@ func TestGetOutboundAttachmentsDir_DifferentJobs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	originalValue := os.Getenv("NAIRI_CONFIG_DIR")
-	os.Setenv("NAIRI_CONFIG_DIR", tempDir)
+	_ = os.Setenv("NAIRI_CONFIG_DIR", tempDir)
 	defer func() {
 		if originalValue != "" {
-			os.Setenv("NAIRI_CONFIG_DIR", originalValue)
+			_ = os.Setenv("NAIRI_CONFIG_DIR", originalValue)
 		} else {
-			os.Unsetenv("NAIRI_CONFIG_DIR")
+			_ = os.Unsetenv("NAIRI_CONFIG_DIR")
 		}
 	}()
 

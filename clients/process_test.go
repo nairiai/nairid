@@ -150,16 +150,16 @@ func TestBuildShellCommand(t *testing.T) {
 func TestAgentExecUser(t *testing.T) {
 	// Save original value
 	original := os.Getenv("AGENT_EXEC_USER")
-	defer os.Setenv("AGENT_EXEC_USER", original)
+	defer func() { _ = os.Setenv("AGENT_EXEC_USER", original) }()
 
 	// Test when not set
-	os.Unsetenv("AGENT_EXEC_USER")
+	_ = os.Unsetenv("AGENT_EXEC_USER")
 	if user := AgentExecUser(); user != "" {
 		t.Errorf("AgentExecUser() = %q, want empty string", user)
 	}
 
 	// Test when set
-	os.Setenv("AGENT_EXEC_USER", "agentrunner")
+	_ = os.Setenv("AGENT_EXEC_USER", "agentrunner")
 	if user := AgentExecUser(); user != "agentrunner" {
 		t.Errorf("AgentExecUser() = %q, want %q", user, "agentrunner")
 	}
@@ -168,9 +168,9 @@ func TestAgentExecUser(t *testing.T) {
 func TestBuildAgentCommandWithContext_SelfHosted(t *testing.T) {
 	// Save original value
 	original := os.Getenv("AGENT_EXEC_USER")
-	defer os.Setenv("AGENT_EXEC_USER", original)
+	defer func() { _ = os.Setenv("AGENT_EXEC_USER", original) }()
 
-	os.Unsetenv("AGENT_EXEC_USER")
+	_ = os.Unsetenv("AGENT_EXEC_USER")
 	cmd := BuildAgentCommandWithContext(context.Background(), "echo", "hello")
 
 	// In self-hosted mode, should run the command directly
@@ -191,9 +191,9 @@ func TestBuildAgentCommandWithContext_SelfHosted(t *testing.T) {
 func TestBuildAgentCommandWithContext_Managed(t *testing.T) {
 	// Save original value
 	original := os.Getenv("AGENT_EXEC_USER")
-	defer os.Setenv("AGENT_EXEC_USER", original)
+	defer func() { _ = os.Setenv("AGENT_EXEC_USER", original) }()
 
-	os.Setenv("AGENT_EXEC_USER", "agentrunner")
+	_ = os.Setenv("AGENT_EXEC_USER", "agentrunner")
 	cmd := BuildAgentCommandWithContext(context.Background(), "echo", "hello")
 
 	// In managed mode, should use sudo
@@ -303,16 +303,16 @@ func TestUpdateHomeForUser_NoHomeInEnv(t *testing.T) {
 func TestAgentHTTPProxy(t *testing.T) {
 	// Save original value
 	original := os.Getenv("AGENT_HTTP_PROXY")
-	defer os.Setenv("AGENT_HTTP_PROXY", original)
+	defer func() { _ = os.Setenv("AGENT_HTTP_PROXY", original) }()
 
 	// Test when not set
-	os.Unsetenv("AGENT_HTTP_PROXY")
+	_ = os.Unsetenv("AGENT_HTTP_PROXY")
 	if proxy := AgentHTTPProxy(); proxy != "" {
 		t.Errorf("AgentHTTPProxy() = %q, want empty string", proxy)
 	}
 
 	// Test when set
-	os.Setenv("AGENT_HTTP_PROXY", "http://proxy:8080")
+	_ = os.Setenv("AGENT_HTTP_PROXY", "http://proxy:8080")
 	if proxy := AgentHTTPProxy(); proxy != "http://proxy:8080" {
 		t.Errorf("AgentHTTPProxy() = %q, want %q", proxy, "http://proxy:8080")
 	}
@@ -321,9 +321,9 @@ func TestAgentHTTPProxy(t *testing.T) {
 func TestInjectProxyEnv_NoProxy(t *testing.T) {
 	// Save original value
 	original := os.Getenv("AGENT_HTTP_PROXY")
-	defer os.Setenv("AGENT_HTTP_PROXY", original)
+	defer func() { _ = os.Setenv("AGENT_HTTP_PROXY", original) }()
 
-	os.Unsetenv("AGENT_HTTP_PROXY")
+	_ = os.Unsetenv("AGENT_HTTP_PROXY")
 
 	env := []string{"PATH=/usr/bin", "HOME=/home/user"}
 	result := InjectProxyEnv(env)
@@ -337,9 +337,9 @@ func TestInjectProxyEnv_NoProxy(t *testing.T) {
 func TestInjectProxyEnv_WithProxy(t *testing.T) {
 	// Save original value
 	original := os.Getenv("AGENT_HTTP_PROXY")
-	defer os.Setenv("AGENT_HTTP_PROXY", original)
+	defer func() { _ = os.Setenv("AGENT_HTTP_PROXY", original) }()
 
-	os.Setenv("AGENT_HTTP_PROXY", "http://proxy:8080")
+	_ = os.Setenv("AGENT_HTTP_PROXY", "http://proxy:8080")
 
 	env := []string{"PATH=/usr/bin", "HOME=/home/user"}
 	result := InjectProxyEnv(env)
@@ -386,9 +386,9 @@ func TestInjectProxyEnv_WithProxy(t *testing.T) {
 func TestInjectProxyEnv_DoesNotOverride(t *testing.T) {
 	// Save original value
 	original := os.Getenv("AGENT_HTTP_PROXY")
-	defer os.Setenv("AGENT_HTTP_PROXY", original)
+	defer func() { _ = os.Setenv("AGENT_HTTP_PROXY", original) }()
 
-	os.Setenv("AGENT_HTTP_PROXY", "http://proxy:8080")
+	_ = os.Setenv("AGENT_HTTP_PROXY", "http://proxy:8080")
 
 	// Env already has proxy vars
 	env := []string{
@@ -417,9 +417,9 @@ func TestInjectProxyEnv_DoesNotOverride(t *testing.T) {
 func TestBuildAgentCommandWithContextAndWorkDir(t *testing.T) {
 	// Save original value
 	original := os.Getenv("AGENT_EXEC_USER")
-	defer os.Setenv("AGENT_EXEC_USER", original)
+	defer func() { _ = os.Setenv("AGENT_EXEC_USER", original) }()
 
-	os.Unsetenv("AGENT_EXEC_USER")
+	_ = os.Unsetenv("AGENT_EXEC_USER")
 
 	workDir := "/tmp/test-workdir"
 	cmd := BuildAgentCommandWithContextAndWorkDir(context.Background(), workDir, "echo", "hello")
@@ -438,9 +438,9 @@ func TestBuildAgentCommandWithContextAndWorkDir(t *testing.T) {
 func TestBuildAgentCommandWithContextAndWorkDir_EmptyWorkDir(t *testing.T) {
 	// Save original value
 	original := os.Getenv("AGENT_EXEC_USER")
-	defer os.Setenv("AGENT_EXEC_USER", original)
+	defer func() { _ = os.Setenv("AGENT_EXEC_USER", original) }()
 
-	os.Unsetenv("AGENT_EXEC_USER")
+	_ = os.Unsetenv("AGENT_EXEC_USER")
 
 	// Empty workDir should not set Dir
 	cmd := BuildAgentCommandWithContextAndWorkDir(context.Background(), "", "echo", "hello")
@@ -453,9 +453,9 @@ func TestBuildAgentCommandWithContextAndWorkDir_EmptyWorkDir(t *testing.T) {
 func TestBuildAgentCommandWithContextAndWorkDir_Managed(t *testing.T) {
 	// Save original value
 	original := os.Getenv("AGENT_EXEC_USER")
-	defer os.Setenv("AGENT_EXEC_USER", original)
+	defer func() { _ = os.Setenv("AGENT_EXEC_USER", original) }()
 
-	os.Setenv("AGENT_EXEC_USER", "agentrunner")
+	_ = os.Setenv("AGENT_EXEC_USER", "agentrunner")
 
 	workDir := "/tmp/test-workdir"
 	cmd := BuildAgentCommandWithContextAndWorkDir(context.Background(), workDir, "echo", "hello")
@@ -476,12 +476,12 @@ func TestInjectProxyEnv_WithMCPProxy(t *testing.T) {
 	origHTTPProxy := os.Getenv("AGENT_HTTP_PROXY")
 	origMCPProxy := os.Getenv("AGENT_MCP_PROXY")
 	defer func() {
-		os.Setenv("AGENT_HTTP_PROXY", origHTTPProxy)
-		os.Setenv("AGENT_MCP_PROXY", origMCPProxy)
+		_ = os.Setenv("AGENT_HTTP_PROXY", origHTTPProxy)
+		_ = os.Setenv("AGENT_MCP_PROXY", origMCPProxy)
 	}()
 
-	os.Setenv("AGENT_HTTP_PROXY", "http://proxy:8080")
-	os.Setenv("AGENT_MCP_PROXY", "http://mcp-proxy.internal:8082")
+	_ = os.Setenv("AGENT_HTTP_PROXY", "http://proxy:8080")
+	_ = os.Setenv("AGENT_MCP_PROXY", "http://mcp-proxy.internal:8082")
 
 	env := []string{"PATH=/usr/bin", "HOME=/home/user"}
 	result := InjectProxyEnv(env)
@@ -516,12 +516,12 @@ func TestInjectProxyEnv_NoMCPProxy(t *testing.T) {
 	origHTTPProxy := os.Getenv("AGENT_HTTP_PROXY")
 	origMCPProxy := os.Getenv("AGENT_MCP_PROXY")
 	defer func() {
-		os.Setenv("AGENT_HTTP_PROXY", origHTTPProxy)
-		os.Setenv("AGENT_MCP_PROXY", origMCPProxy)
+		_ = os.Setenv("AGENT_HTTP_PROXY", origHTTPProxy)
+		_ = os.Setenv("AGENT_MCP_PROXY", origMCPProxy)
 	}()
 
-	os.Setenv("AGENT_HTTP_PROXY", "http://proxy:8080")
-	os.Unsetenv("AGENT_MCP_PROXY")
+	_ = os.Setenv("AGENT_HTTP_PROXY", "http://proxy:8080")
+	_ = os.Unsetenv("AGENT_MCP_PROXY")
 
 	env := []string{"PATH=/usr/bin", "HOME=/home/user"}
 	result := InjectProxyEnv(env)
@@ -559,12 +559,12 @@ func TestBuildAgentCommandWithContext_InjectsProxy(t *testing.T) {
 	origUser := os.Getenv("AGENT_EXEC_USER")
 	origProxy := os.Getenv("AGENT_HTTP_PROXY")
 	defer func() {
-		os.Setenv("AGENT_EXEC_USER", origUser)
-		os.Setenv("AGENT_HTTP_PROXY", origProxy)
+		_ = os.Setenv("AGENT_EXEC_USER", origUser)
+		_ = os.Setenv("AGENT_HTTP_PROXY", origProxy)
 	}()
 
-	os.Unsetenv("AGENT_EXEC_USER")
-	os.Setenv("AGENT_HTTP_PROXY", "http://secret-proxy:8080")
+	_ = os.Unsetenv("AGENT_EXEC_USER")
+	_ = os.Setenv("AGENT_HTTP_PROXY", "http://secret-proxy:8080")
 
 	cmd := BuildAgentCommandWithContext(context.Background(), "echo", "hello")
 

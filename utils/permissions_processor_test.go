@@ -13,12 +13,12 @@ func TestOpenCodePermissionsProcessor_ProcessPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpHome)
+	defer func() { _ = os.RemoveAll(tmpHome) }()
 
 	// Override HOME for this test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tmpHome)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Create the processor and run it
 	processor := NewOpenCodePermissionsProcessor("/tmp/workdir")
@@ -70,12 +70,12 @@ func TestOpenCodePermissionsProcessor_PreservesExistingConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpHome)
+	defer func() { _ = os.RemoveAll(tmpHome) }()
 
 	// Override HOME for this test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tmpHome)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Create an existing config with some settings
 	configDir := filepath.Join(tmpHome, ".config", "opencode")

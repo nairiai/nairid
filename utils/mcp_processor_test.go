@@ -25,8 +25,8 @@ func TestGetMCPConfigFiles_EmptyDirectory(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Get MCP config files
 	files, err := GetMCPConfigFiles()
@@ -64,8 +64,8 @@ func TestGetMCPConfigFiles_WithJSONFiles(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Get MCP config files
 	files, err := GetMCPConfigFiles()
@@ -84,8 +84,8 @@ func TestGetMCPConfigFiles_NonexistentDirectory(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Get MCP config files (should return empty list, not error)
 	files, err := GetMCPConfigFiles()
@@ -120,8 +120,8 @@ func TestCleanEksecdMCPDir_WithExistingConfigs(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Clean the MCP directory
 	if err := CleanEksecdMCPDir(); err != nil {
@@ -145,8 +145,8 @@ func TestCleanEksecdMCPDir_NonexistentDirectory(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Clean should succeed even if directory doesn't exist
 	if err := CleanEksecdMCPDir(); err != nil {
@@ -165,8 +165,8 @@ func TestCleanEksecdMCPDir_RecreatesDirectory(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Clean the MCP directory
 	if err := CleanEksecdMCPDir(); err != nil {
@@ -192,8 +192,8 @@ func TestMergeMCPConfigs_EmptyDirectory(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Merge MCP configs
 	merged, err := MergeMCPConfigs()
@@ -253,8 +253,8 @@ func TestMergeMCPConfigs_WithMultipleConfigs(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Merge MCP configs
 	merged, err := MergeMCPConfigs()
@@ -340,8 +340,8 @@ func TestMergeMCPConfigs_WithDuplicateServerNames(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Merge MCP configs
 	merged, err := MergeMCPConfigs()
@@ -396,8 +396,8 @@ func TestMergeMCPConfigs_WithInvalidJSON(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Merge MCP configs - should return error
 	_, err := MergeMCPConfigs()
@@ -426,8 +426,8 @@ func TestMergeMCPConfigs_WithMissingMCPServersKey(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Merge MCP configs - should succeed but return empty map
 	merged, err := MergeMCPConfigs()
@@ -460,8 +460,8 @@ func TestMergeMCPConfigs_WithEmptyMCPServersObject(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Merge MCP configs - should succeed but return empty map
 	merged, err := MergeMCPConfigs()
@@ -507,8 +507,8 @@ func TestMergeMCPConfigs_WithMultipleServersInSingleFile(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Merge MCP configs
 	merged, err := MergeMCPConfigs()
@@ -543,8 +543,8 @@ func TestClaudeCodeMCPProcessor_NoConfigs(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process MCP configs (should succeed with no configs)
 	processor := NewClaudeCodeMCPProcessor(workDir)
@@ -590,8 +590,8 @@ func TestClaudeCodeMCPProcessor_WithConfigs(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process MCP configs
 	processor := NewClaudeCodeMCPProcessor(workDir)
@@ -674,8 +674,8 @@ func TestClaudeCodeMCPProcessor_WithMultipleMCPConfigs(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process MCP configs
 	processor := NewClaudeCodeMCPProcessor(workDir)
@@ -761,8 +761,8 @@ func TestClaudeCodeMCPProcessor_PreservesExistingConfig(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process MCP configs
 	processor := NewClaudeCodeMCPProcessor(workDir)
@@ -809,8 +809,8 @@ func TestOpenCodeMCPProcessor_NoConfigs(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process MCP configs (should succeed with no configs)
 	processor := NewOpenCodeMCPProcessor(workDir)
@@ -856,8 +856,8 @@ func TestOpenCodeMCPProcessor_WithConfigs(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process MCP configs
 	processor := NewOpenCodeMCPProcessor(workDir)
@@ -976,8 +976,8 @@ func TestOpenCodeMCPProcessor_WithMultipleMCPConfigs(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process MCP configs
 	processor := NewOpenCodeMCPProcessor(workDir)
@@ -1068,8 +1068,8 @@ func TestOpenCodeMCPProcessor_PreservesExistingConfig(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process MCP configs
 	processor := NewOpenCodeMCPProcessor(workDir)
@@ -1145,8 +1145,8 @@ func TestOpenCodeMCPProcessor_LocalServerTransformation(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process MCP configs
 	processor := NewOpenCodeMCPProcessor(workDir)
@@ -1264,8 +1264,8 @@ func TestOpenCodeMCPProcessor_RemoteServerTransformation(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process MCP configs
 	processor := NewOpenCodeMCPProcessor(workDir)
@@ -1370,8 +1370,8 @@ func TestOpenCodeMCPProcessor_MixedLocalAndRemoteServers(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process MCP configs
 	processor := NewOpenCodeMCPProcessor(workDir)
@@ -1461,8 +1461,8 @@ func TestOpenCodeMCPProcessor_LocalServerWithoutEnv(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process MCP configs
 	processor := NewOpenCodeMCPProcessor(workDir)
@@ -1549,8 +1549,8 @@ func TestOpenCodeMCPProcessor_RemoteServerWithoutHeaders(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process MCP configs
 	processor := NewOpenCodeMCPProcessor(workDir)
@@ -1607,8 +1607,8 @@ func TestCodexMCPProcessor_NoConfigs(t *testing.T) {
 	tempDir := t.TempDir()
 
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	processor := NewCodexMCPProcessor()
 	if err := processor.ProcessMCPConfigs(""); err != nil {
@@ -1668,8 +1668,8 @@ func TestCodexMCPProcessor_WithConfigs(t *testing.T) {
 	}
 
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	processor := NewCodexMCPProcessor()
 	if err := processor.ProcessMCPConfigs(""); err != nil {
@@ -1737,8 +1737,8 @@ func TestCodexMCPProcessor_RemoteServer(t *testing.T) {
 	}
 
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	processor := NewCodexMCPProcessor()
 	if err := processor.ProcessMCPConfigs(""); err != nil {
@@ -1798,8 +1798,8 @@ func TestCodexMCPProcessor_PreservesExistingConfig(t *testing.T) {
 	}
 
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	processor := NewCodexMCPProcessor()
 	if err := processor.ProcessMCPConfigs(""); err != nil {

@@ -87,7 +87,7 @@ func TestOpenCodeService_StartNewConversation(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create temp dir: %v", err)
 			}
-			defer os.RemoveAll(tmpDir)
+			defer func() { _ = os.RemoveAll(tmpDir) }()
 
 			// Set up mock client
 			mockClient := &services.MockOpenCodeClient{
@@ -180,7 +180,7 @@ func TestOpenCodeService_StartNewConversationWithOptions(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create temp dir: %v", err)
 			}
-			defer os.RemoveAll(tmpDir)
+			defer func() { _ = os.RemoveAll(tmpDir) }()
 
 			// Set up mock client
 			mockClient := &services.MockOpenCodeClient{
@@ -276,7 +276,7 @@ func TestOpenCodeService_StartNewConversationWithSystemPrompt(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create temp dir: %v", err)
 			}
-			defer os.RemoveAll(tmpDir)
+			defer func() { _ = os.RemoveAll(tmpDir) }()
 
 			// Set up mock client
 			mockClient := &services.MockOpenCodeClient{
@@ -320,7 +320,7 @@ func TestOpenCodeService_StartNewConversationWithDisallowedTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Set up mock client
 	mockClient := &services.MockOpenCodeClient{
@@ -385,7 +385,7 @@ func TestOpenCodeService_ContinueConversation(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create temp dir: %v", err)
 			}
-			defer os.RemoveAll(tmpDir)
+			defer func() { _ = os.RemoveAll(tmpDir) }()
 
 			// Set up mock client
 			mockClient := &services.MockOpenCodeClient{
@@ -464,7 +464,7 @@ func TestOpenCodeService_ContinueConversationWithOptions(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create temp dir: %v", err)
 			}
-			defer os.RemoveAll(tmpDir)
+			defer func() { _ = os.RemoveAll(tmpDir) }()
 
 			// Set up mock client
 			mockClient := &services.MockOpenCodeClient{
@@ -511,7 +511,7 @@ func TestOpenCodeService_CleanupOldLogs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	service := NewOpenCodeService(mockClient, tmpDir, "")
 
@@ -571,7 +571,7 @@ func TestOpenCodeService_CleanupOldLogs_InvalidMaxAge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	service := NewOpenCodeService(mockClient, tmpDir, "")
 

@@ -243,8 +243,8 @@ func TestGetRuleFiles_EmptyDirectory(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Get rule files
 	files, err := GetRuleFiles()
@@ -282,8 +282,8 @@ func TestGetRuleFiles_WithMarkdownFiles(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Get rule files
 	files, err := GetRuleFiles()
@@ -302,8 +302,8 @@ func TestGetRuleFiles_NonexistentDirectory(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Get rule files (should return empty list, not error)
 	files, err := GetRuleFiles()
@@ -338,8 +338,8 @@ func TestCleanEksecdRulesDir_WithExistingRules(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Clean the rules directory
 	if err := CleanEksecdRulesDir(); err != nil {
@@ -363,8 +363,8 @@ func TestCleanEksecdRulesDir_NonexistentDirectory(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Clean should succeed even if directory doesn't exist
 	if err := CleanEksecdRulesDir(); err != nil {
@@ -383,8 +383,8 @@ func TestCleanEksecdRulesDir_RecreatesDirectory(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Clean the rules directory
 	if err := CleanEksecdRulesDir(); err != nil {
@@ -410,8 +410,8 @@ func TestClaudeCodeRulesProcessor_NoRules(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process rules (should succeed with no rules)
 	processor := NewClaudeCodeRulesProcessor(workDir)
@@ -460,8 +460,8 @@ func TestClaudeCodeRulesProcessor_WithRules(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process rules
 	processor := NewClaudeCodeRulesProcessor(workDir)
@@ -524,8 +524,8 @@ func TestClaudeCodeRulesProcessor_RemovesStaleRules(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process rules
 	processor := NewClaudeCodeRulesProcessor(workDir)
@@ -558,8 +558,8 @@ func TestOpenCodeRulesProcessor_NoRules(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process rules (should succeed with no rules)
 	processor := NewOpenCodeRulesProcessor(workDir)
@@ -615,8 +615,8 @@ Write tests for everything.`
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process rules
 	processor := NewOpenCodeRulesProcessor(workDir)
@@ -715,8 +715,8 @@ func TestOpenCodeRulesProcessor_CleansOldArtifacts(t *testing.T) {
 
 	// Temporarily override home directory for test
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process rules
 	processor := NewOpenCodeRulesProcessor(workDir)
@@ -752,8 +752,8 @@ func TestCodexRulesProcessor_NoRules(t *testing.T) {
 	tempDir := t.TempDir()
 
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	processor := NewCodexRulesProcessor()
 	if err := processor.ProcessRules(""); err != nil {
@@ -799,8 +799,8 @@ Write tests for everything.`
 	}
 
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	processor := NewCodexRulesProcessor()
 	if err := processor.ProcessRules(""); err != nil {
@@ -850,8 +850,8 @@ func TestCodexRulesProcessor_WithTargetHomeDir(t *testing.T) {
 	}
 
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	processor := NewCodexRulesProcessor()
 	if err := processor.ProcessRules(targetHome); err != nil {

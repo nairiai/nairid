@@ -11,7 +11,7 @@ import (
 
 func TestReadFileAsTargetUser_SelfHostedMode(t *testing.T) {
 	// Without AGENT_EXEC_USER set, should fall through to os.ReadFile
-	os.Unsetenv("AGENT_EXEC_USER")
+	_ = os.Unsetenv("AGENT_EXEC_USER")
 
 	tempDir := t.TempDir()
 	filePath := filepath.Join(tempDir, "test.json")
@@ -32,7 +32,7 @@ func TestReadFileAsTargetUser_SelfHostedMode(t *testing.T) {
 }
 
 func TestReadFileAsTargetUser_FileNotExists(t *testing.T) {
-	os.Unsetenv("AGENT_EXEC_USER")
+	_ = os.Unsetenv("AGENT_EXEC_USER")
 
 	tempDir := t.TempDir()
 	filePath := filepath.Join(tempDir, "nonexistent.json")
@@ -57,8 +57,8 @@ func TestReadFileAsTargetUser_PathNotInAgentHome(t *testing.T) {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	os.Setenv("AGENT_EXEC_USER", "agentrunner")
-	defer os.Unsetenv("AGENT_EXEC_USER")
+	_ = os.Setenv("AGENT_EXEC_USER", "agentrunner")
+	defer func() { _ = os.Unsetenv("AGENT_EXEC_USER") }()
 
 	content, err := readFileAsTargetUser(filePath)
 	if err != nil {
@@ -71,7 +71,7 @@ func TestReadFileAsTargetUser_PathNotInAgentHome(t *testing.T) {
 }
 
 func TestRemoveAllAsTargetUser_SelfHostedMode(t *testing.T) {
-	os.Unsetenv("AGENT_EXEC_USER")
+	_ = os.Unsetenv("AGENT_EXEC_USER")
 
 	tempDir := t.TempDir()
 	targetDir := filepath.Join(tempDir, "subdir", "nested")
@@ -97,7 +97,7 @@ func TestRemoveAllAsTargetUser_SelfHostedMode(t *testing.T) {
 }
 
 func TestRemoveAllAsTargetUser_NonexistentPath(t *testing.T) {
-	os.Unsetenv("AGENT_EXEC_USER")
+	_ = os.Unsetenv("AGENT_EXEC_USER")
 
 	tempDir := t.TempDir()
 	nonexistent := filepath.Join(tempDir, "does-not-exist")
@@ -119,8 +119,8 @@ func TestRemoveAllAsTargetUser_PathNotInAgentHome(t *testing.T) {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	os.Setenv("AGENT_EXEC_USER", "agentrunner")
-	defer os.Unsetenv("AGENT_EXEC_USER")
+	_ = os.Setenv("AGENT_EXEC_USER", "agentrunner")
+	defer func() { _ = os.Unsetenv("AGENT_EXEC_USER") }()
 
 	// Path is NOT in /home/agentrunner, so should use direct os.RemoveAll
 	if err := removeAllAsTargetUser(targetDir); err != nil {
@@ -133,7 +133,7 @@ func TestRemoveAllAsTargetUser_PathNotInAgentHome(t *testing.T) {
 }
 
 func TestWriteFileAsTargetUser_SelfHostedMode(t *testing.T) {
-	os.Unsetenv("AGENT_EXEC_USER")
+	_ = os.Unsetenv("AGENT_EXEC_USER")
 
 	tempDir := t.TempDir()
 	filePath := filepath.Join(tempDir, "output.json")
@@ -157,8 +157,8 @@ func TestWriteFileAsTargetUser_PathNotInAgentHome(t *testing.T) {
 	tempDir := t.TempDir()
 	filePath := filepath.Join(tempDir, "output.json")
 
-	os.Setenv("AGENT_EXEC_USER", "agentrunner")
-	defer os.Unsetenv("AGENT_EXEC_USER")
+	_ = os.Setenv("AGENT_EXEC_USER", "agentrunner")
+	defer func() { _ = os.Unsetenv("AGENT_EXEC_USER") }()
 
 	content := []byte(`{"written": true}`)
 	if err := writeFileAsTargetUser(filePath, content, 0644); err != nil {
@@ -176,7 +176,7 @@ func TestWriteFileAsTargetUser_PathNotInAgentHome(t *testing.T) {
 }
 
 func TestMkdirAllAsTargetUser_SelfHostedMode(t *testing.T) {
-	os.Unsetenv("AGENT_EXEC_USER")
+	_ = os.Unsetenv("AGENT_EXEC_USER")
 
 	tempDir := t.TempDir()
 	dirPath := filepath.Join(tempDir, "a", "b", "c")
@@ -198,8 +198,8 @@ func TestMkdirAllAsTargetUser_PathNotInAgentHome(t *testing.T) {
 	tempDir := t.TempDir()
 	dirPath := filepath.Join(tempDir, "x", "y")
 
-	os.Setenv("AGENT_EXEC_USER", "agentrunner")
-	defer os.Unsetenv("AGENT_EXEC_USER")
+	_ = os.Setenv("AGENT_EXEC_USER", "agentrunner")
+	defer func() { _ = os.Unsetenv("AGENT_EXEC_USER") }()
 
 	if err := mkdirAllAsTargetUser(dirPath); err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
