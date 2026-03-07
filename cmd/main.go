@@ -1086,20 +1086,19 @@ func (cr *CmdRunner) startSocketIOClient(serverURLStr, apiKey string) error {
 		// Route messages to appropriate handler
 		switch msg.Type {
 		case models.MessageTypeStartConversation, models.MessageTypeUserMessage:
-			// Persist message to queue BEFORE submitting for crash recovery
+			// Persist message to queue BEFORE submitting for crash recovery.
+			// This covers the edge case where the agent is down for >1 hour
+			// and unacked messages expire from the backend's polling window.
 			if err := cr.messageHandler.PersistQueuedMessage(msg); err != nil {
 				log.Error("❌ Failed to persist queued message: %v", err)
 			}
 
-			// Route through dispatcher for per-job sequential processing
+			// Route through dispatcher for per-job sequential processing.
+			// Do NOT ack here — acking happens after the message is fully processed
+			// inside HandleMessage. This ensures crash safety: if we crash before
+			// processing, the message stays unacked and will be re-delivered by the
+			// HTTP poller.
 			cr.dispatcher.Dispatch(msg)
-
-			// Ack the message so the HTTP poller won't re-fetch it
-			if msg.ID != "" {
-				if err := cr.agentsApiClient.AckMessage(msg.ID); err != nil {
-					log.Warn("⚠️ Failed to ack WS message %s: %v", msg.ID, err)
-				}
-			}
 		case models.MessageTypeCheckIdleJobs:
 			// PR status checks can run in parallel without blocking conversations
 			instantWorkerPool.Submit(func() {

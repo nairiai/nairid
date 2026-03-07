@@ -472,6 +472,17 @@ func (mh *MessageHandler) handleStartConversation(msg models.BaseMessage) error 
 	}
 	log.Info("💾 Persisted final job state with completed status")
 
+	// Ack the message on the backend so the HTTP poller won't re-fetch it.
+	// This is done AFTER processing to ensure crash safety.
+	if err := mh.agentsApiClient.AckMessage(payload.ProcessedMessageID); err != nil {
+		log.Warn("⚠️ Failed to ack message %s: %v", payload.ProcessedMessageID, err)
+	}
+
+	// Clean up all queued messages for this job to prevent replay on restart
+	if err := mh.appState.RemoveQueuedMessagesForJob(payload.JobID); err != nil {
+		log.Warn("⚠️ Failed to clean up queued messages for job %s: %v", payload.JobID, err)
+	}
+
 	// Add delay to ensure git activity message comes after assistant message
 	time.Sleep(200 * time.Millisecond)
 
@@ -829,6 +840,17 @@ func (mh *MessageHandler) handleUserMessage(msg models.BaseMessage) error {
 	}
 	log.Info("💾 Persisted final job state with completed status")
 
+	// Ack the message on the backend so the HTTP poller won't re-fetch it.
+	// This is done AFTER processing to ensure crash safety.
+	if err := mh.agentsApiClient.AckMessage(payload.ProcessedMessageID); err != nil {
+		log.Warn("⚠️ Failed to ack message %s: %v", payload.ProcessedMessageID, err)
+	}
+
+	// Clean up all queued messages for this job to prevent replay on restart
+	if err := mh.appState.RemoveQueuedMessagesForJob(payload.JobID); err != nil {
+		log.Warn("⚠️ Failed to clean up queued messages for job %s: %v", payload.JobID, err)
+	}
+
 	// Add delay to ensure git activity message comes after assistant message
 	time.Sleep(200 * time.Millisecond)
 
@@ -968,7 +990,10 @@ func (mh *MessageHandler) checkJobIdleness(jobID string, jobData models.JobData)
 			return fmt.Errorf("failed to send job complete message: %w", err)
 		}
 
-		// Remove job from app state since it's complete
+		// Remove job and its queued messages from app state since it's complete
+		if err := mh.appState.RemoveQueuedMessagesForJob(jobID); err != nil {
+			log.Warn("⚠️ Failed to clean up queued messages for completed job %s: %v", jobID, err)
+		}
 		if err := mh.appState.RemoveJob(jobID); err != nil {
 			log.Error("❌ Failed to remove job from app state: %v", err)
 			return fmt.Errorf("failed to remove job from app state: %w", err)

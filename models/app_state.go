@@ -224,6 +224,30 @@ func (a *AppState) RemoveQueuedMessage(processedMessageID string) error {
 	return nil
 }
 
+// RemoveQueuedMessagesForJob removes all queued messages for a given job ID and persists
+func (a *AppState) RemoveQueuedMessagesForJob(jobID string) error {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+
+	removed := 0
+	for msgID, msg := range a.queuedMessages {
+		if msg.JobID == jobID {
+			delete(a.queuedMessages, msgID)
+			removed++
+		}
+	}
+
+	if removed == 0 {
+		return nil
+	}
+
+	if err := a.persistStateLocked(); err != nil {
+		return fmt.Errorf("failed to persist state: %w", err)
+	}
+
+	return nil
+}
+
 // GetAllQueuedMessages returns a copy of all queued messages
 func (a *AppState) GetAllQueuedMessages() []QueuedMessage {
 	a.mutex.RLock()

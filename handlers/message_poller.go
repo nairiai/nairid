@@ -120,6 +120,18 @@ func (mp *MessagePoller) pollAndDispatch() {
 				continue
 			}
 
+			// Extract ProcessedMessageID to check if already seen/processed
+			processedMsgID := mp.extractProcessedMessageID(msg)
+
+			// If already seen (processed via WS or previous poll), just ack and skip
+			if processedMsgID != "" && mp.dispatcher.IsMessageSeen(processedMsgID) {
+				log.Info("📡 MessagePoller: Message %s already seen, acking only", msg.ID)
+				if err := mp.apiClient.AckMessage(msg.ID); err != nil {
+					log.Warn("📡 MessagePoller: Failed to ack seen message %s: %v", msg.ID, err)
+				}
+				continue
+			}
+
 			var baseMsg models.BaseMessage
 			if !jobExists {
 				// Job not in local state — upgrade to start_conversation
@@ -164,19 +176,33 @@ func (mp *MessagePoller) pollAndDispatch() {
 				}
 			}
 
-			// Persist and dispatch through same pipeline as WS messages
-			if err := mp.messageHandler.PersistQueuedMessage(baseMsg); err != nil {
-				log.Error("📡 MessagePoller: Failed to persist queued message: %v", err)
-			}
+			// Dispatch without persisting to local queue — the poller will re-fetch
+			// unacked messages on the next poll if the agent crashes before processing.
+			// NOT calling PersistQueuedMessage here prevents stale queued messages from
+			// accumulating in state.json (which caused the message replay bug).
 			mp.dispatcher.Dispatch(baseMsg)
 			log.Info("📡 MessagePoller: Dispatched message %s (type=%s)", msg.ID, baseMsg.Type)
 
-			// Ack the message — failure is non-fatal, will be re-polled
-			if err := mp.apiClient.AckMessage(msg.ID); err != nil {
-				log.Warn("📡 MessagePoller: Failed to ack message %s: %v", msg.ID, err)
-			}
+			// Do NOT ack here — acking happens after the message is fully processed
+			// inside HandleMessage. This ensures crash safety: if we crash before
+			// processing, the message stays unacked and will be re-polled.
 		}
 	}
+}
+
+// extractProcessedMessageID extracts ProcessedMessageID from a poller message.
+func (mp *MessagePoller) extractProcessedMessageID(msg clients.AgentJobMessage) string {
+	if msg.Payload == nil {
+		return ""
+	}
+
+	// Try UserMessagePayload (most common from the HTTP API)
+	var userPayload models.UserMessagePayload
+	if err := json.Unmarshal(msg.Payload, &userPayload); err == nil && userPayload.ProcessedMessageID != "" {
+		return userPayload.ProcessedMessageID
+	}
+
+	return ""
 }
 
 // Stop gracefully stops the polling loop.

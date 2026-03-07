@@ -158,6 +158,14 @@ func (d *JobDispatcher) cleanup(jobID string) {
 	}
 }
 
+// IsMessageSeen checks if a ProcessedMessageID has already been seen (dispatched).
+func (d *JobDispatcher) IsMessageSeen(processedMsgID string) bool {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	_, seen := d.seenMessages[processedMsgID]
+	return seen
+}
+
 // EvictJob forcefully removes a job from the dispatcher, closing its channel
 // and causing the processor goroutine to exit. This should be called when a
 // job encounters an unrecoverable error (e.g., API error) to immediately free

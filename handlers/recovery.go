@@ -143,9 +143,29 @@ func RecoverJobs(
 		})
 
 		for _, queuedMsg := range allQueuedMessages {
-			// Deduplication check: if a job with the same ProcessedMessageID exists, skip
+			// Skip messages for non-existent jobs (orphaned — job was removed by idle check)
 			jobData, exists := appState.GetJobData(queuedMsg.JobID)
-			if exists && jobData.ProcessedMessageID == queuedMsg.ProcessedMessageID {
+			if !exists {
+				log.Info("🗑️ Removing orphaned queued message %s (job %s no longer exists)", queuedMsg.ProcessedMessageID, queuedMsg.JobID)
+				if err := appState.RemoveQueuedMessage(queuedMsg.ProcessedMessageID); err != nil {
+					log.Error("❌ Failed to remove orphaned queued message %s: %v", queuedMsg.ProcessedMessageID, err)
+				}
+				removedQueuedCount++
+				continue
+			}
+
+			// Skip messages for completed/failed jobs — don't replay old conversations
+			if jobData.Status == models.JobStatusCompleted || jobData.Status == models.JobStatusFailed {
+				log.Info("🗑️ Removing queued message %s for %s job %s", queuedMsg.ProcessedMessageID, jobData.Status, queuedMsg.JobID)
+				if err := appState.RemoveQueuedMessage(queuedMsg.ProcessedMessageID); err != nil {
+					log.Error("❌ Failed to remove queued message %s: %v", queuedMsg.ProcessedMessageID, err)
+				}
+				removedQueuedCount++
+				continue
+			}
+
+			// Deduplication check: if a job with the same ProcessedMessageID exists, skip
+			if jobData.ProcessedMessageID == queuedMsg.ProcessedMessageID {
 				log.Info("🔄 Queued message %s already being processed/completed, removing from queue", queuedMsg.ProcessedMessageID)
 				if err := appState.RemoveQueuedMessage(queuedMsg.ProcessedMessageID); err != nil {
 					log.Error("❌ Failed to remove duplicate queued message %s: %v", queuedMsg.ProcessedMessageID, err)
