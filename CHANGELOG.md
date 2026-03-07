@@ -1,3 +1,14 @@
+## [v0.0.98] - 2026-03-07
+
+### Bugfixes
+
+- Prevent message replay on agent restart ([#192](https://github.com/nairiai/eksecd/pull/192))
+  - Move message acking from dispatch-time to after-processing for crash safety
+  - Add RemoveQueuedMessagesForJob to clean up queued messages after job completion
+  - Skip already-seen messages in the HTTP poller via dispatcher's IsMessageSeen check
+  - Clean up orphaned and completed/failed job messages during recovery instead of replaying them
+  - Stop persisting poller messages to local queue to prevent stale state.json entries
+
 ## [v0.0.97] - 2026-03-06
 
 ### Features
