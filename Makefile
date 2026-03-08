@@ -5,7 +5,7 @@ run:
 
 build:
 	mkdir -p bin
-	go build -o bin/eksecd cmd/*.go
+	go build -o bin/nairid cmd/*.go
 
 clean:
 	rm -rf bin/

@@ -17,9 +17,9 @@ function create_build {
     fi
 
     if [ "$GOOS" = "windows" ]; then
-        BINARY=eksecd-$TAG-$GOOS-$EXT.exe
+        BINARY=nairid-$TAG-$GOOS-$EXT.exe
     else
-        BINARY=eksecd-$TAG-$GOOS-$EXT
+        BINARY=nairid-$TAG-$GOOS-$EXT
     fi
     
     echo "Building $BINARY..."
@@ -27,7 +27,7 @@ function create_build {
     cd $TEMP_DIR && shasum -a 256 $BINARY > $BINARY.sha256 && cd - > /dev/null
 }
 
-echo "Creating production binaries for eksecd $TAG..."
+echo "Creating production binaries for nairid $TAG..."
 
 # Check if gh CLI is available
 if ! command -v gh &> /dev/null; then
@@ -89,9 +89,9 @@ fi
 echo "Creating GitHub release $TAG..."
 
 gh release create "$TAG" \
-    --title "eksecd $TAG" \
+    --title "nairid $TAG" \
     --notes "$RELEASE_NOTES" \
-    $TEMP_DIR/eksecd-$TAG-*
+    $TEMP_DIR/nairid-$TAG-*
 
 # Cleanup
 rm -rf $TEMP_DIR

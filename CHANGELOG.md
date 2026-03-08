@@ -1,3 +1,11 @@
+## [v0.0.99] - 2026-03-08
+
+### Changes
+
+- Rename binary from eksecd to nairid in build scripts and Makefile
+- Remove truncation from progress payloads ([#194](https://github.com/nairiai/nairid/pull/194))
+- Update README clone URL to nairid ([#193](https://github.com/nairiai/nairid/pull/193))
+
 ## [v0.0.98] - 2026-03-07
 
 ### Bugfixes
