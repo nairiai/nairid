@@ -32,7 +32,7 @@ func MapCodexLineToProgress(line []byte) *models.AgentProgressPayload {
 		}
 		return &models.AgentProgressPayload{
 			ProgressType: models.ProgressTypeStep,
-			Summary:      truncateCodex(msg.Message, 200),
+			Summary:      msg.Message,
 			ToolStatus:   "error",
 		}
 	default:
@@ -69,7 +69,7 @@ func mapCodexItem(line []byte, defaultStatus string) *models.AgentProgressPayloa
 		return &models.AgentProgressPayload{
 			ProgressType: models.ProgressTypeToolUse,
 			ToolName:     "command_execution",
-			ToolInput:    truncateCodex(detail.Item.Command, 100),
+			ToolInput:    detail.Item.Command,
 			ToolStatus:   status,
 		}
 
@@ -128,7 +128,7 @@ func mapCodexItem(line []byte, defaultStatus string) *models.AgentProgressPayloa
 		}
 		return &models.AgentProgressPayload{
 			ProgressType: models.ProgressTypeText,
-			TextDelta:    truncateCodex(msg.Item.Text, 500),
+			TextDelta:    msg.Item.Text,
 		}
 
 	case "reasoning":
@@ -164,7 +164,7 @@ func mapCodexItem(line []byte, defaultStatus string) *models.AgentProgressPayloa
 	case "collab_tool_call":
 		return &models.AgentProgressPayload{
 			ProgressType: models.ProgressTypeSubagent,
-			Summary:      truncateCodex(msg.Item.Text, 200),
+			Summary:      msg.Item.Text,
 			ToolStatus:   defaultStatus,
 		}
 
@@ -173,7 +173,7 @@ func mapCodexItem(line []byte, defaultStatus string) *models.AgentProgressPayloa
 			ProgressType: models.ProgressTypeToolUse,
 			ToolName:     "error",
 			ToolStatus:   "error",
-			Summary:      truncateCodex(msg.Item.Text, 200),
+			Summary:      msg.Item.Text,
 		}
 
 	default:
@@ -191,7 +191,7 @@ func mapCodexTurnFailed(line []byte) *models.AgentProgressPayload {
 	if err := json.Unmarshal(line, &strMsg); err == nil && strMsg.Error != "" {
 		return &models.AgentProgressPayload{
 			ProgressType: models.ProgressTypeStep,
-			Summary:      fmt.Sprintf("Turn failed: %s", truncateCodex(strMsg.Error, 200)),
+			Summary:      fmt.Sprintf("Turn failed: %s", strMsg.Error),
 			ToolStatus:   "error",
 		}
 	}
@@ -205,7 +205,7 @@ func mapCodexTurnFailed(line []byte) *models.AgentProgressPayload {
 	if err := json.Unmarshal(line, &objMsg); err == nil && objMsg.Error.Message != "" {
 		return &models.AgentProgressPayload{
 			ProgressType: models.ProgressTypeStep,
-			Summary:      fmt.Sprintf("Turn failed: %s", truncateCodex(objMsg.Error.Message, 200)),
+			Summary:      fmt.Sprintf("Turn failed: %s", objMsg.Error.Message),
 			ToolStatus:   "error",
 		}
 	}
@@ -217,9 +217,3 @@ func mapCodexTurnFailed(line []byte) *models.AgentProgressPayload {
 	}
 }
 
-func truncateCodex(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
-}
