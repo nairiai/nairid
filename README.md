@@ -1,6 +1,6 @@
-# eksecd
+# nairid
 
-The eksec daemon - runs your AI coding agents and connects them to the [eksec platform](https://eksec.ai). eksecd bridges AI assistants (Claude Code, Cursor, Codex, OpenCode) with team collaboration platforms like Slack and Discord.
+The Nairi daemon - runs your AI coding agents and connects them to the [Nairi platform](https://nairi.ai). nairid bridges AI assistants (Claude Code, Cursor, Codex, OpenCode) with team collaboration platforms like Slack and Discord.
 
 ### Supported AI Assistants
 
@@ -11,30 +11,30 @@ The eksec daemon - runs your AI coding agents and connects them to the [eksec pl
 
 ### Supported Platforms
 
-eksecd runs on **macOS**, **Linux**, and **Windows** with native binaries for both Intel and ARM architectures.
+nairid runs on **macOS**, **Linux**, and **Windows** with native binaries for both Intel and ARM architectures.
 
 ## Installation
 
 ### Via Homebrew (Recommended)
 
 ```bash
-brew install presmihaylov/taps/eksecd
+brew install presmihaylov/taps/nairid
 ```
 
 To upgrade to the latest version:
 ```bash
-brew upgrade presmihaylov/taps/eksecd
+brew upgrade presmihaylov/taps/nairid
 ```
 
 ### From Source
 You will need to have Go 1.24 installed:
 ```bash
 git clone https://github.com/nairiai/nairid.git
-cd eksecd
+cd nairid
 make build
 ```
 
-The compiled binary will be available at `bin/eksecd`.
+The compiled binary will be available at `bin/nairid`.
 
 ## Usage
 
@@ -42,19 +42,19 @@ The compiled binary will be available at `bin/eksecd`.
 
 - Git
 - GitHub CLI (`gh`) - [Install here](https://cli.github.com/)
-- eksec account (sign up [here](https://eksec.ai))
+- Nairi account (sign up [here](https://nairi.ai))
 
 ### Basic Usage
 
 #### Repository Setup
 
-**Important**: eksecd will autonomously create branches, make changes, and create pull requests. To avoid conflicts with your main development workflow, it's **strongly recommended** to clone your repository separately for eksecd use.
+**Important**: nairid will autonomously create branches, make changes, and create pull requests. To avoid conflicts with your main development workflow, it's **strongly recommended** to clone your repository separately for nairid use.
 
 #### Prerequisites Setup
 
-Before running eksecd, ensure you have:
+Before running nairid, ensure you have:
 
-1. **GitHub CLI Authentication**: eksecd uses the GitHub CLI to create pull requests
+1. **GitHub CLI Authentication**: nairid uses the GitHub CLI to create pull requests
    ```bash
    # Login to GitHub
    gh auth login
@@ -70,31 +70,34 @@ Before running eksecd, ensure you have:
 
 #### GitHub Account Options
 
-You can use eksecd with:
-- **Your personal GitHub account**: eksecd will create PRs on your behalf
-- **Dedicated bot account**: Create a separate GitHub account for eksecd to use (recommended for teams)
+You can use nairid with:
+- **Your personal GitHub account**: nairid will create PRs on your behalf
+- **Dedicated bot account**: Create a separate GitHub account for nairid to use (recommended for teams)
 
 #### Environment Setup
 
-eksecd requires the following environment variables:
+nairid requires the following environment variables:
 
 ```bash
-# Required: API key from your eksec organization
-export EKSEC_API_KEY=your_api_key_here
+# Required: API key from your Nairi organization
+export NAIRI_API_KEY=your_api_key_here
+
+# Alternative (backwards compatible):
+# export EKSEC_API_KEY=your_api_key_here
 ```
 
-You can generate an API key from the eksec dashboard.
+You can generate an API key from the Nairi dashboard.
 
-#### Running eksecd
+#### Running nairid
 
-Once setup is complete, run eksecd in your repository directory.
+Once setup is complete, run nairid in your repository directory.
 
-By default, eksecd uses Claude Code as the AI assistant with `acceptEdits` permission mode.
+By default, nairid uses Claude Code as the AI assistant with `acceptEdits` permission mode.
 
 ### Command Line Options
 
 ```bash
-eksecd [OPTIONS]
+nairid [OPTIONS]
 
 Options:
   --agent=[claude|cursor|codex|opencode]  AI assistant to use (default: claude)
@@ -109,46 +112,46 @@ Options:
 #### Claude Code Agent (Default)
 ```bash
 # Standard mode - requires approval for file edits
-eksecd --agent claude
+nairid --agent claude
 
 # Use specific model (options: sonnet, haiku, opus, or full model names like claude-sonnet-4-5-20250929)
-eksecd --agent claude --model haiku
+nairid --agent claude --model haiku
 
 # Bypass permissions (Recommended in a secure sandbox environment only)
-eksecd --agent claude --claude-bypass-permissions
+nairid --agent claude --claude-bypass-permissions
 ```
 
 #### Cursor Agent
 ```bash
 # Use Cursor with specific model (options: gpt-5, sonnet-4, sonnet-4-thinking)
-eksecd --agent cursor --model sonnet-4
+nairid --agent cursor --model sonnet-4
 ```
 
 #### Codex Agent
 ```bash
 # Standard mode - requires approval for file edits
-eksecd --agent codex
+nairid --agent codex
 
 # Bypass permissions (Recommended in a secure sandbox environment only)
-eksecd --agent codex --claude-bypass-permissions
+nairid --agent codex --claude-bypass-permissions
 
 # Use specific model (default: gpt-5, accepts any model string)
-eksecd --agent codex --model gpt-5
+nairid --agent codex --model gpt-5
 ```
 
 #### OpenCode Agent
 ```bash
 # OpenCode requires bypass permissions mode (default model: opencode/grok-code)
-eksecd --agent opencode --claude-bypass-permissions
+nairid --agent opencode --claude-bypass-permissions
 
 # Use specific provider/model (format: provider/model)
-eksecd --agent opencode --claude-bypass-permissions --model anthropic/claude-3-5-sonnet
+nairid --agent opencode --claude-bypass-permissions --model anthropic/claude-3-5-sonnet
 ```
 
 **Note**: OpenCode only supports `bypassPermissions` mode. The `--claude-bypass-permissions` flag is required.
 
 ### Logging
-eksecd automatically creates log files in `~/.config/eksecd/logs/` with timestamp-based naming. Logs are written to both stdout and files for debugging.
+nairid automatically creates log files in `~/.config/eksecd/logs/` with timestamp-based naming. Logs are written to both stdout and files for debugging.
 
 ## Development
 
@@ -184,12 +187,12 @@ make lint-fix
 
 ## Security Recommendations
 
-eksecd operates in different permission modes depending on the AI assistant and configuration:
+nairid operates in different permission modes depending on the AI assistant and configuration:
 
 ### Secure Mode (Recommended)
 - **Claude Code (default)**: Runs in `acceptEdits` mode, requiring explicit approval for all file modifications
 - **Codex (default)**: Runs in `acceptEdits` mode with sandbox protections
-- **Best Practice**: Use this mode when running eksecd on your local development machine
+- **Best Practice**: Use this mode when running nairid on your local development machine
 
 ### Bypass Permissions Mode
 - **Claude Code with `--claude-bypass-permissions`**: Allows unrestricted system access
@@ -209,4 +212,4 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Support
 
-Contact us at support@eksec.ai
+Contact us at support@nairi.ai
