@@ -80,13 +80,8 @@ func mapOpenCodeText(line []byte) *models.AgentProgressPayload {
 		return nil
 	}
 
-	text := msg.Part.Text
-	if len(text) > 500 {
-		text = text[:500] + "..."
-	}
-
 	return &models.AgentProgressPayload{
 		ProgressType: models.ProgressTypeText,
-		TextDelta:    text,
+		TextDelta:    msg.Part.Text,
 	}
 }

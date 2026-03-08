@@ -1,4 +1,4 @@
-package services
+package claude
 
 import (
 	"fmt"
@@ -597,7 +597,7 @@ func TestClaudeProgressTracker_ToolUsePairing(t *testing.T) {
 		}
 	})
 
-	t.Run("tool_result ToolOutput truncated to 500 chars", func(t *testing.T) {
+	t.Run("tool_result ToolOutput preserves full content", func(t *testing.T) {
 		tracker := NewClaudeProgressTracker()
 
 		longContent := strings.Repeat("x", 600)
@@ -607,7 +607,7 @@ func TestClaudeProgressTracker_ToolUsePairing(t *testing.T) {
 				"content": [
 					{
 						"type": "tool_result",
-						"tool_use_id": "toolu_trunc",
+						"tool_use_id": "toolu_full",
 						"is_error": false,
 						"content": %q
 					}
@@ -619,11 +619,8 @@ func TestClaudeProgressTracker_ToolUsePairing(t *testing.T) {
 		if result == nil {
 			t.Fatal("expected payload, got nil")
 		}
-		if len(result.ToolOutput) != 503 { // 500 + "..."
-			t.Errorf("expected ToolOutput length 503, got %d", len(result.ToolOutput))
-		}
-		if !strings.HasSuffix(result.ToolOutput, "...") {
-			t.Error("expected ToolOutput to end with '...'")
+		if result.ToolOutput != longContent {
+			t.Errorf("expected ToolOutput to contain full content (len %d), got len %d", len(longContent), len(result.ToolOutput))
 		}
 	})
 }

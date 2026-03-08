@@ -127,7 +127,7 @@ func TestMapOpenCodeLineToProgress(t *testing.T) {
 			expected: nil,
 		},
 		{
-			name: "text event with long text gets truncated",
+			name: "text event with long text preserves full content",
 			input: `{
 				"type": "text",
 				"part": {
@@ -136,7 +136,7 @@ func TestMapOpenCodeLineToProgress(t *testing.T) {
 			}`,
 			expected: &models.AgentProgressPayload{
 				ProgressType: models.ProgressTypeText,
-				TextDelta:    longString(500) + "...",
+				TextDelta:    longString(600),
 			},
 		},
 	}

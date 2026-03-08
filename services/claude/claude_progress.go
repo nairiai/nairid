@@ -1,4 +1,4 @@
-package services
+package claude
 
 import (
 	"encoding/json"
@@ -91,7 +91,7 @@ func (t *ClaudeProgressTracker) mapClaudeAssistant(line []byte) *models.AgentPro
 			if block.Text != "" {
 				return &models.AgentProgressPayload{
 					ProgressType:    models.ProgressTypeText,
-					TextDelta:       truncate(block.Text, 500),
+					TextDelta:       block.Text,
 					ParentToolUseID: msg.ParentToolUseID,
 				}
 			}
@@ -134,7 +134,7 @@ func (t *ClaudeProgressTracker) mapClaudeUser(line []byte) *models.AgentProgress
 				ProgressType:    models.ProgressTypeToolUse,
 				ToolStatus:      status,
 				ToolUseID:       block.ToolUseID,
-				ToolOutput:      extractToolOutput(block.Content, 500),
+				ToolOutput:      extractToolOutput(block.Content),
 				ParentToolUseID: msg.ParentToolUseID,
 			}
 
@@ -182,7 +182,7 @@ func mapClaudeSystem(line []byte, subtype string) *models.AgentProgressPayload {
 		}
 		return &models.AgentProgressPayload{
 			ProgressType: models.ProgressTypeSubagent,
-			Summary:      "Subagent started: " + truncate(msg.Description, 200),
+			Summary:      "Subagent started: " + msg.Description,
 			ToolStatus:   "running",
 		}
 	case "task_progress":
@@ -194,7 +194,7 @@ func mapClaudeSystem(line []byte, subtype string) *models.AgentProgressPayload {
 		}
 		return &models.AgentProgressPayload{
 			ProgressType: models.ProgressTypeSubagent,
-			Summary:      truncate(msg.Description, 200),
+			Summary:      msg.Description,
 			ToolStatus:   "running",
 		}
 	case "task_notification":
@@ -211,7 +211,7 @@ func mapClaudeSystem(line []byte, subtype string) *models.AgentProgressPayload {
 		}
 		return &models.AgentProgressPayload{
 			ProgressType: models.ProgressTypeSubagent,
-			Summary:      truncate(msg.Summary, 200),
+			Summary:      msg.Summary,
 			ToolStatus:   toolStatus,
 		}
 	default:
@@ -239,7 +239,7 @@ func summarizeToolInput(toolName string, input json.RawMessage) string {
 	case "Edit":
 		return extractString(fields, "file_path")
 	case "Bash":
-		return truncate(extractString(fields, "command"), 100)
+		return extractString(fields, "command")
 	case "Grep":
 		return extractString(fields, "pattern")
 	case "Glob":
@@ -254,7 +254,7 @@ func summarizeToolInput(toolName string, input json.RawMessage) string {
 		// For unknown tools, try common field names
 		for _, key := range []string{"file_path", "path", "command", "query", "pattern", "url"} {
 			if v := extractString(fields, key); v != "" {
-				return truncate(v, 100)
+				return v
 			}
 		}
 		return ""
@@ -275,7 +275,7 @@ func extractString(fields map[string]json.RawMessage, key string) string {
 
 // extractToolOutput extracts text content from a tool_result content field.
 // Content can be a JSON string or an array of content blocks with "text" type.
-func extractToolOutput(raw json.RawMessage, maxLen int) string {
+func extractToolOutput(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
 	}
@@ -283,7 +283,7 @@ func extractToolOutput(raw json.RawMessage, maxLen int) string {
 	// Try as a plain string first
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
-		return truncate(s, maxLen)
+		return s
 	}
 
 	// Try as array of content blocks
@@ -297,16 +297,10 @@ func extractToolOutput(raw json.RawMessage, maxLen int) string {
 
 	for _, b := range blocks {
 		if b.Type == "text" && b.Text != "" {
-			return truncate(b.Text, maxLen)
+			return b.Text
 		}
 	}
 
 	return ""
 }
 
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
-}
