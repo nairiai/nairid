@@ -1,3 +1,13 @@
+## [v0.0.100] - 2026-03-11
+
+### Bugfixes
+
+- Upgrade user_message to start_conversation when job not found locally ([#195](https://github.com/nairiai/nairid/pull/195))
+
+### Documentation
+
+- Rebrand README from eksec to Nairi
+
 ## [v0.0.99] - 2026-03-08
 
 ### Changes
