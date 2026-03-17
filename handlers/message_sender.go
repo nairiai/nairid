@@ -19,18 +19,34 @@ type OutgoingMessage struct {
 	Data  any
 }
 
+// httpSubmitter sends messages via the HTTP API (for testability).
+type httpSubmitter interface {
+	SubmitMessage(msg models.BaseMessage) error
+}
+
+// wsEmitter sends messages via WebSocket (for testability).
+type wsEmitter interface {
+	Emit(ev string, args ...any) error
+}
+
 // MessageSender handles queuing and sending messages via WS or HTTP.
 // processing_message_v1 is sent via WS (real-time UX signal).
-// All other response types are sent via HTTP.
+// All other response types are sent via HTTP, with WebSocket fallback on failure.
 type MessageSender struct {
 	connectionState *ConnectionState
 	messageQueue    chan OutgoingMessage
 	progressQueue   chan OutgoingMessage
-	socketClient    *socket.Socket
+	socketClient    wsEmitter
 	socketMu        sync.RWMutex
-	apiClient       *clients.AgentsApiClient
+	apiClient       httpSubmitter
 	once            sync.Once
 }
+
+// Compile-time interface assertions
+var (
+	_ httpSubmitter = (*clients.AgentsApiClient)(nil)
+	_ wsEmitter     = (*socket.Socket)(nil)
+)
 
 // NewMessageSender creates a new MessageSender instance.
 // The queue has a buffer of 1 message to ensure blocking until messages are sent.
@@ -41,6 +57,17 @@ func NewMessageSender(connectionState *ConnectionState, apiClient *clients.Agent
 		messageQueue:    make(chan OutgoingMessage, 1),
 		progressQueue:   make(chan OutgoingMessage, 1000),
 		socketClient:    nil, // Set later via Run()
+		apiClient:       apiClient,
+	}
+}
+
+// newMessageSenderForTest creates a MessageSender with injectable dependencies (for testing).
+func newMessageSenderForTest(connectionState *ConnectionState, apiClient httpSubmitter, ws wsEmitter) *MessageSender {
+	return &MessageSender{
+		connectionState: connectionState,
+		messageQueue:    make(chan OutgoingMessage, 1),
+		progressQueue:   make(chan OutgoingMessage, 1000),
+		socketClient:    ws,
 		apiClient:       apiClient,
 	}
 }
@@ -65,7 +92,7 @@ func (ms *MessageSender) SetSocketClient(socketClient *socket.Socket) {
 }
 
 // getSocketClient returns the current socket client reference (thread-safe).
-func (ms *MessageSender) getSocketClient() *socket.Socket {
+func (ms *MessageSender) getSocketClient() wsEmitter {
 	ms.socketMu.RLock()
 	defer ms.socketMu.RUnlock()
 	return ms.socketClient
@@ -128,6 +155,7 @@ func (ms *MessageSender) sendWSWithRetry(msg OutgoingMessage) {
 }
 
 // sendHTTPWithRetry sends a message via HTTP with exponential backoff retry logic.
+// If all HTTP attempts fail, it falls back to sending via WebSocket.
 func (ms *MessageSender) sendHTTPWithRetry(msg OutgoingMessage) {
 	msgBytes, err := json.Marshal(msg.Data)
 	if err != nil {
@@ -161,8 +189,16 @@ func (ms *MessageSender) sendHTTPWithRetry(msg OutgoingMessage) {
 
 	err = backoff.Retry(operation, expBackoff)
 	if err != nil {
-		log.Error("❌ MessageSender: Failed to submit message via HTTP after %d attempts: %v. Message lost.", attempt, err)
+		log.Warn("⚠️ MessageSender: HTTP failed after %d attempts: %v. Falling back to WebSocket.", attempt, err)
+		ms.sendWSFallback(msg)
 	}
+}
+
+// sendWSFallback attempts to deliver a message via WebSocket after HTTP delivery has failed.
+// It waits for an active WebSocket connection and retries with exponential backoff.
+func (ms *MessageSender) sendWSFallback(msg OutgoingMessage) {
+	ms.connectionState.WaitForConnection()
+	ms.sendWSWithRetry(msg)
 }
 
 // runProgressSender processes the progress queue in a separate goroutine.
