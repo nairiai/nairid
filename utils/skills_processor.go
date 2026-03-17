@@ -155,6 +155,11 @@ func ExtractZipToDirectory(zipPath, targetDir string) error {
 			continue
 		}
 
+		// Skip OS-generated metadata entries (e.g. __MACOSX/, .DS_Store)
+		if isZipMetadataEntry(file.Name) {
+			continue
+		}
+
 		// Determine the target path
 		targetPath := file.Name
 		if rootDir != "" {
@@ -190,8 +195,16 @@ func ExtractZipToDirectory(zipPath, targetDir string) error {
 	return nil
 }
 
+// isZipMetadataEntry checks if a ZIP entry is OS-generated metadata that should be skipped.
+// This includes macOS __MACOSX/ resource fork directories and .DS_Store files.
+func isZipMetadataEntry(name string) bool {
+	return strings.HasPrefix(name, "__MACOSX/") || name == "__MACOSX" ||
+		filepath.Base(name) == ".DS_Store"
+}
+
 // detectSingleRootDirectory checks if all files in the ZIP are under a single root directory
 // Returns the root directory name if found, empty string otherwise
+// Ignores OS-generated metadata entries (e.g. __MACOSX/) when detecting the root.
 func detectSingleRootDirectory(zipReader *zip.Reader) string {
 	if len(zipReader.File) == 0 {
 		return ""
@@ -199,6 +212,11 @@ func detectSingleRootDirectory(zipReader *zip.Reader) string {
 
 	var rootDir string
 	for _, file := range zipReader.File {
+		// Skip OS-generated metadata entries
+		if isZipMetadataEntry(file.Name) {
+			continue
+		}
+
 		// Get the first component of the path
 		parts := strings.Split(file.Name, "/")
 		if len(parts) == 0 {
