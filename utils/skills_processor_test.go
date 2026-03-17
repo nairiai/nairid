@@ -131,6 +131,47 @@ func TestExtractZipToDirectory(t *testing.T) {
 			shouldFail:    true,
 			expectedError: "zip slip attack detected",
 		},
+		{
+			name: "ZIP with single root directory and __MACOSX metadata",
+			zipStructure: map[string]string{
+				"rails-console/SKILL.md":              "# Rails Console Skill",
+				"rails-console/scripts/run_query.sh":  "#!/bin/bash\necho query",
+				"rails-console/references/SAFETY.md":  "Safety guidelines",
+				"__MACOSX/._rails-console":            "macos resource fork",
+				"__MACOSX/rails-console/._SKILL.md":   "macos resource fork",
+				"__MACOSX/rails-console/._references":  "macos resource fork",
+			},
+			singleRootDir: "rails-console",
+			expectedFiles: map[string]string{
+				"SKILL.md":              "# Rails Console Skill",
+				"scripts/run_query.sh":  "#!/bin/bash\necho query",
+				"references/SAFETY.md":  "Safety guidelines",
+			},
+		},
+		{
+			name: "ZIP without root directory but with __MACOSX metadata",
+			zipStructure: map[string]string{
+				"SKILL.md":                  "# My Skill",
+				"scripts/run.sh":            "#!/bin/bash\necho run",
+				"__MACOSX/._SKILL.md":       "macos resource fork",
+			},
+			expectedFiles: map[string]string{
+				"SKILL.md":       "# My Skill",
+				"scripts/run.sh": "#!/bin/bash\necho run",
+			},
+		},
+		{
+			name: "ZIP with .DS_Store files",
+			zipStructure: map[string]string{
+				"my-skill/SKILL.md":     "# My Skill",
+				"my-skill/.DS_Store":    "binary ds_store data",
+				".DS_Store":             "binary ds_store data",
+			},
+			singleRootDir: "my-skill",
+			expectedFiles: map[string]string{
+				"SKILL.md": "# My Skill",
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -176,6 +217,18 @@ func TestExtractZipToDirectory(t *testing.T) {
 					t.Errorf("File %s content = %q, want %q", expectedPath, string(content), expectedContent)
 				}
 			}
+
+			// Verify __MACOSX files were not extracted
+			macosDir := filepath.Join(extractDir, "__MACOSX")
+			if _, err := os.Stat(macosDir); !os.IsNotExist(err) {
+				t.Errorf("__MACOSX directory should not be extracted")
+			}
+
+			// Verify .DS_Store files were not extracted
+			dsStore := filepath.Join(extractDir, ".DS_Store")
+			if _, err := os.Stat(dsStore); !os.IsNotExist(err) {
+				t.Errorf(".DS_Store should not be extracted")
+			}
 		})
 	}
 }
@@ -204,6 +257,21 @@ func TestDetectSingleRootDirectory(t *testing.T) {
 		{
 			name:     "empty ZIP",
 			files:    []string{},
+			wantRoot: "",
+		},
+		{
+			name:     "single root directory with __MACOSX metadata",
+			files:    []string{"rails-console/SKILL.md", "rails-console/scripts/run.sh", "__MACOSX/._rails-console", "__MACOSX/rails-console/._SKILL.md"},
+			wantRoot: "rails-console",
+		},
+		{
+			name:     "single root directory with .DS_Store files",
+			files:    []string{"my-skill/SKILL.md", "my-skill/.DS_Store", ".DS_Store"},
+			wantRoot: "my-skill",
+		},
+		{
+			name:     "only __MACOSX entries",
+			files:    []string{"__MACOSX/._file1", "__MACOSX/._file2"},
 			wantRoot: "",
 		},
 	}
@@ -498,6 +566,103 @@ func TestGetSkillFiles(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestIsZipMetadataEntry(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		want bool
+	}{
+		{"__MACOSX directory", "__MACOSX/", true},
+		{"__MACOSX bare", "__MACOSX", true},
+		{"__MACOSX nested file", "__MACOSX/._file.txt", true},
+		{"__MACOSX deeply nested", "__MACOSX/rails-console/._SKILL.md", true},
+		{"root .DS_Store", ".DS_Store", true},
+		{"nested .DS_Store", "my-skill/.DS_Store", true},
+		{"normal file", "SKILL.md", false},
+		{"normal nested file", "scripts/run.sh", false},
+		{"file containing MACOSX in name", "not__MACOSX/file.txt", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isZipMetadataEntry(tt.path)
+			if got != tt.want {
+				t.Errorf("isZipMetadataEntry(%q) = %v, want %v", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClaudeCodeSkillsProcessor_MacOSZip(t *testing.T) {
+	// Ensure AGENT_EXEC_USER is unset so we use direct file writes
+	_ = os.Unsetenv("AGENT_EXEC_USER")
+
+	tmpDir := t.TempDir()
+	eksecdSkillsDir := filepath.Join(tmpDir, ".config", "eksecd", "skills")
+	claudeSkillsDir := filepath.Join(tmpDir, ".claude", "skills")
+
+	originalHome := os.Getenv("HOME")
+	t.Setenv("HOME", tmpDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
+
+	if err := os.MkdirAll(eksecdSkillsDir, 0755); err != nil {
+		t.Fatalf("Failed to create eksecd skills directory: %v", err)
+	}
+
+	// Create a ZIP that mimics macOS Finder-created archives
+	skillZipPath := filepath.Join(eksecdSkillsDir, "rails-console-abc123.zip")
+	skillContent := map[string]string{
+		"rails-console/SKILL.md":               "# Rails Console\n\nRun queries",
+		"rails-console/scripts/run_query.sh":    "#!/bin/bash\necho query",
+		"rails-console/references/SAFETY.md":    "Safety rules",
+		"__MACOSX/._rails-console":              "macos junk",
+		"__MACOSX/rails-console/._SKILL.md":     "macos junk",
+		"__MACOSX/rails-console/._references":    "macos junk",
+	}
+
+	if err := createTestZip(skillZipPath, skillContent); err != nil {
+		t.Fatalf("Failed to create test ZIP: %v", err)
+	}
+
+	processor := NewClaudeCodeSkillsProcessor()
+	if err := processor.ProcessSkills(""); err != nil {
+		t.Fatalf("ProcessSkills failed: %v", err)
+	}
+
+	// SKILL.md must be at ~/.claude/skills/rails-console/SKILL.md (not double-nested)
+	expectedSkillDir := filepath.Join(claudeSkillsDir, "rails-console")
+
+	expectedFiles := map[string]string{
+		"SKILL.md":               "# Rails Console\n\nRun queries",
+		"scripts/run_query.sh":    "#!/bin/bash\necho query",
+		"references/SAFETY.md":    "Safety rules",
+	}
+
+	for filePath, expectedContent := range expectedFiles {
+		fullPath := filepath.Join(expectedSkillDir, filePath)
+		content, err := os.ReadFile(fullPath)
+		if err != nil {
+			t.Errorf("Failed to read extracted file %s: %v", filePath, err)
+			continue
+		}
+		if string(content) != expectedContent {
+			t.Errorf("File %s content mismatch. Got %q, want %q", filePath, string(content), expectedContent)
+		}
+	}
+
+	// Verify __MACOSX files were NOT extracted
+	macosDir := filepath.Join(expectedSkillDir, "__MACOSX")
+	if _, err := os.Stat(macosDir); !os.IsNotExist(err) {
+		t.Errorf("__MACOSX directory should not exist in extracted skill, but it does")
+	}
+
+	// Verify SKILL.md is NOT double-nested
+	doubleNestedPath := filepath.Join(expectedSkillDir, "rails-console", "SKILL.md")
+	if _, err := os.Stat(doubleNestedPath); !os.IsNotExist(err) {
+		t.Errorf("SKILL.md should not be double-nested at %s", doubleNestedPath)
 	}
 }
 
