@@ -1,3 +1,12 @@
+## [v0.0.101] - 2026-03-17
+
+### Bugfixes
+
+- Skip macOS metadata entries in skill ZIP extraction ([#196](https://github.com/nairiai/nairid/pull/196))
+  - ZIP files created on macOS include `__MACOSX/` resource fork directories that broke single root directory detection
+  - This caused skills to be double-nested, making them invisible to the agent
+  - Also skip `.DS_Store` files during extraction
+
 ## [v0.0.100] - 2026-03-11
 
 ### Bugfixes
