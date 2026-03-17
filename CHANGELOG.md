@@ -1,3 +1,11 @@
+## [v0.0.102] - 2026-03-17
+
+### Bugfixes
+
+- Fall back to WebSocket when HTTP message delivery fails ([#197](https://github.com/nairiai/nairid/pull/197))
+  - When Cloudflare WAF or network issues block HTTP POST to the backend, messages are now delivered via WebSocket instead of being permanently lost
+  - Introduced testable interfaces for HTTP and WebSocket message delivery
+
 ## [v0.0.101] - 2026-03-17
 
 ### Bugfixes
