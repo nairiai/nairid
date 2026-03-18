@@ -93,6 +93,28 @@ func (t OpenCodeToolUseMessage) GetSessionID() string {
 	return t.SessionID
 }
 
+// OpenCodeErrorMessage represents a structured JSON error message from OpenCode
+// This happens when opencode encounters an error during execution (e.g. invalid model,
+// provider errors) and emits a {"type":"error",...} JSON line.
+type OpenCodeErrorMessage struct {
+	Type      string `json:"type"`
+	SessionID string `json:"sessionID"`
+	Error     struct {
+		Name string `json:"name"`
+		Data struct {
+			Message string `json:"message"`
+		} `json:"data"`
+	} `json:"error"`
+}
+
+func (e OpenCodeErrorMessage) GetType() string {
+	return e.Type
+}
+
+func (e OpenCodeErrorMessage) GetSessionID() string {
+	return e.SessionID
+}
+
 // OpenCodeRawErrorMessage represents a non-JSON error output from OpenCode
 // This happens when opencode itself crashes or encounters a startup error
 type OpenCodeRawErrorMessage struct {
@@ -188,6 +210,12 @@ func parseOpenCodeMessage(lineBytes []byte) OpenCodeMessage {
 		if err := json.Unmarshal(lineBytes, &toolMsg); err == nil {
 			return toolMsg
 		}
+
+	case "error":
+		var errMsg OpenCodeErrorMessage
+		if err := json.Unmarshal(lineBytes, &errMsg); err == nil {
+			return errMsg
+		}
 	}
 
 	// For all other types, extract basic info for unknown message
@@ -224,10 +252,21 @@ func ExtractOpenCodeSessionID(messages []OpenCodeMessage) string {
 
 // ExtractOpenCodeResult extracts the result text from OpenCode messages
 func ExtractOpenCodeResult(messages []OpenCodeMessage) (string, error) {
-	// Check for raw error messages first - these indicate opencode crashed or failed to start
+	// Check for error messages first - these indicate opencode encountered a runtime error
 	for _, msg := range messages {
+		if errMsg, ok := msg.(OpenCodeErrorMessage); ok {
+			// Structured JSON error from opencode (e.g. model not found, provider errors)
+			errorDetail := errMsg.Error.Data.Message
+			if errorDetail == "" {
+				errorDetail = errMsg.Error.Name
+			}
+			if errorDetail == "" {
+				errorDetail = "unknown error"
+			}
+			return "", fmt.Errorf("opencode error: %s", errorDetail)
+		}
 		if rawErr, ok := msg.(OpenCodeRawErrorMessage); ok {
-			// Extract a meaningful error message from the raw output
+			// Non-JSON error output (opencode crashed or failed to start)
 			errorSummary := extractErrorSummary(rawErr.RawOutput)
 			return "", fmt.Errorf("opencode error: %s", errorSummary)
 		}

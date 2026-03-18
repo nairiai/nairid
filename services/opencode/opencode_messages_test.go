@@ -55,6 +55,24 @@ func TestMapOpenCodeOutputToMessages(t *testing.T) {
 			expectError:   false,
 		},
 		{
+			name:          "error message type parsed as error",
+			input:         `{"type":"error","timestamp":1773826143793,"sessionID":"ses_err123","error":{"name":"UnknownError","data":{"message":"Model not found: opencode/minimax-m2.1."}}}`,
+			expectedCount: 1,
+			expectedTypes: []string{"error"},
+			expectError:   false,
+		},
+		{
+			name: "JS stack trace followed by error JSON line",
+			input: `1182 |     const info = provider.models[modelID]
+1187 |       throw new ModelNotFoundError({ providerID, modelID, suggestions })
+                   ^
+ProviderModelNotFoundError: ProviderModelNotFoundError
+{"type":"error","timestamp":1773826143793,"sessionID":"ses_err456","error":{"name":"UnknownError","data":{"message":"Model not found: opencode/minimax-m2.1."}}}`,
+			expectedCount: 1,
+			expectedTypes: []string{"error"},
+			expectError:   false,
+		},
+		{
 			name:          "raw error output detected as raw_error type",
 			input:         `not json at all`,
 			expectedCount: 1,
@@ -148,6 +166,11 @@ func TestExtractOpenCodeSessionID(t *testing.T) {
 			expectedID: "ses_fromtext",
 		},
 		{
+			name:       "extracts session ID from error message",
+			input:      `{"type":"error","timestamp":1773826143793,"sessionID":"ses_fromerror","error":{"name":"UnknownError","data":{"message":"Model not found."}}}`,
+			expectedID: "ses_fromerror",
+		},
+		{
 			name: "extracts session ID when non-JSON preamble precedes JSON output",
 			input: `Performing one time database migration, may take a few minutes...
 {"type":"step_start","timestamp":1759406013703,"sessionID":"ses_aftermigration","part":{}}
@@ -205,6 +228,29 @@ func TestExtractOpenCodeResult(t *testing.T) {
 {"type":"step_finish","timestamp":1759406016100,"sessionID":"ses_123","part":{}}`,
 			expectedResult: "Let me query the database.\n\nLet me check the tables.\n\nThere are 166 registered users.",
 			expectError:    false,
+		},
+		{
+			name:           "returns opencode error for structured error message",
+			input:          `{"type":"error","timestamp":1773826143793,"sessionID":"ses_err123","error":{"name":"UnknownError","data":{"message":"Model not found: opencode/minimax-m2.1."}}}`,
+			expectedResult: "",
+			expectError:    true,
+			errorContains:  "opencode error: Model not found: opencode/minimax-m2.1.",
+		},
+		{
+			name:           "returns opencode error with name fallback when no message",
+			input:          `{"type":"error","timestamp":1773826143793,"sessionID":"ses_err123","error":{"name":"ProviderModelNotFoundError","data":{}}}`,
+			expectedResult: "",
+			expectError:    true,
+			errorContains:  "opencode error: ProviderModelNotFoundError",
+		},
+		{
+			name: "returns opencode error from JS stack trace + error JSON",
+			input: `1182 |     const info = provider.models[modelID]
+ProviderModelNotFoundError: ProviderModelNotFoundError
+{"type":"error","timestamp":1773826143793,"sessionID":"ses_err456","error":{"name":"UnknownError","data":{"message":"Model not found: opencode/minimax-m2.1."}}}`,
+			expectedResult: "",
+			expectError:    true,
+			errorContains:  "opencode error: Model not found: opencode/minimax-m2.1.",
 		},
 		{
 			name:           "returns error when no text messages",
