@@ -4,7 +4,9 @@ import (
 	"context"
 	"os"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestFilterEnvForAgent(t *testing.T) {
@@ -586,5 +588,88 @@ func TestBuildAgentCommandWithContext_InjectsProxy(t *testing.T) {
 	}
 	if !hasHTTPSProxy {
 		t.Error("HTTPS_PROXY not injected into command environment")
+	}
+}
+
+func TestConfigureProcessGroup_SelfHosted(t *testing.T) {
+	original := os.Getenv("AGENT_EXEC_USER")
+	defer func() { _ = os.Setenv("AGENT_EXEC_USER", original) }()
+
+	_ = os.Unsetenv("AGENT_EXEC_USER")
+	cmd := BuildAgentCommandWithContext(context.Background(), "echo", "hello")
+
+	// Should have SysProcAttr with Setpgid
+	if cmd.SysProcAttr == nil {
+		t.Fatal("SysProcAttr should be set")
+	}
+	if !cmd.SysProcAttr.Setpgid {
+		t.Error("Setpgid should be true")
+	}
+
+	// Should have Cancel function
+	if cmd.Cancel == nil {
+		t.Error("Cancel function should be set")
+	}
+
+	// Should have WaitDelay
+	if cmd.WaitDelay != WaitDelayAfterKill {
+		t.Errorf("WaitDelay = %v, want %v", cmd.WaitDelay, WaitDelayAfterKill)
+	}
+}
+
+func TestConfigureProcessGroup_Managed(t *testing.T) {
+	original := os.Getenv("AGENT_EXEC_USER")
+	defer func() { _ = os.Setenv("AGENT_EXEC_USER", original) }()
+
+	_ = os.Setenv("AGENT_EXEC_USER", "agentrunner")
+	cmd := BuildAgentCommandWithContext(context.Background(), "echo", "hello")
+
+	// Should have SysProcAttr with Setpgid
+	if cmd.SysProcAttr == nil {
+		t.Fatal("SysProcAttr should be set")
+	}
+	if !cmd.SysProcAttr.Setpgid {
+		t.Error("Setpgid should be true")
+	}
+
+	// Should have Cancel function
+	if cmd.Cancel == nil {
+		t.Error("Cancel function should be set")
+	}
+
+	// Should have WaitDelay
+	if cmd.WaitDelay != WaitDelayAfterKill {
+		t.Errorf("WaitDelay = %v, want %v", cmd.WaitDelay, WaitDelayAfterKill)
+	}
+}
+
+func TestProcessGroupKill_KillsChildProcesses(t *testing.T) {
+	original := os.Getenv("AGENT_EXEC_USER")
+	defer func() { _ = os.Setenv("AGENT_EXEC_USER", original) }()
+	_ = os.Unsetenv("AGENT_EXEC_USER")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	cmd := BuildAgentCommandWithContext(ctx, "sh", "-c", "sleep 300 & wait")
+
+	err := cmd.Start()
+	if err != nil {
+		t.Fatalf("failed to start command: %v", err)
+	}
+
+	pgid := cmd.Process.Pid
+
+	// Wait for the process to be killed by context timeout
+	_ = cmd.Wait()
+
+	// Wait a short time for the OS to fully reap the process group
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify the process group is dead by trying to signal it.
+	err = syscall.Kill(-pgid, 0)
+	if err == nil {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		t.Error("process group should be dead after context cancellation, but it's still alive")
 	}
 }
