@@ -8,8 +8,14 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 )
+
+// WaitDelayAfterKill is the duration to wait for I/O to drain after killing
+// a process. This prevents cmd.Wait() from blocking forever when orphaned
+// child processes keep the stdout pipe open.
+const WaitDelayAfterKill = 10 * time.Second
 
 // DefaultSessionTimeout is the maximum duration an agent CLI session can run
 // before being killed. This prevents hung processes from blocking the worker pool.
@@ -51,7 +57,7 @@ func AgentHTTPProxy() string {
 }
 
 // BuildAgentCommandWithContext creates an exec.Cmd bound to a context for timeout/cancellation.
-// When the context expires, the process is killed automatically.
+// When the context expires, the entire process tree is killed via process group signal.
 func BuildAgentCommandWithContext(ctx context.Context, name string, args ...string) *exec.Cmd {
 	execUser := AgentExecUser()
 	filteredEnv := FilterEnvForAgent(os.Environ())
@@ -66,6 +72,7 @@ func BuildAgentCommandWithContext(ctx context.Context, name string, args ...stri
 		log.Printf("[BuildAgentCommandWithContext] Self-hosted mode: running %s as current user", name)
 		cmd := exec.CommandContext(ctx, name, args...)
 		cmd.Env = filteredEnv
+		configureProcessGroup(cmd)
 		return cmd
 	}
 
@@ -83,6 +90,7 @@ func BuildAgentCommandWithContext(ctx context.Context, name string, args ...stri
 
 	log.Printf("[BuildAgentCommandWithContext] Managed mode: running sudo -u %s bash -c '...' (cmd=%s)", execUser, name)
 	cmd := exec.CommandContext(ctx, "sudo", sudoArgs...)
+	configureProcessGroup(cmd)
 	return cmd
 }
 
@@ -204,6 +212,24 @@ func InjectProxyEnv(env []string) []string {
 	}
 
 	return env
+}
+
+// configureProcessGroup sets up process group isolation and kill behavior for agent commands.
+// It ensures that when the context expires (timeout), the entire process tree is killed —
+// not just the top-level process. Without this, child processes (e.g. opencode, node) survive
+// as orphans and hold stdout pipes open, causing cmd.Wait() to block indefinitely.
+//
+// It also sets WaitDelay so that if the pipe is still held open after the process is killed
+// (e.g. by a grandchild process that wasn't in the process group), Wait() returns after
+// a bounded delay instead of blocking forever.
+func configureProcessGroup(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		// Kill the entire process group (negative PID) instead of just the leader.
+		// This ensures sudo → bash → node → opencode all get SIGKILL.
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	cmd.WaitDelay = WaitDelayAfterKill
 }
 
 // extractHost extracts the hostname (without port) from a URL string.

@@ -2,9 +2,11 @@ package clients
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRunCommandStreaming_Success(t *testing.T) {
@@ -109,5 +111,36 @@ func TestRunCommandStreaming_ContextCanceled(t *testing.T) {
 
 	if err == nil {
 		t.Fatal("expected error for canceled context")
+	}
+}
+
+func TestRunCommandStreaming_TimeoutKillsProcessTree(t *testing.T) {
+	// Simulate the actual bug: a parent process spawns a child that hangs.
+	// Without process group kill + WaitDelay, RunCommandStreaming blocks forever
+	// because the child keeps stdout open.
+	original := os.Getenv("AGENT_EXEC_USER")
+	defer func() { _ = os.Setenv("AGENT_EXEC_USER", original) }()
+	_ = os.Unsetenv("AGENT_EXEC_USER")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	// sh spawns a background child (sleep 300) that holds stdout open,
+	// then the parent also hangs. This mimics the opencode hang scenario.
+	cmd := BuildAgentCommandWithContext(ctx, "sh", "-c", "sleep 300 & wait")
+
+	start := time.Now()
+	_, err := RunCommandStreaming(ctx, cmd, nil)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected error from timeout")
+	}
+
+	// Should complete within a reasonable time (timeout + WaitDelay + margin).
+	// If process group kill is broken, this would block for 300 seconds.
+	maxExpected := 500*time.Millisecond + WaitDelayAfterKill + 5*time.Second
+	if elapsed > maxExpected {
+		t.Errorf("RunCommandStreaming took %v, expected under %v (process group kill may not be working)", elapsed, maxExpected)
 	}
 }
