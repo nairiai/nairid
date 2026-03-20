@@ -1,3 +1,12 @@
+## [v0.0.103] - 2026-03-20
+
+### Bugfixes
+
+- Kill entire process tree on timeout to prevent worker pool exhaustion ([#199](https://github.com/nairiai/nairid/pull/199))
+  - When a CLI process times out, the entire process tree is now killed (not just the parent), preventing orphaned child processes from consuming worker pool slots
+  - Adds process group management using `setpgid` to ensure all child processes are grouped and terminated together
+  - Splits platform-specific process management into build-tagged files for proper Windows cross-compilation
+
 ## [v0.0.102] - 2026-03-17
 
 ### Bugfixes
