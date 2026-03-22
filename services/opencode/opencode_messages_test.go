@@ -94,6 +94,23 @@ Migration complete.
 			expectedTypes: []string{"text"},
 			expectError:   false,
 		},
+		{
+			name:          "error message type parsed as error",
+			input:         `{"type":"error","timestamp":1774182448331,"sessionID":"ses_abc","error":{"name":"APIError","data":{"message":"Invalid API key.","statusCode":401}}}`,
+			expectedCount: 1,
+			expectedTypes: []string{"error"},
+			expectError:   false,
+		},
+		{
+			name: "preamble text followed by error JSON",
+			input: `Performing one time database migration, may take a few minutes...
+sqlite-migration:done
+Database migration complete.
+{"type":"error","timestamp":1774182448331,"sessionID":"ses_abc","error":{"name":"APIError","data":{"message":"Insufficient balance.","statusCode":401}}}`,
+			expectedCount: 1,
+			expectedTypes: []string{"error"},
+			expectError:   false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -153,6 +170,11 @@ func TestExtractOpenCodeSessionID(t *testing.T) {
 {"type":"step_start","timestamp":1759406013703,"sessionID":"ses_aftermigration","part":{}}
 {"type":"text","timestamp":1759406015783,"sessionID":"ses_aftermigration","part":{"type":"text","text":"Hello"}}`,
 			expectedID: "ses_aftermigration",
+		},
+		{
+			name:       "extracts session ID from error message",
+			input:      `{"type":"error","timestamp":1774182448331,"sessionID":"ses_errsession","error":{"name":"APIError","data":{"message":"Invalid API key.","statusCode":401}}}`,
+			expectedID: "ses_errsession",
 		},
 	}
 
@@ -254,6 +276,51 @@ RipgrepExtractionFailedError: RipgrepExtractionFailedError
 			expectedResult: "Hello! Migration is done.",
 			expectError:    false,
 		},
+		{
+			name:           "returns API error for invalid API key",
+			input:          `{"type":"error","timestamp":1774182448331,"sessionID":"ses_abc","error":{"name":"APIError","data":{"message":"Invalid API key.","statusCode":401}}}`,
+			expectedResult: "",
+			expectError:    true,
+			errorContains:  "opencode API error: Invalid API key.",
+		},
+		{
+			name:           "returns API error for insufficient balance",
+			input:          `{"type":"error","timestamp":1774182949655,"sessionID":"ses_def","error":{"name":"APIError","data":{"message":"Insufficient balance. Manage your billing here: https://opencode.ai/workspace/billing","statusCode":401}}}`,
+			expectedResult: "",
+			expectError:    true,
+			errorContains:  "opencode API error: Insufficient balance.",
+		},
+		{
+			name:           "returns API error for model not found",
+			input:          `{"type":"error","timestamp":1774182448331,"sessionID":"ses_ghi","error":{"name":"UnknownError","data":{"message":"Model not found: opencode/claude-sonnet-4-6."}}}`,
+			expectedResult: "",
+			expectError:    true,
+			errorContains:  "opencode API error: Model not found: opencode/claude-sonnet-4-6.",
+		},
+		{
+			name: "returns API error when preamble precedes error JSON",
+			input: `Performing one time database migration, may take a few minutes...
+sqlite-migration:done
+Database migration complete.
+{"type":"error","timestamp":1774182448331,"sessionID":"ses_jkl","error":{"name":"APIError","data":{"message":"Invalid API key.","statusCode":401}}}`,
+			expectedResult: "",
+			expectError:    true,
+			errorContains:  "opencode API error: Invalid API key.",
+		},
+		{
+			name:           "returns API error with error name when message is empty",
+			input:          `{"type":"error","timestamp":1774182448331,"sessionID":"ses_mno","error":{"name":"NetworkError","data":{}}}`,
+			expectedResult: "",
+			expectError:    true,
+			errorContains:  "opencode API error: NetworkError",
+		},
+		{
+			name:           "returns unknown error when both name and message are empty",
+			input:          `{"type":"error","timestamp":1774182448331,"sessionID":"ses_pqr","error":{}}`,
+			expectedResult: "",
+			expectError:    true,
+			errorContains:  "opencode API error: unknown error",
+		},
 	}
 
 	for _, tt := range tests {
@@ -301,6 +368,26 @@ func TestOpenCodeTextMessage_GetSessionID(t *testing.T) {
 	}
 	if msg.GetSessionID() != "ses_123" {
 		t.Errorf("Expected session ID 'ses_123', got %q", msg.GetSessionID())
+	}
+}
+
+func TestOpenCodeErrorMessage_GetType(t *testing.T) {
+	msg := OpenCodeErrorMessage{
+		Type:      "error",
+		SessionID: "ses_err123",
+	}
+	if msg.GetType() != "error" {
+		t.Errorf("Expected type 'error', got %q", msg.GetType())
+	}
+}
+
+func TestOpenCodeErrorMessage_GetSessionID(t *testing.T) {
+	msg := OpenCodeErrorMessage{
+		Type:      "error",
+		SessionID: "ses_err123",
+	}
+	if msg.GetSessionID() != "ses_err123" {
+		t.Errorf("Expected session ID 'ses_err123', got %q", msg.GetSessionID())
 	}
 }
 
