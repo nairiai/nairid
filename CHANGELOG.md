@@ -1,3 +1,11 @@
+## [v0.0.104] - 2026-03-22
+
+### Bugfixes
+
+- Surface OpenCode API errors in error messages ([#200](https://github.com/nairiai/nairid/pull/200))
+  - OpenCode API errors (e.g. authentication failures, rate limits) are now properly surfaced in agent error messages instead of being silently swallowed
+  - Adds test coverage for error message extraction from OpenCode responses
+
 ## [v0.0.103] - 2026-03-20
 
 ### Bugfixes
