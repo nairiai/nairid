@@ -403,6 +403,13 @@ func resolveNairiAgentIDForStartup(repoFlag string) (string, error) {
 // "github.com/owner/repo") into a filesystem-safe agent ID by replacing path
 // separators with dashes. The agent ID becomes a directory component
 // (~/.eksec_worktrees/agent-{id}/) so slashes would create unintended subdirs.
+//
+// Only path separators are escaped because GetRepositoryIdentifier() already
+// strips the protocol and any auth portion of the URL, leaving an
+// "host/owner/repo" shape — git-hosted URLs use a URL-safe character set, so
+// no other filesystem-unsafe characters are expected in practice. Users who
+// want a stable, human-readable namespace independent of the remote URL can
+// always set NAIRI_AGENT_ID explicitly.
 func sanitizeAgentIDFromRepoIdentifier(repoIdent string) string {
 	safe := strings.ReplaceAll(repoIdent, "/", "-")
 	safe = strings.ReplaceAll(safe, "\\", "-")
@@ -851,6 +858,15 @@ func main() {
 		os.Exit(1)
 	}
 	log.Info("🆔 Agent ID for namespacing: %s", nairiAgentID)
+
+	// Propagate the resolved agent ID into the process env so any downstream
+	// caller of env.GetAgentID() (e.g. GitUseCase.GetWorktreeBasePath via the
+	// worktree pool) sees the same value as the one we just locked, including
+	// the repo-derived fallback case where the user never set NAIRI_AGENT_ID.
+	if err := os.Setenv("NAIRI_AGENT_ID", nairiAgentID); err != nil {
+		fmt.Fprintf(os.Stderr, "Error setting NAIRI_AGENT_ID in process env: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Lock the per-agent worktree namespace. Two instances with the same
 	// NAIRI_AGENT_ID (e.g. same key reused across repos) would resolve to the
