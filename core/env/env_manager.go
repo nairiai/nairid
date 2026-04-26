@@ -42,6 +42,77 @@ func NewEnvManager() (*EnvManager, error) {
 	return em, nil
 }
 
+// GetAgentID returns the agent ID from NAIRI_AGENT_ID (or legacy EKSEC_AGENT_ID).
+// This is the user-supplied agent integration ID used to namespace per-instance
+// data on disk so multiple nairid processes on the same machine don't corrupt
+// each other's worktrees, state, or logs (see issue #201).
+func GetAgentID() (string, error) {
+	agentID := os.Getenv("NAIRI_AGENT_ID")
+	if agentID == "" {
+		agentID = os.Getenv("EKSEC_AGENT_ID") // Legacy env var
+	}
+	if agentID == "" {
+		return "", fmt.Errorf("NAIRI_AGENT_ID environment variable is required")
+	}
+	return agentID, nil
+}
+
+// GetAgentStatePath returns the per-agent state file path:
+// {configDir}/agents/{agentID}/state.json. The parent directory is created.
+func GetAgentStatePath(agentID string) (string, error) {
+	if agentID == "" {
+		return "", fmt.Errorf("agent ID cannot be empty")
+	}
+	configDir, err := GetConfigDir()
+	if err != nil {
+		return "", err
+	}
+	agentDir := filepath.Join(configDir, "agents", agentID)
+	if err := os.MkdirAll(agentDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create agent state directory: %w", err)
+	}
+	return filepath.Join(agentDir, "state.json"), nil
+}
+
+// GetAgentLogsDir returns the per-agent logs directory:
+// {configDir}/logs/{agentID}/. The directory is created.
+func GetAgentLogsDir(agentID string) (string, error) {
+	if agentID == "" {
+		return "", fmt.Errorf("agent ID cannot be empty")
+	}
+	configDir, err := GetConfigDir()
+	if err != nil {
+		return "", err
+	}
+	logsDir := filepath.Join(configDir, "logs", agentID)
+	if err := os.MkdirAll(logsDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create agent logs directory: %w", err)
+	}
+	return logsDir, nil
+}
+
+// GetAgentWorktreeBasePath returns the per-agent worktree base path:
+// ~/.eksec_worktrees/agent-{agentID}/ (or /home/{AGENT_EXEC_USER}/... in managed mode).
+// The directory is NOT created here — callers create it on first use.
+func GetAgentWorktreeBasePath(agentID string) (string, error) {
+	if agentID == "" {
+		return "", fmt.Errorf("agent ID cannot be empty")
+	}
+
+	var rootDir string
+	if execUser := os.Getenv("AGENT_EXEC_USER"); execUser != "" {
+		rootDir = filepath.Join("/home", execUser, ".eksec_worktrees")
+	} else {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("failed to get home directory: %w", err)
+		}
+		rootDir = filepath.Join(homeDir, ".eksec_worktrees")
+	}
+
+	return filepath.Join(rootDir, "agent-"+agentID), nil
+}
+
 // GetConfigDir returns the config directory path, either from NAIRI_CONFIG_DIR
 // environment variable (or legacy EKSEC_CONFIG_DIR) or the default ~/.config/eksecd
 func GetConfigDir() (string, error) {

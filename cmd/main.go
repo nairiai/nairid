@@ -45,12 +45,14 @@ type CmdRunner struct {
 	appState        *models.AppState
 	rotatingWriter  *log.RotatingWriter
 	envManager      *env.EnvManager
-	agentID         string
+	agentID         string // locally-generated ccaid_* used for X-CCAGENT-ID header
+	nairiAgentID    string // user-supplied NAIRI_AGENT_ID used for X-AGENT-ID and per-instance namespacing
 	agentsApiClient *clients.AgentsApiClient
 	wsURL           string
 	nairiAPIKey     string
 	dirLock         *utils.DirLock
 	repoLock        *utils.DirLock
+	agentLock       *utils.DirLock
 
 	// Persistent worker pools reused across reconnects
 	blockingWorkerPool *workerpool.WorkerPool
@@ -355,6 +357,58 @@ func processPermissions(agentType, workDir, targetHomeDir string) error {
 	return nil
 }
 
+// resolveNairiAgentIDForStartup resolves the agent ID that namespaces this
+// instance's worktrees, state, and logs (issue #201). It runs at process start,
+// before any of those paths are touched.
+//
+// Resolution order:
+//  1. NAIRI_AGENT_ID (or legacy EKSEC_AGENT_ID) env var — explicit takes
+//     precedence so users can override the derived value.
+//  2. Repo mode without env var: derived from the git remote URL (e.g.
+//     "github.com/owner/repo") with path-unsafe characters replaced. This
+//     preserves backwards compatibility for self-hosted users upgrading nairid
+//     without changing their env vars — same fallback the legacy code used.
+//  3. No-repo mode without env var: error (NAIRI_AGENT_ID was already required
+//     in no-repo mode prior to this change).
+//
+// Two instances on different repos resolve to different IDs and don't collide.
+// Two instances on the same repo resolve to the same ID; the agent lock catches
+// the duplicate and fails loudly.
+func resolveNairiAgentIDForStartup(repoFlag string) (string, error) {
+	if id, err := env.GetAgentID(); err == nil {
+		return id, nil
+	}
+
+	gitClient := clients.NewGitClient()
+	repoCtx, err := resolveRepositoryContext(repoFlag, gitClient)
+	if err != nil {
+		return "", fmt.Errorf("NAIRI_AGENT_ID is not set and repository context could not be resolved: %w", err)
+	}
+	if !repoCtx.IsRepoMode {
+		return "", fmt.Errorf("NAIRI_AGENT_ID environment variable is required in no-repo mode")
+	}
+
+	gitClient.SetRepoPathProvider(func() string { return repoCtx.RepoPath })
+	repoIdent, err := gitClient.GetRepositoryIdentifier()
+	if err != nil {
+		return "", fmt.Errorf("NAIRI_AGENT_ID is not set and repository identifier could not be derived (set NAIRI_AGENT_ID explicitly): %w", err)
+	}
+
+	derivedID := sanitizeAgentIDFromRepoIdentifier(repoIdent)
+	log.Info("📋 NAIRI_AGENT_ID not set; using repo-derived agent ID: %s (from %s)", derivedID, repoIdent)
+	return derivedID, nil
+}
+
+// sanitizeAgentIDFromRepoIdentifier converts a repo identifier (e.g.
+// "github.com/owner/repo") into a filesystem-safe agent ID by replacing path
+// separators with dashes. The agent ID becomes a directory component
+// (~/.eksec_worktrees/agent-{id}/) so slashes would create unintended subdirs.
+func sanitizeAgentIDFromRepoIdentifier(repoIdent string) string {
+	safe := strings.ReplaceAll(repoIdent, "/", "-")
+	safe = strings.ReplaceAll(safe, "\\", "-")
+	return safe
+}
+
 // resolveRepositoryContext determines the repository mode and path based on the --repo flag
 // and current working directory. Returns a RepositoryContext indicating:
 // - Repo mode with explicit path (--repo flag provided)
@@ -410,7 +464,11 @@ func resolveAutoDetectedRepoContext(gitClient *clients.GitClient) (*models.Repos
 	}, nil
 }
 
-func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner, error) {
+func NewCmdRunner(
+	envManager *env.EnvManager,
+	nairiAgentID string,
+	agentType, permissionMode, model, repoPath string,
+) (*CmdRunner, error) {
 	log.Info("📋 Starting to initialize CmdRunner with agent: %s", agentType)
 
 	// Validate model compatibility with agent
@@ -418,21 +476,11 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 		return nil, err
 	}
 
-	// Create log directory for agent service
-	configDir, err := env.GetConfigDir()
+	// Per-agent log directory for CLI agent session logs
+	logDir, err := env.GetAgentLogsDir(nairiAgentID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get config directory: %w", err)
+		return nil, fmt.Errorf("failed to get agent logs directory: %w", err)
 	}
-	logDir := filepath.Join(configDir, "logs")
-
-	// Initialize environment manager first
-	envManager, err := env.NewEnvManager()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create environment manager: %w", err)
-	}
-
-	// Start periodic refresh every 1 minute
-	envManager.StartPeriodicRefresh(1 * time.Minute)
 
 	// Get API key and WS URL for agents API client
 	// Support legacy EKSEC_* env vars for backwards compatibility
@@ -454,12 +502,7 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 
 	// Extract base URL for API client (remove /socketio/ suffix)
 	apiBaseURL := strings.TrimSuffix(wsURL, "/socketio/")
-	// Get agent ID for X-AGENT-ID header (used to disambiguate containers sharing API keys)
-	agentIDForAPI := envManager.Get("NAIRI_AGENT_ID")
-	if agentIDForAPI == "" {
-		agentIDForAPI = envManager.Get("EKSEC_AGENT_ID") // Legacy env var
-	}
-	agentsApiClient := clients.NewAgentsApiClient(nairiAPIKey, apiBaseURL, agentIDForAPI)
+	agentsApiClient := clients.NewAgentsApiClient(nairiAPIKey, apiBaseURL, nairiAgentID)
 	log.Info("🔗 Configured agents API client with base URL: %s", apiBaseURL)
 
 	// Fetch and set Anthropic token BEFORE initializing anything else
@@ -528,8 +571,11 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 
 	gitClient := clients.NewGitClient()
 
-	// Determine state file path
-	statePath := filepath.Join(configDir, "state.json")
+	// Per-agent state file path: {configDir}/agents/{agentID}/state.json
+	statePath, err := env.GetAgentStatePath(nairiAgentID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get agent state path: %w", err)
+	}
 
 	// Restore app state from persisted data
 	appState, agentID, err := handlers.RestoreAppState(statePath)
@@ -569,6 +615,7 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 		appState:        appState,
 		envManager:      envManager,
 		agentID:         agentID,
+		nairiAgentID:    nairiAgentID,
 		agentsApiClient: agentsApiClient,
 		wsURL:           wsURL,
 		nairiAPIKey:     nairiAPIKey,
@@ -778,6 +825,58 @@ func main() {
 		}
 	}()
 
+	// Initialize environment manager early so any .env values are mirrored into
+	// os env before we resolve NAIRI_AGENT_ID. Started here (instead of inside
+	// NewCmdRunner) so the agent lock can be acquired before NewCmdRunner runs
+	// any worktree pool reclaim/cleanup, which is the actual contended resource.
+	envManager, err := env.NewEnvManager()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating environment manager: %v\n", err)
+		os.Exit(1)
+	}
+	envManager.StartPeriodicRefresh(1 * time.Minute)
+
+	// Resolve the agent ID up front (issue #201). Per-instance state/logs/
+	// worktrees are namespaced under this ID, so it must be known before any
+	// of those paths are touched.
+	//
+	// Resolution order (preserves backwards compatibility for self-hosted
+	// users who upgrade nairid without changing their env vars):
+	//   1. NAIRI_AGENT_ID (or legacy EKSEC_AGENT_ID) env var.
+	//   2. Repo mode: derived from the git remote URL of the target repo.
+	//   3. No-repo mode without env var: error (was already required).
+	nairiAgentID, err := resolveNairiAgentIDForStartup(opts.Repo)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	log.Info("🆔 Agent ID for namespacing: %s", nairiAgentID)
+
+	// Lock the per-agent worktree namespace. Two instances with the same
+	// NAIRI_AGENT_ID (e.g. same key reused across repos) would resolve to the
+	// same ~/.eksec_worktrees/agent-{id}/ subtree and corrupt each other's
+	// pool and job worktrees; failing loudly here turns silent corruption
+	// into a clear error (the existing dirLock only covers same CWD).
+	agentBasePath, err := env.GetAgentWorktreeBasePath(nairiAgentID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error resolving agent worktree base path: %v\n", err)
+		os.Exit(1)
+	}
+	agentLock, err := utils.NewDirLock(agentBasePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating agent lock: %v\n", err)
+		os.Exit(1)
+	}
+	if err := agentLock.TryLock(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: another nairid instance is already running with the same agent ID (%s, lock at %s).\nIf this is intentional (e.g. a separate agent in another repo), set a distinct NAIRI_AGENT_ID for this instance.\n", nairiAgentID, agentLock.GetLockPath())
+		os.Exit(1)
+	}
+	defer func() {
+		if unlockErr := agentLock.Unlock(); unlockErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to release agent lock: %v\n", unlockErr)
+		}
+	}()
+
 	// Determine permission mode based on flag
 	permissionMode := "acceptEdits"
 	if opts.BypassPermissions {
@@ -797,7 +896,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	cmdRunner, err := NewCmdRunner(opts.Agent, permissionMode, opts.Model, opts.Repo)
+	cmdRunner, err := NewCmdRunner(envManager, nairiAgentID, opts.Agent, permissionMode, opts.Model, opts.Repo)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error initializing CmdRunner: %v\n", err)
 		os.Exit(1)
@@ -805,6 +904,7 @@ func main() {
 
 	// Store locks in cmdRunner for cleanup
 	cmdRunner.dirLock = dirLock
+	cmdRunner.agentLock = agentLock
 
 	// Setup program-wide logging from start
 	logPath, err := cmdRunner.setupProgramLogging()
