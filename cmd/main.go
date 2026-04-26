@@ -1264,14 +1264,12 @@ func (cr *CmdRunner) startSocketIOClient(serverURLStr, apiKey string) error {
 }
 
 func (cr *CmdRunner) setupProgramLogging() (string, error) {
-	// Get config directory
-	configDir, err := env.GetConfigDir()
+	// Per-agent logs directory so concurrent nairid processes don't share a
+	// single log directory or sweep each other's old log files (issue #201).
+	logsDir, err := env.GetAgentLogsDir(cr.nairiAgentID)
 	if err != nil {
-		return "", fmt.Errorf("failed to get config directory: %w", err)
+		return "", fmt.Errorf("failed to get agent logs directory: %w", err)
 	}
-
-	// Create logs directory
-	logsDir := filepath.Join(configDir, "logs")
 
 	// Set up rotating writer with 10MB file size limit
 	rotatingWriter, err := log.NewRotatingWriter(log.RotatingWriterConfig{
