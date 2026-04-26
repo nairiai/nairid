@@ -13,6 +13,7 @@ import (
 	"github.com/lucasepe/codename"
 
 	"nairid/clients"
+	"nairid/core/env"
 	"nairid/core/log"
 	"nairid/models"
 	"nairid/services"
@@ -1138,23 +1139,17 @@ func (g *GitUseCase) AbandonJobAndCleanup(jobID, branchName string) error {
 // Worktree-based Concurrent Job Support
 // =============================================================================
 
-// GetWorktreeBasePath returns the base path for nairid worktrees.
-// Worktrees are stored in ~/.eksec_worktrees/
-// If AGENT_EXEC_USER is set (managed mode), worktrees are stored in that user's home
-// directory to ensure they persist on the mounted volume.
+// GetWorktreeBasePath returns the per-agent base path for nairid worktrees:
+// ~/.eksec_worktrees/agent-{agentID}/ (or /home/{AGENT_EXEC_USER}/... in
+// managed mode). Namespacing by agent ID is required so multiple nairid
+// instances under the same $HOME don't corrupt each other's pool/job
+// worktrees during reclaim, cleanup, or replenish scans (see issue #201).
 func (g *GitUseCase) GetWorktreeBasePath() (string, error) {
-	// In managed mode, use the agent execution user's home for persistent storage
-	if execUser := os.Getenv("AGENT_EXEC_USER"); execUser != "" {
-		return filepath.Join("/home", execUser, ".eksec_worktrees"), nil
-	}
-
-	// Default: use current user's home directory
-	homeDir, err := os.UserHomeDir()
+	agentID, err := env.GetAgentID()
 	if err != nil {
-		return "", fmt.Errorf("failed to get home directory: %w", err)
+		return "", fmt.Errorf("failed to resolve agent ID for worktree path: %w", err)
 	}
-
-	return filepath.Join(homeDir, ".eksec_worktrees"), nil
+	return env.GetAgentWorktreeBasePath(agentID)
 }
 
 // GetMaxConcurrency returns the max concurrency setting from environment
