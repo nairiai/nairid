@@ -48,9 +48,11 @@ type CmdRunner struct {
 	agentID         string
 	agentsApiClient *clients.AgentsApiClient
 	wsURL           string
-	nairiAPIKey     string
-	dirLock         *utils.DirLock
-	repoLock        *utils.DirLock
+	nairiAPIKey       string
+	instanceNamespace string // per-instance namespace for path isolation
+	dirLock           *utils.DirLock
+	repoLock          *utils.DirLock
+	namespaceLock     *utils.DirLock
 
 	// Persistent worker pools reused across reconnects
 	blockingWorkerPool *workerpool.WorkerPool
@@ -528,8 +530,57 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 
 	gitClient := clients.NewGitClient()
 
-	// Determine state file path
-	statePath := filepath.Join(configDir, "state.json")
+	// Handle repository path and create repository context.
+	// This must happen before namespace resolution so we can derive the repo identifier.
+	repoContext, err := resolveRepositoryContext(repoPath, gitClient)
+	if err != nil {
+		return nil, err
+	}
+
+	// If in repo mode, configure gitClient so we can fetch the repo identifier for namespacing
+	if repoContext.IsRepoMode {
+		gitClient.SetRepoPathProvider(func() string {
+			return repoContext.RepoPath
+		})
+	}
+
+	// Resolve per-instance namespace for path isolation.
+	// In repo mode without an explicit agent ID env var, this derives the namespace from
+	// the git remote URL (e.g., "github.com/owner/repo" -> "github.com__owner__repo").
+	// This prevents multiple nairid instances on the same machine from corrupting each
+	// other's worktrees and state (see: https://github.com/nairiai/nairid/issues/201).
+	var repoIdentifier string
+	if repoContext.IsRepoMode {
+		repoIdentifier, _ = gitClient.GetRepositoryIdentifier()
+		// Non-fatal if this fails — namespace will require NAIRI_AGENT_ID
+	}
+	instanceNamespace, err := env.ResolveInstanceNamespace(envManager, repoIdentifier)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve instance namespace: %w", err)
+	}
+	log.Info("🔒 Instance namespace: %s", instanceNamespace)
+
+	// Create namespaced directory for per-instance state (state.json, logs).
+	// Shared config (.env, rules, MCP, skills) stays in the base configDir.
+	namespacedDir := filepath.Join(configDir, "instances", instanceNamespace)
+	if err := os.MkdirAll(namespacedDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create namespaced config directory: %w", err)
+	}
+
+	// Determine state file path (namespaced per instance)
+	statePath := filepath.Join(namespacedDir, "state.json")
+
+	// Migrate legacy state.json if it exists and the namespaced one doesn't.
+	// This provides a smooth upgrade path for existing single-instance setups.
+	legacyStatePath := filepath.Join(configDir, "state.json")
+	if _, err := os.Stat(statePath); os.IsNotExist(err) {
+		if legacyData, readErr := os.ReadFile(legacyStatePath); readErr == nil {
+			log.Info("📦 Migrating legacy state.json to namespaced path: %s", statePath)
+			if writeErr := os.WriteFile(statePath, legacyData, 0644); writeErr != nil {
+				log.Warn("⚠️ Failed to migrate legacy state.json: %v", writeErr)
+			}
+		}
+	}
 
 	// Restore app state from persisted data
 	appState, agentID, err := handlers.RestoreAppState(statePath)
@@ -537,16 +588,10 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 		return nil, fmt.Errorf("failed to restore app state: %w", err)
 	}
 
-	// Handle repository path and create repository context
-	repoContext, err := resolveRepositoryContext(repoPath, gitClient)
-	if err != nil {
-		return nil, err
-	}
-
 	// Set repository context in app state
 	appState.SetRepositoryContext(repoContext)
 
-	// Configure gitClient to use repository path from app state
+	// Re-configure gitClient to use repository path from app state (dynamic provider)
 	gitClient.SetRepoPathProvider(func() string {
 		ctx := appState.GetRepositoryContext()
 		return ctx.RepoPath
@@ -557,21 +602,23 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 	messageSender := handlers.NewMessageSender(connectionState, agentsApiClient)
 
 	gitUseCase := usecases.NewGitUseCase(gitClient, cliAgent, appState)
+	gitUseCase.SetNamespace(instanceNamespace)
 
 	messageHandler := handlers.NewMessageHandler(cliAgent, gitUseCase, appState, envManager, messageSender, agentsApiClient)
 
 	// Create the CmdRunner instance
 	cr := &CmdRunner{
-		messageHandler:  messageHandler,
-		messageSender:   messageSender,
-		connectionState: connectionState,
-		gitUseCase:      gitUseCase,
-		appState:        appState,
-		envManager:      envManager,
-		agentID:         agentID,
-		agentsApiClient: agentsApiClient,
-		wsURL:           wsURL,
-		nairiAPIKey:     nairiAPIKey,
+		messageHandler:    messageHandler,
+		messageSender:     messageSender,
+		connectionState:   connectionState,
+		gitUseCase:        gitUseCase,
+		appState:          appState,
+		envManager:        envManager,
+		agentID:           agentID,
+		agentsApiClient:   agentsApiClient,
+		wsURL:             wsURL,
+		nairiAPIKey:       nairiAPIKey,
+		instanceNamespace: instanceNamespace,
 	}
 
 	// Initialize dual worker pools that persist for the app lifetime
@@ -838,6 +885,35 @@ func main() {
 				fmt.Fprintf(os.Stderr, "Warning: Failed to release repository lock: %v\n", unlockErr)
 			}
 		}()
+	}
+
+	// Acquire namespace lock to prevent two instances with the same namespace
+	// (e.g., same NAIRI_AGENT_ID or same repo) from corrupting shared state.
+	// This catches the case where the same API key is accidentally reused.
+	if repoCtx.IsRepoMode {
+		worktreeBasePath, wtErr := cmdRunner.gitUseCase.GetWorktreeBasePath()
+		if wtErr == nil {
+			namespaceLock, nlErr := utils.NewDirLock(worktreeBasePath)
+			if nlErr != nil {
+				fmt.Fprintf(os.Stderr, "Error creating namespace lock: %v\n", nlErr)
+				os.Exit(1)
+			}
+
+			if nlErr := namespaceLock.TryLock(); nlErr != nil {
+				fmt.Fprintf(os.Stderr, "Error: another nairid instance is already running with the same namespace (%s). "+
+					"Set NAIRI_AGENT_ID to a unique value for each instance.\n", cmdRunner.instanceNamespace)
+				os.Exit(1)
+			}
+
+			cmdRunner.namespaceLock = namespaceLock
+			log.Info("🔒 Acquired namespace lock for worktree isolation: %s", cmdRunner.instanceNamespace)
+
+			defer func() {
+				if unlockErr := namespaceLock.Unlock(); unlockErr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: Failed to release namespace lock: %v\n", unlockErr)
+				}
+			}()
+		}
 	}
 
 	// Validate Git environment and cleanup stale branches/worktrees (only if in repo mode)
@@ -1154,8 +1230,11 @@ func (cr *CmdRunner) setupProgramLogging() (string, error) {
 		return "", fmt.Errorf("failed to get config directory: %w", err)
 	}
 
-	// Create logs directory
+	// Create logs directory (namespaced per instance to prevent cross-instance cleanup races)
 	logsDir := filepath.Join(configDir, "logs")
+	if cr.instanceNamespace != "" {
+		logsDir = filepath.Join(configDir, "instances", cr.instanceNamespace, "logs")
+	}
 
 	// Set up rotating writer with 10MB file size limit
 	rotatingWriter, err := log.NewRotatingWriter(log.RotatingWriterConfig{

@@ -24,6 +24,7 @@ type GitUseCase struct {
 	appState      *models.AppState
 	lastGHToken   string
 	worktreePool  *WorktreePool
+	namespace     string // per-instance namespace for worktree isolation (sanitized agent ID or repo identifier)
 }
 
 type CLIAgentResult struct {
@@ -1139,22 +1140,31 @@ func (g *GitUseCase) AbandonJobAndCleanup(jobID, branchName string) error {
 // =============================================================================
 
 // GetWorktreeBasePath returns the base path for nairid worktrees.
-// Worktrees are stored in ~/.eksec_worktrees/
+// When a namespace is set, worktrees are isolated under ~/.eksec_worktrees/<namespace>/
+// to prevent multiple nairid instances on the same machine from interfering with each other.
 // If AGENT_EXEC_USER is set (managed mode), worktrees are stored in that user's home
 // directory to ensure they persist on the mounted volume.
 func (g *GitUseCase) GetWorktreeBasePath() (string, error) {
+	var basePath string
+
 	// In managed mode, use the agent execution user's home for persistent storage
 	if execUser := os.Getenv("AGENT_EXEC_USER"); execUser != "" {
-		return filepath.Join("/home", execUser, ".eksec_worktrees"), nil
+		basePath = filepath.Join("/home", execUser, ".eksec_worktrees")
+	} else {
+		// Default: use current user's home directory
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("failed to get home directory: %w", err)
+		}
+		basePath = filepath.Join(homeDir, ".eksec_worktrees")
 	}
 
-	// Default: use current user's home directory
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("failed to get home directory: %w", err)
+	// Namespace the worktree directory to isolate per-instance state
+	if g.namespace != "" {
+		basePath = filepath.Join(basePath, g.namespace)
 	}
 
-	return filepath.Join(homeDir, ".eksec_worktrees"), nil
+	return basePath, nil
 }
 
 // GetMaxConcurrency returns the max concurrency setting from environment
@@ -1301,6 +1311,12 @@ func (g *GitUseCase) PrepareForNewConversationWithWorktree(jobID, conversationHi
 
 	log.Info("✅ Successfully created worktree at %s for branch %s", worktreePath, branchName)
 	return branchName, worktreePath, nil
+}
+
+// SetNamespace sets the per-instance namespace used to isolate worktree directories.
+// Must be called before any worktree operations.
+func (g *GitUseCase) SetNamespace(namespace string) {
+	g.namespace = namespace
 }
 
 // SetWorktreePool sets the worktree pool for fast worktree acquisition
