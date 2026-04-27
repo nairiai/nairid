@@ -545,14 +545,11 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 	}
 
 	// Resolve per-instance namespace for path isolation.
-	// In repo mode without an explicit agent ID env var, this derives the namespace from
-	// the git remote URL (e.g., "github.com/owner/repo" -> "github.com__owner__repo").
-	// This prevents multiple nairid instances on the same machine from corrupting each
-	// other's worktrees and state (see: https://github.com/nairiai/nairid/issues/201).
+	// Prevents multiple nairid instances from corrupting each other's worktrees and state.
+	// See: https://github.com/nairiai/nairid/issues/201
 	var repoIdentifier string
 	if repoContext.IsRepoMode {
 		repoIdentifier, _ = gitClient.GetRepositoryIdentifier()
-		// Non-fatal if this fails — namespace will require NAIRI_AGENT_ID
 	}
 	instanceNamespace, err := env.ResolveInstanceNamespace(envManager, repoIdentifier)
 	if err != nil {
@@ -560,27 +557,13 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 	}
 	log.Info("🔒 Instance namespace: %s", instanceNamespace)
 
-	// Create namespaced directory for per-instance state (state.json, logs).
-	// Shared config (.env, rules, MCP, skills) stays in the base configDir.
-	namespacedDir := filepath.Join(configDir, "instances", instanceNamespace)
-	if err := os.MkdirAll(namespacedDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create namespaced config directory: %w", err)
+	// Set up namespaced per-instance directories and state path
+	instanceDir, err := env.NamespacedInstanceDir(configDir, instanceNamespace)
+	if err != nil {
+		return nil, err
 	}
-
-	// Determine state file path (namespaced per instance)
-	statePath := filepath.Join(namespacedDir, "state.json")
-
-	// Migrate legacy state.json if it exists and the namespaced one doesn't.
-	// This provides a smooth upgrade path for existing single-instance setups.
-	legacyStatePath := filepath.Join(configDir, "state.json")
-	if _, err := os.Stat(statePath); os.IsNotExist(err) {
-		if legacyData, readErr := os.ReadFile(legacyStatePath); readErr == nil {
-			log.Info("📦 Migrating legacy state.json to namespaced path: %s", statePath)
-			if writeErr := os.WriteFile(statePath, legacyData, 0644); writeErr != nil {
-				log.Warn("⚠️ Failed to migrate legacy state.json: %v", writeErr)
-			}
-		}
-	}
+	statePath := env.NamespacedStatePath(instanceDir)
+	env.MigrateLegacyState(configDir, statePath)
 
 	// Restore app state from persisted data
 	appState, agentID, err := handlers.RestoreAppState(statePath)
@@ -887,27 +870,16 @@ func main() {
 		}()
 	}
 
-	// Acquire namespace lock to prevent two instances with the same namespace
-	// (e.g., same NAIRI_AGENT_ID or same repo) from corrupting shared state.
-	// This catches the case where the same API key is accidentally reused.
+	// Acquire namespace lock to prevent two instances with the same namespace from
+	// corrupting shared state. Fails loudly if another instance is already running.
 	if repoCtx.IsRepoMode {
-		worktreeBasePath, wtErr := cmdRunner.gitUseCase.GetWorktreeBasePath()
-		if wtErr == nil {
-			namespaceLock, nlErr := utils.NewDirLock(worktreeBasePath)
-			if nlErr != nil {
-				fmt.Fprintf(os.Stderr, "Error creating namespace lock: %v\n", nlErr)
-				os.Exit(1)
-			}
-
-			if nlErr := namespaceLock.TryLock(); nlErr != nil {
-				fmt.Fprintf(os.Stderr, "Error: another nairid instance is already running with the same namespace (%s). "+
-					"Set NAIRI_AGENT_ID to a unique value for each instance.\n", cmdRunner.instanceNamespace)
-				os.Exit(1)
-			}
-
+		namespaceLock, err := acquireNamespaceLock(cmdRunner)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		if namespaceLock != nil {
 			cmdRunner.namespaceLock = namespaceLock
-			log.Info("🔒 Acquired namespace lock for worktree isolation: %s", cmdRunner.instanceNamespace)
-
 			defer func() {
 				if unlockErr := namespaceLock.Unlock(); unlockErr != nil {
 					fmt.Fprintf(os.Stderr, "Warning: Failed to release namespace lock: %v\n", unlockErr)
@@ -1223,6 +1195,29 @@ func (cr *CmdRunner) startSocketIOClient(serverURLStr, apiKey string) error {
 	}
 }
 
+// acquireNamespaceLock creates and acquires a lock on the worktree namespace directory.
+// Returns the lock (caller must defer Unlock), or nil if the lock could not be created
+// (e.g., GetWorktreeBasePath failed). Returns an error if another instance holds the lock.
+func acquireNamespaceLock(cr *CmdRunner) (*utils.DirLock, error) {
+	worktreeBasePath, err := cr.gitUseCase.GetWorktreeBasePath()
+	if err != nil {
+		return nil, nil // non-fatal: can't determine path, skip locking
+	}
+
+	lock, err := utils.NewDirLock(worktreeBasePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create namespace lock: %w", err)
+	}
+
+	if err := lock.TryLock(); err != nil {
+		return nil, fmt.Errorf("another nairid instance is already running with the same namespace (%s). "+
+			"Set NAIRI_AGENT_ID to a unique value for each instance", cr.instanceNamespace)
+	}
+
+	log.Info("🔒 Acquired namespace lock for worktree isolation: %s", cr.instanceNamespace)
+	return lock, nil
+}
+
 func (cr *CmdRunner) setupProgramLogging() (string, error) {
 	// Get config directory
 	configDir, err := env.GetConfigDir()
@@ -1231,9 +1226,12 @@ func (cr *CmdRunner) setupProgramLogging() (string, error) {
 	}
 
 	// Create logs directory (namespaced per instance to prevent cross-instance cleanup races)
-	logsDir := filepath.Join(configDir, "logs")
+	var logsDir string
 	if cr.instanceNamespace != "" {
-		logsDir = filepath.Join(configDir, "instances", cr.instanceNamespace, "logs")
+		instanceDir, _ := env.NamespacedInstanceDir(configDir, cr.instanceNamespace)
+		logsDir = env.NamespacedLogsDir(instanceDir)
+	} else {
+		logsDir = filepath.Join(configDir, "logs")
 	}
 
 	// Set up rotating writer with 10MB file size limit
