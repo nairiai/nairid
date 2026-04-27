@@ -1,3 +1,17 @@
+## [v0.0.105] - 2026-04-27
+
+### Features
+
+- Per-agent namespace isolation for worktrees, state, and logs ([#203](https://github.com/nairiai/nairid/pull/203))
+  - Multiple nairid instances on the same machine no longer corrupt each other's worktrees or state files
+  - Each instance gets a unique namespace derived from `NAIRI_AGENT_ID`, `EKSEC_AGENT_ID`, or the sanitized repo identifier
+  - Worktrees are scoped under `.eksec_worktrees/<namespace>/j_...`
+  - State files are scoped under `.config/eksecd/instances/<namespace>/state.json`
+  - Logs are scoped under `.config/eksecd/instances/<namespace>/logs/`
+  - Directory lock prevents two instances with the same namespace from running concurrently
+  - Legacy state.json is auto-migrated to the namespaced path on first upgrade
+  - Extracted `SanitizeNamespace`, `ResolveInstanceNamespace`, `NamespacedInstanceDir`, `NamespacedStatePath`, `NamespacedLogsDir`, and `MigrateLegacyState` into focused, unit-tested functions
+
 ## [v0.0.104] - 2026-03-22
 
 ### Bugfixes
