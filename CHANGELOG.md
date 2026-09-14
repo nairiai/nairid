@@ -1,3 +1,12 @@
+## [v0.0.117] - 2026-09-14
+
+### Features
+
+- Attribute merged-PR job completion to whoever merged it ([#219](https://github.com/nairiai/nairid/pull/219))
+  - When a job completes because its pull request was merged, the completion message now reads `Job complete - Pull request was merged by <name>` instead of the bare `Job complete - Pull request was merged`, so users no longer have to ask the agent who merged the PR
+  - The merger is resolved via `gh pr view --json mergedBy` (by stored PR ID when available, otherwise by branch), preferring the GitHub display name and falling back to the login
+  - Best-effort by design: the lookup only runs on the terminal `merged` path, and any failure logs a warning and falls back to the plain "was merged" message, so it never blocks job completion. No new GitHub token scope is required — it reuses the same `gh pr view` call already used for PR state
+
 ## [v0.0.116] - 2026-09-06
 
 ### Bugfixes
