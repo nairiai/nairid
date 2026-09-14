@@ -2,6 +2,7 @@ package clients
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -920,6 +921,66 @@ func (g *GitClient) GetPRStateByID(prID string) (string, error) {
 	log.Info("✅ Retrieved PR state by ID: %s", state)
 	log.Info("📋 Completed successfully - got PR state by ID")
 	return strings.ToLower(state), nil
+}
+
+// parsePRMergedBy extracts the display name of the user who merged a PR from
+// the JSON output of `gh pr view --json mergedBy`. It prefers the full name,
+// falls back to the GitHub login, and returns an empty string when the merger
+// cannot be determined (e.g. the PR isn't merged, so mergedBy is null).
+func parsePRMergedBy(jsonOutput []byte) string {
+	var parsed struct {
+		MergedBy *struct {
+			Login string `json:"login"`
+			Name  string `json:"name"`
+		} `json:"mergedBy"`
+	}
+	if err := json.Unmarshal(jsonOutput, &parsed); err != nil || parsed.MergedBy == nil {
+		return ""
+	}
+	if name := strings.TrimSpace(parsed.MergedBy.Name); name != "" {
+		return name
+	}
+	return strings.TrimSpace(parsed.MergedBy.Login)
+}
+
+// GetPRMergedBy returns the display name of the user who merged the PR for the
+// given branch. Returns an empty string when the merger is unknown.
+func (g *GitClient) GetPRMergedBy(branchName string) (string, error) {
+	log.Info("📋 Starting to get PR merger for branch: %s", branchName)
+
+	cmd := exec.Command("gh", "pr", "view", branchName, "--json", "mergedBy")
+	g.setWorkDir(cmd)
+	output, err := g.executeWithRetry(cmd, "get PR merger")
+
+	if err != nil {
+		log.Error("❌ Failed to get PR merger for branch %s: %v\nOutput: %s", branchName, err, string(output))
+		return "", fmt.Errorf("failed to get PR merger: %w\nOutput: %s", err, string(output))
+	}
+
+	merger := parsePRMergedBy(output)
+	log.Info("✅ Retrieved PR merger: %q", merger)
+	log.Info("📋 Completed successfully - got PR merger")
+	return merger, nil
+}
+
+// GetPRMergedByID returns the display name of the user who merged the PR with
+// the given ID. Returns an empty string when the merger is unknown.
+func (g *GitClient) GetPRMergedByID(prID string) (string, error) {
+	log.Info("📋 Starting to get PR merger by ID: %s", prID)
+
+	cmd := exec.Command("gh", "pr", "view", prID, "--json", "mergedBy")
+	g.setWorkDir(cmd)
+	output, err := g.executeWithRetry(cmd, "get PR merger by ID")
+
+	if err != nil {
+		log.Error("❌ Failed to get PR merger for PR ID %s: %v\nOutput: %s", prID, err, string(output))
+		return "", fmt.Errorf("failed to get PR merger by ID: %w\nOutput: %s", err, string(output))
+	}
+
+	merger := parsePRMergedBy(output)
+	log.Info("✅ Retrieved PR merger by ID: %q", merger)
+	log.Info("📋 Completed successfully - got PR merger by ID")
+	return merger, nil
 }
 
 func (g *GitClient) GetLocalBranches() ([]string, error) {

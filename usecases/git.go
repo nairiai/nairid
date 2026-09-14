@@ -823,6 +823,35 @@ func (g *GitUseCase) CheckPRStatusByID(prID string) (string, error) {
 	return prStatus, nil
 }
 
+// GetPRMergedBy returns the display name of the user who merged the PR for the
+// given branch, or an empty string when it can't be determined.
+func (g *GitUseCase) GetPRMergedBy(branchName string) (string, error) {
+	repoContext := g.appState.GetRepositoryContext()
+	if !repoContext.IsRepoMode {
+		log.Info("📦 No-repo mode: Skipping PR merger lookup")
+		return "", nil
+	}
+
+	if branchName == "" {
+		log.Info("ℹ️ Empty branch name - skipping PR merger lookup")
+		return "", nil
+	}
+
+	return g.gitClient.GetPRMergedBy(branchName)
+}
+
+// GetPRMergedByID returns the display name of the user who merged the PR with
+// the given ID, or an empty string when it can't be determined.
+func (g *GitUseCase) GetPRMergedByID(prID string) (string, error) {
+	repoContext := g.appState.GetRepositoryContext()
+	if !repoContext.IsRepoMode {
+		log.Info("📦 No-repo mode: Skipping PR merger lookup by ID")
+		return "", nil
+	}
+
+	return g.gitClient.GetPRMergedByID(prID)
+}
+
 func (g *GitUseCase) CleanupStaleBranches() error {
 	log.Info("📋 Starting to cleanup stale nairid/eksecd branches")
 
