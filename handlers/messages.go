@@ -991,6 +991,9 @@ func (mh *MessageHandler) checkJobIdleness(jobID string, jobData models.JobData)
 		switch prStatus {
 		case "merged":
 			reason = "Job complete - Pull request was merged"
+			if merger := mh.resolvePRMerger(jobID, jobData); merger != "" {
+				reason = fmt.Sprintf("Job complete - Pull request was merged by %s", merger)
+			}
 			shouldComplete = true
 			log.Info("✅ Job %s PR was merged - marking as complete", jobID)
 		case "closed":
@@ -1036,6 +1039,28 @@ func (mh *MessageHandler) checkJobIdleness(jobID string, jobData models.JobData)
 
 	log.Info("📋 Completed successfully - checked idleness for job %s", jobID)
 	return nil
+}
+
+// resolvePRMerger returns the display name of the user who merged the job's PR,
+// using the stored PR ID when available and falling back to the branch name.
+// Returns an empty string (and logs a warning) on any lookup failure so the
+// caller can fall back to the plain "Pull request was merged" message.
+func (mh *MessageHandler) resolvePRMerger(jobID string, jobData models.JobData) string {
+	var merger string
+	var err error
+
+	if jobData.PullRequestID != "" && jobData.PullRequestID != "none" {
+		merger, err = mh.gitUseCase.GetPRMergedByID(jobData.PullRequestID)
+	} else {
+		merger, err = mh.gitUseCase.GetPRMergedBy(jobData.BranchName)
+	}
+
+	if err != nil {
+		log.Warn("⚠️ Failed to resolve PR merger for job %s: %v", jobID, err)
+		return ""
+	}
+
+	return merger
 }
 
 func (mh *MessageHandler) sendJobCompleteMessage(jobID, reason string) error {

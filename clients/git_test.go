@@ -857,3 +857,46 @@ func TestFetchOrigin_PrunesStaleRefsOnDFConflict(t *testing.T) {
 		t.Fatalf("Expected nested ref to be fetched, got error: %v\n%s", err, string(out))
 	}
 }
+
+func TestParsePRMergedBy(t *testing.T) {
+	tests := []struct {
+		name     string
+		json     string
+		expected string
+	}{
+		{
+			name:     "prefers full name",
+			json:     `{"mergedBy":{"id":"abc","is_bot":false,"login":"guillaumewrobel","name":"Guillaume Wrobel"}}`,
+			expected: "Guillaume Wrobel",
+		},
+		{
+			name:     "falls back to login when name empty",
+			json:     `{"mergedBy":{"login":"guillaumewrobel","name":""}}`,
+			expected: "guillaumewrobel",
+		},
+		{
+			name:     "falls back to login when name whitespace",
+			json:     `{"mergedBy":{"login":"octocat","name":"   "}}`,
+			expected: "octocat",
+		},
+		{
+			name:     "empty when mergedBy null (PR not merged)",
+			json:     `{"mergedBy":null}`,
+			expected: "",
+		},
+		{
+			name:     "empty on malformed json",
+			json:     `not json`,
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parsePRMergedBy([]byte(tt.json))
+			if got != tt.expected {
+				t.Errorf("parsePRMergedBy(%q) = %q, want %q", tt.json, got, tt.expected)
+			}
+		})
+	}
+}
