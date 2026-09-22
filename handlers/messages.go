@@ -1103,7 +1103,7 @@ func (mh *MessageHandler) sendSystemMessage(message, slackMessageID, jobID strin
 // sendErrorMessage sends an error as a system message. The Claude service handles
 // all error processing internally, so we just need to format and send the error.
 func (mh *MessageHandler) sendErrorMessage(err error, slackMessageID, jobID string) error {
-	messageToSend := fmt.Sprintf("nairid encountered error: %v", err)
+	messageToSend := fmt.Sprintf("nairid encountered error: %v", clients.RedactURLCredentials(err.Error()))
 	return mh.sendSystemMessage(messageToSend, slackMessageID, jobID)
 }
 

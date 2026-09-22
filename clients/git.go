@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -698,6 +699,12 @@ func (g *GitClient) GetLatestCommitHash() (string, error) {
 	return commitHash, nil
 }
 
+var urlCredentialsRe = regexp.MustCompile(`(https?://)[^/@\s]+@`)
+
+func RedactURLCredentials(s string) string {
+	return urlCredentialsRe.ReplaceAllString(s, "$1")
+}
+
 // getRawRemoteURL gets the remote URL without any conversion (for error messages)
 func (g *GitClient) getRawRemoteURL() (string, error) {
 	log.Info("📋 Starting to get raw remote URL")
@@ -712,7 +719,7 @@ func (g *GitClient) getRawRemoteURL() (string, error) {
 	}
 
 	rawRemoteURL := strings.TrimSpace(string(output))
-	log.Info("✅ Raw remote URL: %s", rawRemoteURL)
+	log.Info("✅ Raw remote URL: %s", RedactURLCredentials(rawRemoteURL))
 	log.Info("📋 Completed successfully - got raw remote URL")
 	return rawRemoteURL, nil
 }
@@ -741,7 +748,7 @@ func (g *GitClient) GetRemoteURL() (string, error) {
 		remoteURL = strings.TrimSuffix(remoteURL, ".git")
 	}
 
-	log.Info("✅ Remote URL: %s", remoteURL)
+	log.Info("✅ Remote URL: %s", RedactURLCredentials(remoteURL))
 	log.Info("📋 Completed successfully - got remote URL")
 	return remoteURL, nil
 }
@@ -757,8 +764,8 @@ func (g *GitClient) GetRepositoryIdentifier() (string, error) {
 
 	// Extract the repository identifier from the URL (e.g., "github.com/owner/repo")
 	if !strings.HasPrefix(remoteURL, "https://") {
-		log.Error("❌ Unsupported remote URL format: %s", remoteURL)
-		return "", fmt.Errorf("unsupported remote URL format: %s", remoteURL)
+		log.Error("❌ Unsupported remote URL format: %s", RedactURLCredentials(remoteURL))
+		return "", fmt.Errorf("unsupported remote URL format: %s", RedactURLCredentials(remoteURL))
 	}
 
 	// Remove https:// prefix
@@ -1100,7 +1107,7 @@ func (g *GitClient) ValidateRemoteAccess() error {
 		return fmt.Errorf("failed to get remote URL: %w", err)
 	}
 
-	log.Info("🔍 Testing remote access for: %s", rawRemoteURL)
+	log.Info("🔍 Testing remote access for: %s", RedactURLCredentials(rawRemoteURL))
 
 	// Test remote access with git ls-remote HEAD with 10s timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -1129,6 +1136,7 @@ func (g *GitClient) ValidateRemoteAccess() error {
 }
 
 func (g *GitClient) parseRemoteAccessError(err error, output, remoteURL string) error {
+	remoteURL = RedactURLCredentials(remoteURL)
 	outputStr := strings.ToLower(output)
 
 	// Check for timeout first
@@ -1257,7 +1265,7 @@ func (g *GitClient) UpdateRemoteURLWithToken(token string) error {
 	}
 
 	currentURL := strings.TrimSpace(string(output))
-	log.Info("🔍 Current remote URL: %s", currentURL)
+	log.Info("🔍 Current remote URL: %s", RedactURLCredentials(currentURL))
 
 	// Extract repository details
 	repoDetails, err := g.extractRemoteRepoDetails(currentURL)
@@ -1267,7 +1275,7 @@ func (g *GitClient) UpdateRemoteURLWithToken(token string) error {
 	}
 
 	if repoDetails == nil {
-		log.Info("⚠️ Not a GitHub repository, skipping token update: %s", currentURL)
+		log.Info("⚠️ Not a GitHub repository, skipping token update: %s", RedactURLCredentials(currentURL))
 		return nil
 	}
 
@@ -1724,7 +1732,7 @@ func (g *GitClient) GetRemoteURLInWorktree(worktreePath string) (string, error) 
 		remoteURL = strings.TrimSuffix(remoteURL, ".git")
 	}
 
-	log.Info("✅ Remote URL in worktree: %s", remoteURL)
+	log.Info("✅ Remote URL in worktree: %s", RedactURLCredentials(remoteURL))
 	return remoteURL, nil
 }
 
