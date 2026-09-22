@@ -1,3 +1,13 @@
+## [v0.0.118] - 2026-09-22
+
+### Security
+
+- Redact GitHub token from logs and user-facing error messages ([#220](https://github.com/nairiai/nairid/pull/220))
+  - Once the remote is rewritten to `https://x-access-token:<token>@github.com/...`, every log line that printed the remote URL leaked the token in plaintext. `RedactURLCredentials` now strips the userinfo at every remote-URL log site in the git client (`getRawRemoteURL`, `GetRemoteURL`, `GetRepositoryIdentifier`, `ValidateRemoteAccess`, `UpdateRemoteURLWithToken`, `GetRemoteURLInWorktree`) and in the messages built by `parseRemoteAccessError`
+  - Added a logger-level scrub that removes `x-access-token:...@` from every emitted line as a safety net for git's own error output at call sites the code does not control
+  - Outbound error messages are redacted before being posted to Slack/Discord, and rotating log files are now created `0600` instead of world-readable `0644`
+  - Unit tests cover both redaction helpers (PAT/installation tokens, embedded-in-output, plain HTTPS, and SSH remotes left untouched)
+
 ## [v0.0.117] - 2026-09-14
 
 ### Features
