@@ -719,7 +719,6 @@ func TestWorktreeGitOperations(t *testing.T) {
 	}
 }
 
-
 // setupTestGitRepoWithBareOrigin creates a working clone of a bare origin repo
 // for testing FetchOrigin behavior. Returns the clone path, a helper to run
 // commands inside the bare origin, and a cleanup function.
@@ -898,5 +897,20 @@ func TestParsePRMergedBy(t *testing.T) {
 				t.Errorf("parsePRMergedBy(%q) = %q, want %q", tt.json, got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestRedactURLCredentials(t *testing.T) {
+	cases := map[string]string{
+		"https://x-access-token:ghs_abc123@github.com/org/repo.git": "https://github.com/org/repo.git",
+		"https://user:pass@github.com/org/repo":                     "https://github.com/org/repo",
+		"unsupported remote URL format: http://tok@host/x":          "unsupported remote URL format: http://host/x",
+		"https://github.com/org/repo.git":                           "https://github.com/org/repo.git",
+		"git@github.com:org/repo.git":                               "git@github.com:org/repo.git",
+	}
+	for in, want := range cases {
+		if got := RedactURLCredentials(in); got != want {
+			t.Errorf("RedactURLCredentials(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

@@ -106,7 +106,7 @@ func (rw *RotatingWriter) rotateFile() error {
 	logFileName := fmt.Sprintf("%s-%s.log", rw.filePrefix, timestamp)
 	newLogFilePath := filepath.Join(rw.logDir, logFileName)
 
-	newLogFile, err := os.OpenFile(newLogFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	newLogFile, err := os.OpenFile(newLogFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to create new log file: %w", err)
 	}
