@@ -712,7 +712,7 @@ func (g *GitClient) getRawRemoteURL() (string, error) {
 	}
 
 	rawRemoteURL := strings.TrimSpace(string(output))
-	log.Info("✅ Raw remote URL: %s", rawRemoteURL)
+	log.Info("✅ Raw remote URL: %s", RedactURLCredentials(rawRemoteURL))
 	log.Info("📋 Completed successfully - got raw remote URL")
 	return rawRemoteURL, nil
 }
@@ -1100,7 +1100,7 @@ func (g *GitClient) ValidateRemoteAccess() error {
 		return fmt.Errorf("failed to get remote URL: %w", err)
 	}
 
-	log.Info("🔍 Testing remote access for: %s", rawRemoteURL)
+	log.Info("🔍 Testing remote access for: %s", RedactURLCredentials(rawRemoteURL))
 
 	// Test remote access with git ls-remote HEAD with 10s timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -1119,7 +1119,7 @@ func (g *GitClient) ValidateRemoteAccess() error {
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Error("❌ Remote access validation failed: %v\nOutput: %s", err, string(output))
+		log.Error("❌ Remote access validation failed: %v\nOutput: %s", err, RedactURLCredentials(string(output)))
 		return g.parseRemoteAccessError(err, string(output), rawRemoteURL)
 	}
 
@@ -1130,6 +1130,8 @@ func (g *GitClient) ValidateRemoteAccess() error {
 
 func (g *GitClient) parseRemoteAccessError(err error, output, remoteURL string) error {
 	outputStr := strings.ToLower(output)
+	remoteURL = RedactURLCredentials(remoteURL)
+	output = RedactURLCredentials(output)
 
 	// Check for timeout first
 	if strings.Contains(err.Error(), "context deadline exceeded") {
@@ -1257,7 +1259,7 @@ func (g *GitClient) UpdateRemoteURLWithToken(token string) error {
 	}
 
 	currentURL := strings.TrimSpace(string(output))
-	log.Info("🔍 Current remote URL: %s", currentURL)
+	log.Info("🔍 Current remote URL: %s", RedactURLCredentials(currentURL))
 
 	// Extract repository details
 	repoDetails, err := g.extractRemoteRepoDetails(currentURL)
@@ -1267,7 +1269,7 @@ func (g *GitClient) UpdateRemoteURLWithToken(token string) error {
 	}
 
 	if repoDetails == nil {
-		log.Info("⚠️ Not a GitHub repository, skipping token update: %s", currentURL)
+		log.Info("⚠️ Not a GitHub repository, skipping token update: %s", RedactURLCredentials(currentURL))
 		return nil
 	}
 
