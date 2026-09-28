@@ -230,19 +230,28 @@ func InjectProxyEnv(env []string) []string {
 		env = append(env, "https_proxy="+proxyURL) // Some tools use lowercase
 	}
 
-	// When MCP proxy is configured, add its hostname to NO_PROXY so agent processes
-	// bypass the HTTP proxy for MCP connections. The secret proxy runs in a separate
-	// container and cannot resolve the MCP proxy's internal hostname (mcp-proxy.internal),
-	// causing 502 errors if MCP traffic is routed through it.
+	// Always bypass the proxy for loopback addresses. Some agent CLIs (notably
+	// OpenCode v2) run a local background server and connect to it over loopback;
+	// if that self-connection is routed through the secret proxy the CLI can never
+	// reach its own server and hangs ("Timed out waiting for the background service
+	// to start"). Excluding loopback is inert for agents that do not use a local
+	// server (OpenCode v1, Claude, Codex), so this is safe for both OpenCode v1 and
+	// v2 without any version detection.
+	//
+	// When an MCP proxy is configured its hostname is added too, so agent processes
+	// bypass the HTTP proxy for MCP connections: the secret proxy runs in a separate
+	// container and cannot resolve the MCP proxy's internal hostname
+	// (mcp-proxy.internal), causing 502 errors if MCP traffic is routed through it.
 	if !hasNoProxy {
-		mcpProxyURL := AgentMCPProxy()
-		if mcpProxyURL != "" {
-			mcpHost := extractHost(mcpProxyURL)
-			if mcpHost != "" {
-				env = append(env, "NO_PROXY="+mcpHost)
-				env = append(env, "no_proxy="+mcpHost)
+		noProxyHosts := []string{"localhost", "127.0.0.1", "::1"}
+		if mcpProxyURL := AgentMCPProxy(); mcpProxyURL != "" {
+			if mcpHost := extractHost(mcpProxyURL); mcpHost != "" {
+				noProxyHosts = append(noProxyHosts, mcpHost)
 			}
 		}
+		noProxy := strings.Join(noProxyHosts, ",")
+		env = append(env, "NO_PROXY="+noProxy)
+		env = append(env, "no_proxy="+noProxy)
 	}
 
 	return env
