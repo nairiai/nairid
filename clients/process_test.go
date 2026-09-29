@@ -370,13 +370,19 @@ func TestInjectProxyEnv_WithProxy(t *testing.T) {
 
 	_ = os.Setenv("AGENT_HTTP_PROXY", "http://proxy:8080")
 
+	// Ensure no MCP proxy is configured so the only NO_PROXY entries are loopback.
+	origMCP := os.Getenv("AGENT_MCP_PROXY")
+	_ = os.Unsetenv("AGENT_MCP_PROXY")
+	defer func() { _ = os.Setenv("AGENT_MCP_PROXY", origMCP) }()
+
 	env := []string{"PATH=/usr/bin", "HOME=/home/user"}
 	result := InjectProxyEnv(env)
 
-	// Should add HTTP_PROXY, http_proxy, HTTPS_PROXY, https_proxy
-	expectedLen := len(env) + 4
+	// Should add HTTP_PROXY, http_proxy, HTTPS_PROXY, https_proxy plus the
+	// always-present loopback NO_PROXY, no_proxy.
+	expectedLen := len(env) + 6
 	if len(result) != expectedLen {
-		t.Errorf("Expected %d vars, got %d", expectedLen, len(result))
+		t.Errorf("Expected %d vars, got %d: %v", expectedLen, len(result), result)
 	}
 
 	// Check that proxy vars are present
@@ -384,6 +390,7 @@ func TestInjectProxyEnv_WithProxy(t *testing.T) {
 	hasHTTPSProxy := false
 	hasLowerHTTPProxy := false
 	hasLowerHTTPSProxy := false
+	hasLoopbackNoProxy := false
 
 	for _, e := range result {
 		switch {
@@ -395,6 +402,11 @@ func TestInjectProxyEnv_WithProxy(t *testing.T) {
 			hasLowerHTTPProxy = true
 		case strings.HasPrefix(e, "https_proxy=http://proxy:8080"):
 			hasLowerHTTPSProxy = true
+		case strings.HasPrefix(e, "NO_PROXY=") &&
+			strings.Contains(e, "localhost") &&
+			strings.Contains(e, "127.0.0.1") &&
+			strings.Contains(e, "::1"):
+			hasLoopbackNoProxy = true
 		}
 	}
 
@@ -410,6 +422,9 @@ func TestInjectProxyEnv_WithProxy(t *testing.T) {
 	if !hasLowerHTTPSProxy {
 		t.Error("https_proxy not found in result")
 	}
+	if !hasLoopbackNoProxy {
+		t.Error("NO_PROXY with loopback (localhost,127.0.0.1,::1) not found in result")
+	}
 }
 
 func TestInjectProxyEnv_DoesNotOverride(t *testing.T) {
@@ -419,7 +434,12 @@ func TestInjectProxyEnv_DoesNotOverride(t *testing.T) {
 
 	_ = os.Setenv("AGENT_HTTP_PROXY", "http://proxy:8080")
 
-	// Env already has proxy vars
+	// Ensure no MCP proxy is configured so NO_PROXY (if added) is loopback-only.
+	origMCP := os.Getenv("AGENT_MCP_PROXY")
+	_ = os.Unsetenv("AGENT_MCP_PROXY")
+	defer func() { _ = os.Setenv("AGENT_MCP_PROXY", origMCP) }()
+
+	// Env already has proxy vars but no NO_PROXY
 	env := []string{
 		"PATH=/usr/bin",
 		"HTTP_PROXY=http://existing:3128",
@@ -427,9 +447,10 @@ func TestInjectProxyEnv_DoesNotOverride(t *testing.T) {
 	}
 	result := InjectProxyEnv(env)
 
-	// Should not add new proxy vars if they already exist
-	if len(result) != len(env) {
-		t.Errorf("Expected %d vars (no additions), got %d", len(env), len(result))
+	// Existing HTTP_PROXY/HTTPS_PROXY must not be overridden, but loopback
+	// NO_PROXY/no_proxy are still added (env had no NO_PROXY).
+	if len(result) != len(env)+2 {
+		t.Errorf("Expected %d vars (loopback NO_PROXY added), got %d: %v", len(env)+2, len(result), result)
 	}
 
 	// Verify existing proxy values are preserved
@@ -521,22 +542,29 @@ func TestInjectProxyEnv_WithMCPProxy(t *testing.T) {
 		t.Errorf("Expected %d vars, got %d: %v", expectedLen, len(result), result)
 	}
 
+	// NO_PROXY must contain both the loopback hosts and the MCP proxy hostname.
 	hasNoProxy := false
 	hasLowerNoProxy := false
+	containsAll := func(e string) bool {
+		return strings.Contains(e, "localhost") &&
+			strings.Contains(e, "127.0.0.1") &&
+			strings.Contains(e, "::1") &&
+			strings.Contains(e, "mcp-proxy.internal")
+	}
 	for _, e := range result {
-		if e == "NO_PROXY=mcp-proxy.internal" {
+		if strings.HasPrefix(e, "NO_PROXY=") && containsAll(e) {
 			hasNoProxy = true
 		}
-		if e == "no_proxy=mcp-proxy.internal" {
+		if strings.HasPrefix(e, "no_proxy=") && containsAll(e) {
 			hasLowerNoProxy = true
 		}
 	}
 
 	if !hasNoProxy {
-		t.Error("NO_PROXY=mcp-proxy.internal not found in result")
+		t.Error("NO_PROXY with loopback + mcp-proxy.internal not found in result")
 	}
 	if !hasLowerNoProxy {
-		t.Error("no_proxy=mcp-proxy.internal not found in result")
+		t.Error("no_proxy with loopback + mcp-proxy.internal not found in result")
 	}
 }
 
@@ -555,11 +583,30 @@ func TestInjectProxyEnv_NoMCPProxy(t *testing.T) {
 	env := []string{"PATH=/usr/bin", "HOME=/home/user"}
 	result := InjectProxyEnv(env)
 
-	// Should NOT add NO_PROXY when AGENT_MCP_PROXY is not set
+	// Even without an MCP proxy, NO_PROXY must still bypass loopback so agent CLIs
+	// (e.g. OpenCode v2) can reach their own local background server.
+	hasLoopbackNoProxy := false
+	hasLowerLoopbackNoProxy := false
 	for _, e := range result {
-		if strings.HasPrefix(e, "NO_PROXY=") || strings.HasPrefix(e, "no_proxy=") {
-			t.Errorf("NO_PROXY should not be set when AGENT_MCP_PROXY is not configured, found: %s", e)
+		loopback := strings.Contains(e, "localhost") &&
+			strings.Contains(e, "127.0.0.1") &&
+			strings.Contains(e, "::1")
+		// The MCP proxy hostname must NOT be present since it isn't configured.
+		if strings.HasPrefix(e, "NO_PROXY=") {
+			if !loopback {
+				t.Errorf("NO_PROXY should contain loopback hosts, found: %s", e)
+			}
+			hasLoopbackNoProxy = true
 		}
+		if strings.HasPrefix(e, "no_proxy=") {
+			hasLowerLoopbackNoProxy = true
+		}
+	}
+	if !hasLoopbackNoProxy {
+		t.Error("NO_PROXY with loopback hosts not found when MCP proxy is absent")
+	}
+	if !hasLowerLoopbackNoProxy {
+		t.Error("no_proxy with loopback hosts not found when MCP proxy is absent")
 	}
 }
 

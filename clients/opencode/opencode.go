@@ -5,6 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"nairid/clients"
@@ -23,19 +27,7 @@ func NewOpenCodeClient() *OpenCodeClient {
 func (c *OpenCodeClient) StartNewSession(prompt string, options *clients.OpenCodeOptions, onLine clients.ProgressCallback) (string, error) {
 	log.Info("📋 Starting to create new OpenCode session")
 
-	args := []string{
-		"run",
-		"--format", "json",
-		"--agent", "build", // Always use build mode until `acceptEdits` support is added
-	}
-
-	// Add model from options if provided
-	if options != nil && options.Model != "" {
-		args = append(args, "--model", options.Model)
-	}
-
-	// Append prompt as the last argument
-	args = append(args, prompt)
+	args := buildRunArgs("", modelFromOptions(options), prompt, opencodeSupportsStandalone())
 
 	log.Info("Starting new OpenCode session with prompt: %s", prompt)
 	log.Info("Command arguments: %v", args)
@@ -60,20 +52,7 @@ func (c *OpenCodeClient) StartNewSession(prompt string, options *clients.OpenCod
 func (c *OpenCodeClient) ContinueSession(sessionID, prompt string, options *clients.OpenCodeOptions, onLine clients.ProgressCallback) (string, error) {
 	log.Info("📋 Starting to continue OpenCode session: %s", sessionID)
 
-	args := []string{
-		"run",
-		"--session", sessionID,
-		"--format", "json",
-		"--agent", "build", // Always use build mode until `acceptEdits` support is added
-	}
-
-	// Add model from options if provided
-	if options != nil && options.Model != "" {
-		args = append(args, "--model", options.Model)
-	}
-
-	// Append prompt as the last argument
-	args = append(args, prompt)
+	args := buildRunArgs(sessionID, modelFromOptions(options), prompt, opencodeSupportsStandalone())
 
 	log.Info("Executing OpenCode command with sessionID: %s, prompt: %s", sessionID, prompt)
 	log.Info("Command arguments: %v", args)
@@ -113,6 +92,95 @@ func handleCommandError(ctx context.Context, err error, agentName string, timeou
 		}
 	}
 	return err
+}
+
+// modelFromOptions safely extracts the model string from options.
+func modelFromOptions(options *clients.OpenCodeOptions) string {
+	if options != nil {
+		return options.Model
+	}
+	return ""
+}
+
+// buildRunArgs constructs the argument list for `opencode run`.
+//
+// When standalone is true (OpenCode v2), `--standalone` is inserted so the run
+// spins up its own private server instead of connecting to the shared
+// background service. See opencodeSupportsStandalone for why this matters.
+func buildRunArgs(sessionID, model, prompt string, standalone bool) []string {
+	args := []string{"run"}
+	if standalone {
+		// v2 only: use a private per-invocation server (see opencodeSupportsStandalone).
+		args = append(args, "--standalone")
+	}
+	if sessionID != "" {
+		args = append(args, "--session", sessionID)
+	}
+	// Always use build mode until `acceptEdits` support is added.
+	args = append(args, "--format", "json", "--agent", "build")
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+	// Prompt is always the final positional argument.
+	args = append(args, prompt)
+	return args
+}
+
+var (
+	standaloneOnce   sync.Once
+	standaloneCached bool
+
+	// runOpenCodeVersion is a package var so tests can stub the version probe.
+	runOpenCodeVersion = func() (string, error) {
+		out, err := exec.Command("opencode", "--version").CombinedOutput()
+		return string(out), err
+	}
+
+	opencodeVersionRe = regexp.MustCompile(`(\d+)\.(\d+)\.(\d+)`)
+)
+
+// opencodeSupportsStandalone reports whether the installed OpenCode is v2+.
+//
+// OpenCode v2 is a client/server rewrite: `opencode run` connects to a shared
+// background server (`opencode serve --service`) whose environment — including
+// HTTP(S)_PROXY — is frozen when that server first starts. If anything starts
+// that server without nairid's proxy env (e.g. a stray `opencode` invocation),
+// every later job reuses the proxy-less server and its requests bypass the
+// secret proxy, so secret placeholders are sent unresolved. Passing
+// `--standalone` makes each run use its own private server carrying that
+// process's proxy env, eliminating the shared-server contamination.
+//
+// OpenCode v1 has no background server and no `--standalone` flag, so it must
+// keep its original command. Detection is cached for the process lifetime; on
+// any probe/parse failure we assume v1 and omit the flag, so we never pass an
+// unsupported flag to an older binary.
+func opencodeSupportsStandalone() bool {
+	standaloneOnce.Do(func() {
+		standaloneCached = detectOpenCodeMajorAtLeast2(runOpenCodeVersion)
+	})
+	return standaloneCached
+}
+
+// detectOpenCodeMajorAtLeast2 parses `opencode --version` output and reports
+// whether the major version is >= 2. Returns false (treat as v1) on any error
+// or unparseable output.
+func detectOpenCodeMajorAtLeast2(versionFn func() (string, error)) bool {
+	out, err := versionFn()
+	if err != nil {
+		log.Error("Failed to probe OpenCode version (assuming v1, no --standalone): %v", err)
+		return false
+	}
+	m := opencodeVersionRe.FindStringSubmatch(out)
+	if m == nil {
+		log.Info("Could not parse OpenCode version from %q (assuming v1)", strings.TrimSpace(out))
+		return false
+	}
+	major, err := strconv.Atoi(m[1])
+	if err != nil {
+		return false
+	}
+	log.Info("Detected OpenCode major version %d (standalone=%t)", major, major >= 2)
+	return major >= 2
 }
 
 // buildCommand creates the appropriate exec.Cmd with context based on options
