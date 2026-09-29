@@ -970,7 +970,9 @@ func (mh *MessageHandler) checkJobIdleness(jobID string, jobData models.JobData)
 		if prStatus == "no_pr" {
 			log.Info("📋 Caching 'no PR' result for job %s to avoid future API calls", jobID)
 			jobData.PullRequestID = "none"
-			if updateErr := mh.appState.UpdateJobData(jobID, jobData); updateErr != nil {
+			// jobData is a snapshot; writing it back whole could revert a concurrent
+			// status change to completed and leak the job's dispatcher worker slot.
+			if _, updateErr := mh.appState.SetJobPullRequestID(jobID, "none"); updateErr != nil {
 				log.Error("❌ Failed to cache no-PR status for job %s: %v", jobID, updateErr)
 				// Non-fatal - continue with the idle check
 			}
