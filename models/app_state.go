@@ -135,6 +135,26 @@ func (a *AppState) UpdateJobData(jobID string, data JobData) error {
 	return nil
 }
 
+// SetJobPullRequestID updates only the PR ID of an existing job under the lock.
+// Callers holding an older JobData snapshot must use this instead of UpdateJobData,
+// otherwise they overwrite fields (e.g. Status) written since the snapshot was taken.
+// Returns false if the job no longer exists.
+func (a *AppState) SetJobPullRequestID(jobID string, prID string) (bool, error) {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+	data, exists := a.jobs[jobID]
+	if !exists {
+		return false, nil
+	}
+	data.PullRequestID = prID
+
+	if err := a.persistStateLocked(); err != nil {
+		return true, fmt.Errorf("failed to persist state: %w", err)
+	}
+
+	return true, nil
+}
+
 // GetJobData retrieves job data for a given JobID
 func (a *AppState) GetJobData(jobID string) (*JobData, bool) {
 	a.mutex.RLock()
