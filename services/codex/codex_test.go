@@ -600,3 +600,10 @@ func TestCodexService_AgentName(t *testing.T) {
 	}
 }
 
+func TestDeriveCodexOptions_KeepsEffortWhenServiceModelSet(t *testing.T) {
+	c := &CodexService{model: "gpt-5.5"}
+	got := c.deriveCodexOptions(&clients.CodexOptions{Effort: "high", Sandbox: "read-only"})
+	if got.Model != "gpt-5.5" || got.Effort != "high" || got.Sandbox != "read-only" {
+		t.Fatalf("derived options lost a field: %+v", got)
+	}
+}

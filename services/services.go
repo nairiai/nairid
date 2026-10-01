@@ -60,12 +60,18 @@ type CLIAgent interface {
 	ContinueConversationWithSystemPromptInDir(sessionID, prompt, systemPrompt, workDir string) (*CLIAgentResult, error)
 
 	// StartNewConversationWithProgress starts a new conversation with progress streaming.
-	// Empty systemPrompt or workDir are ignored.
-	StartNewConversationWithProgress(prompt, systemPrompt, workDir string, emitter ProgressEmitter) (*CLIAgentResult, error)
+	// Empty systemPrompt, workDir or effort are ignored. Effort is a CLI reasoning
+	// level (low/medium/high/xhigh/max) and must be passed on every call: no CLI keeps
+	// it across a resume.
+	StartNewConversationWithProgress(prompt, systemPrompt, workDir, effort string, emitter ProgressEmitter) (*CLIAgentResult, error)
 
 	// ContinueConversationWithProgress continues a conversation with progress streaming.
-	// Empty systemPrompt or workDir are ignored.
-	ContinueConversationWithProgress(sessionID, prompt, systemPrompt, workDir string, emitter ProgressEmitter) (*CLIAgentResult, error)
+	// Empty systemPrompt, workDir or effort are ignored.
+	ContinueConversationWithProgress(sessionID, prompt, systemPrompt, workDir, effort string, emitter ProgressEmitter) (*CLIAgentResult, error)
+
+	// Model returns the model this agent was started with, after agent defaults
+	// are applied. Empty when the CLI picks its own default.
+	Model() string
 
 	// CleanupOldLogs removes old log files based on age
 	CleanupOldLogs(maxAgeDays int) error

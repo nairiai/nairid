@@ -7,7 +7,7 @@ import (
 )
 
 func TestBuildRunArgs_NewSession_V1(t *testing.T) {
-	got := buildRunArgs("", "opencode/kimi-k3", "hi", false)
+	got := buildRunArgs("", "opencode/kimi-k3", "", "hi", false)
 	want := []string{"run", "--format", "json", "--agent", "build", "--model", "opencode/kimi-k3", "hi"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("v1 new session args = %v, want %v", got, want)
@@ -15,7 +15,7 @@ func TestBuildRunArgs_NewSession_V1(t *testing.T) {
 }
 
 func TestBuildRunArgs_NewSession_V2_HasStandalone(t *testing.T) {
-	got := buildRunArgs("", "opencode/kimi-k3", "hi", true)
+	got := buildRunArgs("", "opencode/kimi-k3", "", "hi", true)
 	want := []string{"run", "--standalone", "--format", "json", "--agent", "build", "--model", "opencode/kimi-k3", "hi"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("v2 new session args = %v, want %v", got, want)
@@ -23,7 +23,7 @@ func TestBuildRunArgs_NewSession_V2_HasStandalone(t *testing.T) {
 }
 
 func TestBuildRunArgs_ContinueSession_V2(t *testing.T) {
-	got := buildRunArgs("ses_123", "opencode/kimi-k3", "hi", true)
+	got := buildRunArgs("ses_123", "opencode/kimi-k3", "", "hi", true)
 	want := []string{"run", "--standalone", "--session", "ses_123", "--format", "json", "--agent", "build", "--model", "opencode/kimi-k3", "hi"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("v2 continue args = %v, want %v", got, want)
@@ -31,7 +31,7 @@ func TestBuildRunArgs_ContinueSession_V2(t *testing.T) {
 }
 
 func TestBuildRunArgs_ContinueSession_V1(t *testing.T) {
-	got := buildRunArgs("ses_123", "opencode/kimi-k3", "hi", false)
+	got := buildRunArgs("ses_123", "opencode/kimi-k3", "", "hi", false)
 	want := []string{"run", "--session", "ses_123", "--format", "json", "--agent", "build", "--model", "opencode/kimi-k3", "hi"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("v1 continue args = %v, want %v", got, want)
@@ -39,13 +39,13 @@ func TestBuildRunArgs_ContinueSession_V1(t *testing.T) {
 }
 
 func TestBuildRunArgs_NoModel(t *testing.T) {
-	got := buildRunArgs("", "", "hi", true)
+	got := buildRunArgs("", "", "", "hi", true)
 	want := []string{"run", "--standalone", "--format", "json", "--agent", "build", "hi"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("no-model args = %v, want %v", got, want)
 	}
 	// v1 must never carry --standalone.
-	v1 := buildRunArgs("", "", "hi", false)
+	v1 := buildRunArgs("", "", "", "hi", false)
 	for _, a := range v1 {
 		if a == "--standalone" {
 			t.Fatalf("v1 args must not contain --standalone: %v", v1)
@@ -76,5 +76,13 @@ func TestDetectOpenCodeMajorAtLeast2(t *testing.T) {
 				t.Errorf("detectOpenCodeMajorAtLeast2(%q, %v) = %t, want %t", tc.out, tc.err, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestBuildRunArgs_VariantBeforePrompt(t *testing.T) {
+	got := buildRunArgs("ses_123", "opencode/claude-opus-5-5", "max", "hi", true)
+	want := []string{"run", "--standalone", "--session", "ses_123", "--format", "json", "--agent", "build", "--model", "opencode/claude-opus-5-5", "--variant", "max", "hi"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
 	}
 }

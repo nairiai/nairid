@@ -34,18 +34,7 @@ func (c *ClaudeClient) StartNewSession(prompt string, options *clients.ClaudeOpt
 	promptArgs, promptStdin := clients.ApplyPrompt(prompt)
 	args = append(args, promptArgs...)
 
-	if options != nil {
-		if options.Model != "" {
-			args = append(args, "--model", options.Model)
-		}
-		if options.SystemPrompt != "" {
-			args = append(args, "--append-system-prompt", options.SystemPrompt)
-		}
-		if len(options.DisallowedTools) > 0 {
-			disallowedToolsStr := strings.Join(options.DisallowedTools, " ")
-			args = append(args, "--disallowedTools", disallowedToolsStr)
-		}
-	}
+	args = appendOptionArgs(args, options)
 
 	log.Info("Starting new Claude session with prompt: %s", prompt)
 	log.Info("Command arguments: %v", args)
@@ -70,6 +59,26 @@ func (c *ClaudeClient) StartNewSession(prompt string, options *clients.ClaudeOpt
 	return result, nil
 }
 
+// appendOptionArgs adds the per-session flags shared by new and resumed sessions.
+func appendOptionArgs(args []string, options *clients.ClaudeOptions) []string {
+	if options == nil {
+		return args
+	}
+	if options.Model != "" {
+		args = append(args, "--model", options.Model)
+	}
+	if options.Effort != "" {
+		args = append(args, "--effort", options.Effort)
+	}
+	if options.SystemPrompt != "" {
+		args = append(args, "--append-system-prompt", options.SystemPrompt)
+	}
+	if len(options.DisallowedTools) > 0 {
+		args = append(args, "--disallowedTools", strings.Join(options.DisallowedTools, " "))
+	}
+	return args
+}
+
 func (c *ClaudeClient) ContinueSession(sessionID, prompt string, options *clients.ClaudeOptions, onLine clients.ProgressCallback) (string, error) {
 	log.Info("📋 Starting to continue Claude session: %s", sessionID)
 	args := c.buildPermissionArgs()
@@ -82,18 +91,7 @@ func (c *ClaudeClient) ContinueSession(sessionID, prompt string, options *client
 	promptArgs, promptStdin := clients.ApplyPrompt(prompt)
 	args = append(args, promptArgs...)
 
-	if options != nil {
-		if options.Model != "" {
-			args = append(args, "--model", options.Model)
-		}
-		if options.SystemPrompt != "" {
-			args = append(args, "--append-system-prompt", options.SystemPrompt)
-		}
-		if len(options.DisallowedTools) > 0 {
-			disallowedToolsStr := strings.Join(options.DisallowedTools, " ")
-			args = append(args, "--disallowedTools", disallowedToolsStr)
-		}
-	}
+	args = appendOptionArgs(args, options)
 
 	log.Info("Executing Claude command with sessionID: %s, prompt: %s", sessionID, prompt)
 	log.Info("Command arguments: %v", args)

@@ -120,6 +120,9 @@ func (c *CodexClient) buildBaseArgs(options *clients.CodexOptions) []string {
 	if options != nil && options.Model != "" {
 		args = append(args, "-m", options.Model)
 	}
+	if options != nil && options.Effort != "" {
+		args = append(args, "-c", "model_reasoning_effort="+options.Effort)
+	}
 
 	// Web search - always enabled
 	args = append(args, "--search")

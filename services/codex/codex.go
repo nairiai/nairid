@@ -110,6 +110,7 @@ func (c *CodexService) deriveCodexOptions(options *clients.CodexOptions) *client
 				Model:     c.model, // Service model takes precedence
 				Sandbox:   finalOptions.Sandbox,
 				WebSearch: finalOptions.WebSearch,
+				Effort:    finalOptions.Effort,
 			}
 		}
 	}
@@ -340,7 +341,7 @@ func (c *CodexService) handleCodexClientError(err error, operation string) error
 
 // StartNewConversationWithProgress starts a new conversation with progress streaming.
 func (c *CodexService) StartNewConversationWithProgress(
-	prompt, systemPrompt, workDir string,
+	prompt, systemPrompt, workDir, effort string,
 	emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
 	finalPrompt := prompt
@@ -350,20 +351,30 @@ func (c *CodexService) StartNewConversationWithProgress(
 			"# USER MESSAGE\n" +
 			prompt
 	}
-	return c.StartNewConversationWithOptions(finalPrompt, nil, emitter)
+	return c.StartNewConversationWithOptions(finalPrompt, codexOptionsForEffort(effort), emitter)
 }
 
 // ContinueConversationWithProgress continues a conversation with progress streaming.
 func (c *CodexService) ContinueConversationWithProgress(
-	sessionID, prompt, systemPrompt, workDir string,
+	sessionID, prompt, systemPrompt, workDir, effort string,
 	emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
 	// Codex: system prompt persists from turn 1, workDir not supported on continue
-	return c.ContinueConversationWithOptions(sessionID, prompt, nil, emitter)
+	return c.ContinueConversationWithOptions(sessionID, prompt, codexOptionsForEffort(effort), emitter)
+}
+
+func codexOptionsForEffort(effort string) *clients.CodexOptions {
+	if effort == "" {
+		return nil
+	}
+	return &clients.CodexOptions{Effort: effort}
+}
+
+func (c *CodexService) Model() string {
+	return c.model
 }
 
 // AgentName identifies this service implementation
 func (c *CodexService) AgentName() string {
 	return "codex"
 }
-

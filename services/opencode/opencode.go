@@ -114,9 +114,10 @@ func (o *OpenCodeService) deriveOpenCodeOptions(options *clients.OpenCodeOptions
 		return nil
 	}
 
-	// Create a copy to avoid modifying the original, preserving WorkDir
+	// Create a copy to avoid modifying the original, preserving WorkDir and Effort
 	finalOptions := &clients.OpenCodeOptions{
 		WorkDir: options.WorkDir,
+		Effort:  options.Effort,
 	}
 
 	// Apply service model if set, otherwise use options model
@@ -352,7 +353,7 @@ func (o *OpenCodeService) handleOpenCodeClientError(err error, operation string)
 
 // StartNewConversationWithProgress starts a new conversation with progress streaming.
 func (o *OpenCodeService) StartNewConversationWithProgress(
-	prompt, systemPrompt, workDir string,
+	prompt, systemPrompt, workDir, effort string,
 	emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
 	finalPrompt := prompt
@@ -362,28 +363,30 @@ func (o *OpenCodeService) StartNewConversationWithProgress(
 			"# USER MESSAGE\n" +
 			prompt
 	}
-	var opts *clients.OpenCodeOptions
-	if workDir != "" {
-		opts = &clients.OpenCodeOptions{WorkDir: workDir}
-	}
-	return o.StartNewConversationWithOptions(finalPrompt, opts, emitter)
+	return o.StartNewConversationWithOptions(finalPrompt, openCodeOptionsFor(workDir, effort), emitter)
 }
 
 // ContinueConversationWithProgress continues a conversation with progress streaming.
 func (o *OpenCodeService) ContinueConversationWithProgress(
-	sessionID, prompt, systemPrompt, workDir string,
+	sessionID, prompt, systemPrompt, workDir, effort string,
 	emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
 	// OpenCode: system prompt persists from turn 1
-	var opts *clients.OpenCodeOptions
-	if workDir != "" {
-		opts = &clients.OpenCodeOptions{WorkDir: workDir}
+	return o.ContinueConversationWithOptions(sessionID, prompt, openCodeOptionsFor(workDir, effort), emitter)
+}
+
+func openCodeOptionsFor(workDir, effort string) *clients.OpenCodeOptions {
+	if workDir == "" && effort == "" {
+		return nil
 	}
-	return o.ContinueConversationWithOptions(sessionID, prompt, opts, emitter)
+	return &clients.OpenCodeOptions{WorkDir: workDir, Effort: effort}
+}
+
+func (o *OpenCodeService) Model() string {
+	return o.model
 }
 
 // AgentName identifies this service implementation
 func (o *OpenCodeService) AgentName() string {
 	return "opencode"
 }
-

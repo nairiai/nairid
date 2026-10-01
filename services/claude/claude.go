@@ -622,24 +622,30 @@ func (c *ClaudeService) handleClaudeClientError(err error, operation string) err
 
 // StartNewConversationWithProgress starts a new conversation with progress streaming.
 func (c *ClaudeService) StartNewConversationWithProgress(
-	prompt, systemPrompt, workDir string,
+	prompt, systemPrompt, workDir, effort string,
 	emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
 	return c.StartNewConversationWithOptions(prompt, &clients.ClaudeOptions{
 		SystemPrompt: systemPrompt,
 		WorkDir:      workDir,
+		Effort:       effort,
 	}, emitter)
 }
 
 // ContinueConversationWithProgress continues a conversation with progress streaming.
 func (c *ClaudeService) ContinueConversationWithProgress(
-	sessionID, prompt, systemPrompt, workDir string,
+	sessionID, prompt, systemPrompt, workDir, effort string,
 	emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
 	return c.ContinueConversationWithOptions(sessionID, prompt, &clients.ClaudeOptions{
 		SystemPrompt: systemPrompt,
 		WorkDir:      workDir,
+		Effort:       effort,
 	}, emitter)
+}
+
+func (c *ClaudeService) Model() string {
+	return c.model
 }
 
 // AgentName identifies this service implementation
