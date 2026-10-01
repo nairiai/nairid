@@ -256,6 +256,11 @@ func (mh *MessageHandler) handleStartConversation(msg models.BaseMessage) error 
 
 	// The level is fixed for the whole conversation; replies reuse it from JobData.
 	reasoningEffort := resolveReasoningEffort(payload.ReasoningEffort, payload.ReasoningEffortModel, mh.claudeService.Model())
+	if reasoningEffort == "" {
+		log.Info("🧠 Reasoning effort for job %s: model default", payload.JobID)
+	} else {
+		log.Info("🧠 Reasoning effort for job %s: %s", payload.JobID, reasoningEffort)
+	}
 
 	// Persist job state with message BEFORE calling Claude
 	// This enables crash recovery and future reprocessing
