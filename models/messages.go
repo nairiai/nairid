@@ -186,6 +186,7 @@ type AgentProgressPayload struct {
 	ProgressType       AgentProgressType `json:"progress_type"`
 	ToolName           string            `json:"tool_name,omitempty"`
 	ToolInput          string            `json:"tool_input,omitempty"`
+	ToolDescription    string            `json:"tool_description,omitempty"`
 	ToolStatus         string            `json:"tool_status,omitempty"`
 	ToolUseID          string            `json:"tool_use_id,omitempty"`
 	ToolOutput         string            `json:"tool_output,omitempty"`
