@@ -1,3 +1,22 @@
+## [v0.0.119] - 2026-10-01
+
+### Features
+
+- Pass a per-conversation reasoning effort to the agent CLI ([#223](https://github.com/nairiai/nairid/pull/223))
+  - `start_conversation` payloads may carry `reasoning_effort` and `reasoning_effort_model`; nairid maps the level to each CLI's flag (`claude --effort`, `codex -c model_reasoning_effort=`, `opencode --variant`) and passes it on every run, new and resumed
+  - The level is fixed at conversation start and persisted in `JobData`, so replies (including after a restart) reuse it
+  - Unknown levels are dropped with a warning, and the level is applied only when `reasoning_effort_model` matches the agent's own `--model`; with no field in the payload the CLI command is unchanged
+  - Each new job logs `Reasoning effort for job <id>: <level|model default>`
+
+### Bugfixes
+
+- Stop the idle check from reverting completed job status and leaking worker slots ([#222](https://github.com/nairiai/nairid/pull/222))
+  - `checkJobIdleness` wrote a whole `JobData` snapshot back to cache the PR ID, which could revert a just-persisted `completed` status to `in_progress` and leave the job processor holding a worker slot until the 25h idle eviction
+  - New `AppState.SetJobPullRequestID` updates only that field under the lock and does not recreate a job removed in the meantime
+- Bypass the proxy for loopback and run OpenCode v2 in standalone mode ([#221](https://github.com/nairiai/nairid/pull/221))
+  - `InjectProxyEnv` now always adds `localhost,127.0.0.1,::1` to `NO_PROXY`, so OpenCode v2's local background server is reachable
+  - On OpenCode v2+ nairid passes `run --standalone` so each run gets its own server with the caller's proxy env; OpenCode v1 commands are unchanged
+
 ## [v0.0.118] - 2026-09-22
 
 ### Security
