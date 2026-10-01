@@ -10,6 +10,7 @@ type ClaudeOptions struct {
 	DisallowedTools []string
 	Model           string // Model alias or full name (e.g., "sonnet", "haiku", "opus", "claude-sonnet-4-5-20250929")
 	WorkDir         string // Working directory for the Claude session (e.g., a git worktree path)
+	Effort          string // --effort level (low/medium/high/xhigh/max); empty omits the flag
 }
 
 // CursorOptions contains optional parameters for Cursor CLI interactions
@@ -23,6 +24,7 @@ type CodexOptions struct {
 	Model     string // GPT-5 or other model
 	Sandbox   string // "workspace-write", "danger-full-access", "read-only"
 	WebSearch bool   // Enable --search flag
+	Effort    string // model_reasoning_effort (low/medium/high/xhigh/max); empty omits the override
 }
 
 // ClaudeClient defines the interface for Claude CLI interactions
@@ -47,6 +49,7 @@ type CodexClient interface {
 type OpenCodeOptions struct {
 	Model   string // Model in provider/model format (e.g., "anthropic/claude-3-5-sonnet")
 	WorkDir string // Working directory for the OpenCode session (e.g., a git worktree path)
+	Effort  string // --variant name (low/medium/high/xhigh/max); empty omits the flag
 }
 
 // OpenCodeClient defines the interface for OpenCode CLI interactions

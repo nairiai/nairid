@@ -612,3 +612,11 @@ func TestOpenCodeService_AgentName(t *testing.T) {
 		t.Errorf("Expected agent name %q, got %q", expectedName, agentName)
 	}
 }
+
+func TestDeriveOpenCodeOptions_KeepsEffortWhenServiceModelSet(t *testing.T) {
+	o := &OpenCodeService{model: "opencode/claude-opus-5-5"}
+	got := o.deriveOpenCodeOptions(&clients.OpenCodeOptions{Effort: "max", WorkDir: "/tmp/wt"})
+	if got.Model != "opencode/claude-opus-5-5" || got.Effort != "max" || got.WorkDir != "/tmp/wt" {
+		t.Fatalf("derived options lost a field: %+v", got)
+	}
+}

@@ -293,6 +293,9 @@ type AgentJob struct {
 	CreatedAt    time.Time         `json:"created_at"`
 	Messages     []AgentJobMessage `json:"messages"`
 	SystemPrompt string            `json:"system_prompt,omitempty"`
+	// See StartConversationPayload for the meaning of these two.
+	ReasoningEffort      string `json:"reasoning_effort,omitempty"`
+	ReasoningEffortModel string `json:"reasoning_effort_model,omitempty"`
 }
 
 // AgentJobMessage represents a message within an agent job

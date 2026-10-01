@@ -27,7 +27,7 @@ func NewOpenCodeClient() *OpenCodeClient {
 func (c *OpenCodeClient) StartNewSession(prompt string, options *clients.OpenCodeOptions, onLine clients.ProgressCallback) (string, error) {
 	log.Info("📋 Starting to create new OpenCode session")
 
-	args := buildRunArgs("", modelFromOptions(options), prompt, opencodeSupportsStandalone())
+	args := buildRunArgs("", modelFromOptions(options), effortFromOptions(options), prompt, opencodeSupportsStandalone())
 
 	log.Info("Starting new OpenCode session with prompt: %s", prompt)
 	log.Info("Command arguments: %v", args)
@@ -52,7 +52,7 @@ func (c *OpenCodeClient) StartNewSession(prompt string, options *clients.OpenCod
 func (c *OpenCodeClient) ContinueSession(sessionID, prompt string, options *clients.OpenCodeOptions, onLine clients.ProgressCallback) (string, error) {
 	log.Info("📋 Starting to continue OpenCode session: %s", sessionID)
 
-	args := buildRunArgs(sessionID, modelFromOptions(options), prompt, opencodeSupportsStandalone())
+	args := buildRunArgs(sessionID, modelFromOptions(options), effortFromOptions(options), prompt, opencodeSupportsStandalone())
 
 	log.Info("Executing OpenCode command with sessionID: %s, prompt: %s", sessionID, prompt)
 	log.Info("Command arguments: %v", args)
@@ -102,12 +102,19 @@ func modelFromOptions(options *clients.OpenCodeOptions) string {
 	return ""
 }
 
+func effortFromOptions(options *clients.OpenCodeOptions) string {
+	if options != nil {
+		return options.Effort
+	}
+	return ""
+}
+
 // buildRunArgs constructs the argument list for `opencode run`.
 //
 // When standalone is true (OpenCode v2), `--standalone` is inserted so the run
 // spins up its own private server instead of connecting to the shared
 // background service. See opencodeSupportsStandalone for why this matters.
-func buildRunArgs(sessionID, model, prompt string, standalone bool) []string {
+func buildRunArgs(sessionID, model, variant, prompt string, standalone bool) []string {
 	args := []string{"run"}
 	if standalone {
 		// v2 only: use a private per-invocation server (see opencodeSupportsStandalone).
@@ -120,6 +127,9 @@ func buildRunArgs(sessionID, model, prompt string, standalone bool) []string {
 	args = append(args, "--format", "json", "--agent", "build")
 	if model != "" {
 		args = append(args, "--model", model)
+	}
+	if variant != "" {
+		args = append(args, "--variant", variant)
 	}
 	// Prompt is always the final positional argument.
 	args = append(args, prompt)

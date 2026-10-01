@@ -254,6 +254,9 @@ func (mh *MessageHandler) handleStartConversation(msg models.BaseMessage) error 
 	}
 	log.Info("🔄 Refreshed environment variables before starting conversation")
 
+	// The level is fixed for the whole conversation; replies reuse it from JobData.
+	reasoningEffort := resolveReasoningEffort(payload.ReasoningEffort, payload.ReasoningEffortModel, mh.claudeService.Model())
+
 	// Persist job state with message BEFORE calling Claude
 	// This enables crash recovery and future reprocessing
 	if err := mh.appState.UpdateJobData(payload.JobID, models.JobData{
@@ -267,6 +270,7 @@ func (mh *MessageHandler) handleStartConversation(msg models.BaseMessage) error 
 		MessageLink:        payload.MessageLink,
 		Status:             models.JobStatusInProgress,
 		Mode:               payload.Mode,
+		ReasoningEffort:    reasoningEffort,
 		UpdatedAt:          time.Now(),
 	}); err != nil {
 		log.Error("❌ Failed to persist job state before Claude call: %v", err)
@@ -347,7 +351,7 @@ func (mh *MessageHandler) handleStartConversation(msg models.BaseMessage) error 
 	if worktreePath != "" {
 		log.Info("🌳 Starting Claude session in worktree: %s", worktreePath)
 	}
-	claudeResult, err = mh.claudeService.StartNewConversationWithProgress(finalPrompt, systemPrompt, worktreePath, progressEmitter)
+	claudeResult, err = mh.claudeService.StartNewConversationWithProgress(finalPrompt, systemPrompt, worktreePath, reasoningEffort, progressEmitter)
 
 	if err != nil {
 		log.Info("❌ Error starting Claude session: %v", err)
@@ -372,6 +376,7 @@ func (mh *MessageHandler) handleStartConversation(msg models.BaseMessage) error 
 			MessageLink:        payload.MessageLink,
 			Status:             models.JobStatusFailed,
 			Mode:               payload.Mode,
+			ReasoningEffort:    reasoningEffort,
 			UpdatedAt:          time.Now(),
 		}); updateErr != nil {
 			log.Error("❌ Failed to mark job as failed: %v", updateErr)
@@ -466,6 +471,7 @@ func (mh *MessageHandler) handleStartConversation(msg models.BaseMessage) error 
 		MessageLink:        payload.MessageLink,
 		Status:             models.JobStatusCompleted,
 		Mode:               payload.Mode,
+		ReasoningEffort:    reasoningEffort,
 		UpdatedAt:          time.Now(),
 	}); err != nil {
 		log.Error("❌ Failed to persist final job state: %v", err)
@@ -674,6 +680,7 @@ func (mh *MessageHandler) handleUserMessage(msg models.BaseMessage) error {
 		ProcessedMessageID: payload.ProcessedMessageID,
 		MessageLink:        payload.MessageLink,
 		Status:             models.JobStatusInProgress,
+		ReasoningEffort:    jobData.ReasoningEffort,
 		UpdatedAt:          time.Now(),
 	}); err != nil {
 		log.Error("❌ Failed to persist job state before Claude call: %v", err)
@@ -740,7 +747,7 @@ func (mh *MessageHandler) handleUserMessage(msg models.BaseMessage) error {
 	if jobData.WorktreePath != "" {
 		log.Info("🌳 Continuing Claude session in worktree: %s", jobData.WorktreePath)
 	}
-	claudeResult, err = mh.claudeService.ContinueConversationWithProgress(sessionID, finalPrompt, outboundSystemPrompt, jobData.WorktreePath, progressEmitter)
+	claudeResult, err = mh.claudeService.ContinueConversationWithProgress(sessionID, finalPrompt, outboundSystemPrompt, jobData.WorktreePath, jobData.ReasoningEffort, progressEmitter)
 	if err != nil {
 		log.Info("❌ Error continuing Claude session: %v", err)
 		systemErr := mh.sendSystemMessage(
@@ -764,6 +771,7 @@ func (mh *MessageHandler) handleUserMessage(msg models.BaseMessage) error {
 			MessageLink:        payload.MessageLink,
 			Status:             models.JobStatusFailed,
 			Mode:               jobData.Mode,
+			ReasoningEffort:    jobData.ReasoningEffort,
 			UpdatedAt:          time.Now(),
 		}); updateErr != nil {
 			log.Error("❌ Failed to mark job as failed: %v", updateErr)
@@ -852,6 +860,7 @@ func (mh *MessageHandler) handleUserMessage(msg models.BaseMessage) error {
 		BranchName:         finalBranchName,
 		WorktreePath:       jobData.WorktreePath, // Preserve worktree path
 		Mode:               jobData.Mode,
+		ReasoningEffort:    jobData.ReasoningEffort,
 		ClaudeSessionID:    claudeResult.SessionID,
 		PullRequestID:      prID,
 		LastMessage:        payload.Message,

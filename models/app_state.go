@@ -34,12 +34,13 @@ type JobData struct {
 	BranchName         string    `json:"branch_name"`
 	WorktreePath       string    `json:"worktree_path,omitempty"` // Path to the job's git worktree (empty if using main repo)
 	ClaudeSessionID    string    `json:"claude_session_id"`
-	PullRequestID      string    `json:"pull_request_id"`      // GitHub PR number (e.g., "123") - empty if no PR created yet
-	LastMessage        string    `json:"last_message"`         // The last message sent to Claude for this job
-	ProcessedMessageID string    `json:"processed_message_id"` // ID of the chat platform message being processed
-	MessageLink        string    `json:"message_link"`         // Link to the original chat message
-	Status             JobStatus `json:"status"`               // Current status of the job: "in_progress" or "completed"
-	Mode               AgentMode `json:"mode"`                 // "execute" or "ask" - determines if agent can modify files
+	PullRequestID      string    `json:"pull_request_id"`            // GitHub PR number (e.g., "123") - empty if no PR created yet
+	LastMessage        string    `json:"last_message"`               // The last message sent to Claude for this job
+	ProcessedMessageID string    `json:"processed_message_id"`       // ID of the chat platform message being processed
+	MessageLink        string    `json:"message_link"`               // Link to the original chat message
+	Status             JobStatus `json:"status"`                     // Current status of the job: "in_progress" or "completed"
+	Mode               AgentMode `json:"mode"`                       // "execute" or "ask" - determines if agent can modify files
+	ReasoningEffort    string    `json:"reasoning_effort,omitempty"` // CLI effort level fixed when the conversation started; empty = model default
 	UpdatedAt          time.Time `json:"updated_at"`
 }
 

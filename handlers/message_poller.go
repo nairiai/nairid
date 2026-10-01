@@ -144,15 +144,17 @@ func (mp *MessagePoller) pollAndDispatch() {
 				}
 
 				startPayload := models.StartConversationPayload{
-					JobID:              userPayload.JobID,
-					Message:            userPayload.Message,
-					ProcessedMessageID: userPayload.ProcessedMessageID,
-					MessageLink:        userPayload.MessageLink,
-					Mode:               models.AgentMode(job.Mode),
-					Attachments:        userPayload.Attachments,
-					PreviousMessages:   userPayload.PreviousMessages,
-					SenderMetadata:     userPayload.SenderMetadata,
-					SystemPrompt:       job.SystemPrompt,
+					JobID:                userPayload.JobID,
+					Message:              userPayload.Message,
+					ProcessedMessageID:   userPayload.ProcessedMessageID,
+					MessageLink:          userPayload.MessageLink,
+					Mode:                 models.AgentMode(job.Mode),
+					Attachments:          userPayload.Attachments,
+					PreviousMessages:     userPayload.PreviousMessages,
+					SenderMetadata:       userPayload.SenderMetadata,
+					SystemPrompt:         job.SystemPrompt,
+					ReasoningEffort:      job.ReasoningEffort,
+					ReasoningEffortModel: job.ReasoningEffortModel,
 				}
 
 				enrichedPayload, err := json.Marshal(startPayload)
