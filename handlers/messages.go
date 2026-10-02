@@ -674,6 +674,7 @@ func (mh *MessageHandler) handleUserMessage(msg models.BaseMessage) error {
 		ProcessedMessageID: payload.ProcessedMessageID,
 		MessageLink:        payload.MessageLink,
 		Status:             models.JobStatusInProgress,
+		Mode:               jobData.Mode,
 		ReasoningEffort:    jobData.ReasoningEffort,
 		EffortModel:        jobData.EffortModel,
 		UpdatedAt:          time.Now(),

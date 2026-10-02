@@ -22,12 +22,16 @@ type effortRecordingAgent struct {
 	model          string
 	turns          []string
 	failsNextStart bool
+	duringTurn     func()
 }
 
 func (a *effortRecordingAgent) StartNewConversationWithProgress(
 	prompt, systemPrompt, workDir, effort string, emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
 	a.turns = append(a.turns, "start:"+effort)
+	if a.duringTurn != nil {
+		a.duringTurn()
+	}
 	if a.failsNextStart {
 		a.failsNextStart = false
 		return nil, errors.New("the CLI could not start a session")
@@ -39,6 +43,9 @@ func (a *effortRecordingAgent) ContinueConversationWithProgress(
 	sessionID, prompt, systemPrompt, workDir, effort string, emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
 	a.turns = append(a.turns, "continue:"+effort)
+	if a.duringTurn != nil {
+		a.duringTurn()
+	}
 	return &services.CLIAgentResult{Output: "done", SessionID: sessionID}, nil
 }
 
@@ -162,5 +169,63 @@ func TestReasoningEffortSurvivesAFailedFirstTurn(t *testing.T) {
 	want := []string{"start:high", "start:high"}
 	if !reflect.DeepEqual(agent.turns, want) {
 		t.Errorf("turns ran with %v, want %v", agent.turns, want)
+	}
+}
+
+// The mode saved while a turn runs is what crash recovery restarts the turn with.
+func TestAskModeStaysOnEveryTurnOfAConversation(t *testing.T) {
+	t.Setenv("NAIRI_CONFIG_DIR", t.TempDir())
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+	agent := &effortRecordingAgent{model: "gpt-5.5"}
+	handler := startHandlerLikeAFreshProcess(t, agent, filepath.Join(t.TempDir(), "state.json"), backend.URL)
+	var modesSavedDuringTurns []models.AgentMode
+	agent.duringTurn = func() {
+		job, _ := handler.appState.GetJobData("j1")
+		modesSavedDuringTurns = append(modesSavedDuringTurns, job.Mode)
+	}
+	reply := func(id string) {
+		t.Helper()
+		err := handler.handleUserMessage(models.BaseMessage{
+			ID:      "msg_" + id,
+			Type:    models.MessageTypeUserMessage,
+			Payload: models.UserMessagePayload{JobID: "j1", Message: "and again", ProcessedMessageID: "cmsg_" + id},
+		})
+		if err != nil {
+			t.Fatalf("reply %s: %v", id, err)
+		}
+	}
+
+	err := handler.handleStartConversation(models.BaseMessage{
+		ID:   "msg_0",
+		Type: models.MessageTypeStartConversation,
+		Payload: models.StartConversationPayload{
+			JobID: "j1", Message: "what does this repo do?", ProcessedMessageID: "cmsg_0", Mode: models.AgentModeAsk,
+		},
+	})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	reply("1")
+
+	job, _ := handler.appState.GetJobData("j1")
+	job.ClaudeSessionID = ""
+	if err := handler.appState.UpdateJobData("j1", *job); err != nil {
+		t.Fatalf("lose the session: %v", err)
+	}
+	reply("2")
+
+	wantTurns := []string{"start:", "continue:", "start:"}
+	if !reflect.DeepEqual(agent.turns, wantTurns) {
+		t.Fatalf("turns ran as %v, want %v", agent.turns, wantTurns)
+	}
+	wantModes := []models.AgentMode{models.AgentModeAsk, models.AgentModeAsk, models.AgentModeAsk}
+	if !reflect.DeepEqual(modesSavedDuringTurns, wantModes) {
+		t.Errorf("modes saved while the turns ran: %q, want %q", modesSavedDuringTurns, wantModes)
+	}
+	if job, _ := handler.appState.GetJobData("j1"); job.Mode != models.AgentModeAsk {
+		t.Errorf("mode after the restarted turn = %q, want ask", job.Mode)
 	}
 }

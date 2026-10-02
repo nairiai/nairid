@@ -63,6 +63,7 @@ func startPayloadForUnstartedJob(reply models.UserMessagePayload, job *models.Jo
 		SenderMetadata:     reply.SenderMetadata,
 	}
 	if job != nil {
+		start.Mode = job.Mode
 		start.ReasoningEffort = job.ReasoningEffort
 		start.ReasoningEffortModel = job.EffortModel
 	}
