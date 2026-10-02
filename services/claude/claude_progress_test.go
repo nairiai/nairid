@@ -455,6 +455,76 @@ func TestClaudeProgressTracker_ToolUsePairing(t *testing.T) {
 		}
 	})
 
+	t.Run("a Bash tool_use carries its description, and so does its tool_result", func(t *testing.T) {
+		tracker := NewClaudeProgressTracker()
+
+		toolUse := tracker.MapLine([]byte(`{
+			"type": "assistant",
+			"message": {
+				"content": [
+					{
+						"type": "tool_use",
+						"id": "toolu_abc",
+						"name": "Bash",
+						"input": {"command": "docker ps", "description": "List running containers"}
+					}
+				]
+			}
+		}`))
+		if toolUse == nil {
+			t.Fatal("expected tool_use payload, got nil")
+		}
+		if toolUse.ToolInput != "docker ps" {
+			t.Errorf("expected ToolInput 'docker ps', got %q", toolUse.ToolInput)
+		}
+		if toolUse.ToolDescription != "List running containers" {
+			t.Errorf("expected ToolDescription 'List running containers', got %q", toolUse.ToolDescription)
+		}
+
+		toolResult := tracker.MapLine([]byte(`{
+			"type": "user",
+			"message": {
+				"content": [
+					{
+						"type": "tool_result",
+						"tool_use_id": "toolu_abc",
+						"is_error": false
+					}
+				]
+			}
+		}`))
+		if toolResult == nil {
+			t.Fatal("expected tool_result payload, got nil")
+		}
+		if toolResult.ToolDescription != "List running containers" {
+			t.Errorf("expected ToolDescription from pairing, got %q", toolResult.ToolDescription)
+		}
+	})
+
+	t.Run("only Bash sends a description", func(t *testing.T) {
+		tracker := NewClaudeProgressTracker()
+
+		toolUse := tracker.MapLine([]byte(`{
+			"type": "assistant",
+			"message": {
+				"content": [
+					{
+						"type": "tool_use",
+						"id": "toolu_abc",
+						"name": "Agent",
+						"input": {"description": "Summarize the inbox", "prompt": "..."}
+					}
+				]
+			}
+		}`))
+		if toolUse == nil {
+			t.Fatal("expected tool_use payload, got nil")
+		}
+		if toolUse.ToolDescription != "" {
+			t.Errorf("expected no ToolDescription, got %q", toolUse.ToolDescription)
+		}
+	})
+
 	t.Run("tool_result with unknown tool_use_id has no name", func(t *testing.T) {
 		tracker := NewClaudeProgressTracker()
 

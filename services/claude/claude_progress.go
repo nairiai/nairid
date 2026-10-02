@@ -8,8 +8,9 @@ import (
 
 // toolMeta stores metadata about a pending tool_use call
 type toolMeta struct {
-	name  string
-	input string
+	name        string
+	input       string
+	description string
 }
 
 // ClaudeProgressTracker is a stateful mapper that pairs tool_use events with their tool_result events.
@@ -76,13 +77,15 @@ func (t *ClaudeProgressTracker) mapClaudeAssistant(line []byte) *models.AgentPro
 		switch block.Type {
 		case "tool_use":
 			toolInput := summarizeToolInput(block.Name, block.Input)
+			toolDescription := commandDescription(block.Name, block.Input)
 			if block.ID != "" {
-				t.pendingTools[block.ID] = toolMeta{name: block.Name, input: toolInput}
+				t.pendingTools[block.ID] = toolMeta{name: block.Name, input: toolInput, description: toolDescription}
 			}
 			return &models.AgentProgressPayload{
 				ProgressType:    models.ProgressTypeToolUse,
 				ToolName:        block.Name,
 				ToolInput:       toolInput,
+				ToolDescription: toolDescription,
 				ToolStatus:      "running",
 				ToolUseID:       block.ID,
 				ParentToolUseID: msg.ParentToolUseID,
@@ -143,6 +146,7 @@ func (t *ClaudeProgressTracker) mapClaudeUser(line []byte) *models.AgentProgress
 				if meta, ok := t.pendingTools[block.ToolUseID]; ok {
 					payload.ToolName = meta.name
 					payload.ToolInput = meta.input
+					payload.ToolDescription = meta.description
 					delete(t.pendingTools, block.ToolUseID)
 				}
 			}
@@ -259,6 +263,18 @@ func summarizeToolInput(toolName string, input json.RawMessage) string {
 		}
 		return ""
 	}
+}
+
+// commandDescription returns the short line Claude writes with a Bash call to say what the command does
+func commandDescription(toolName string, input json.RawMessage) string {
+	if toolName != "Bash" {
+		return ""
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(input, &fields); err != nil {
+		return ""
+	}
+	return extractString(fields, "description")
 }
 
 func extractString(fields map[string]json.RawMessage, key string) string {
