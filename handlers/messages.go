@@ -254,7 +254,7 @@ func (mh *MessageHandler) handleStartConversation(msg models.BaseMessage) error 
 	}
 	log.Info("🔄 Refreshed environment variables before starting conversation")
 
-	// The level is fixed for the whole conversation; replies reuse it from JobData.
+	// The conversation keeps the level it was started with; every turn resolves it again from JobData.
 	reasoningEffort := effortForTurn(payload.JobID, payload.ReasoningEffort, payload.ReasoningEffortModel, mh.claudeService.Model())
 
 	// Persist job state with message BEFORE calling Claude

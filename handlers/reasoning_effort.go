@@ -30,7 +30,7 @@ func resolveReasoningEffort(level, checkedModel, ownModel string) string {
 		log.Warn("⚠️ Ignoring unknown reasoning effort %q", level)
 		return ""
 	}
-	if checkedModel != ownModel {
+	if checkedModel == "" || checkedModel != ownModel {
 		log.Warn("⚠️ Ignoring reasoning effort %q: checked for model %q but this agent runs %q", level, checkedModel, ownModel)
 		return ""
 	}

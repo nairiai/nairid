@@ -22,6 +22,7 @@ func TestResolveReasoningEffort(t *testing.T) {
 		{"wrong case dropped", "High", "gpt-5.5", "gpt-5.5", ""},
 		{"model mismatch dropped", "max", "claude-opus-4-8", "gpt-5.5", ""},
 		{"no own model dropped", "high", "claude-opus-4-8", "", ""},
+		{"no checked model dropped", "high", "", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
