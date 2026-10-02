@@ -41,12 +41,15 @@ func TestStartPayloadForUnstartedJob(t *testing.T) {
 	}
 
 	t.Run("a job whose first turn failed keeps its level and the model it was checked for", func(t *testing.T) {
-		job := &models.JobData{JobID: "j1", ReasoningEffort: "high", EffortModel: "gpt-5.5"}
+		job := &models.JobData{JobID: "j1", ReasoningEffort: "high", EffortModel: "gpt-5.5", Mode: models.AgentModeAsk}
 
 		got := startPayloadForUnstartedJob(reply, job)
 
 		if got.ReasoningEffort != "high" || got.ReasoningEffortModel != "gpt-5.5" {
 			t.Errorf("level = %q for model %q, want high for gpt-5.5", got.ReasoningEffort, got.ReasoningEffortModel)
+		}
+		if got.Mode != models.AgentModeAsk {
+			t.Errorf("mode = %q, want ask", got.Mode)
 		}
 		if got.JobID != "j1" || got.Message != "try again" || got.ProcessedMessageID != "cmsg_2" ||
 			got.MessageLink != "https://example.slack.com/p2" {

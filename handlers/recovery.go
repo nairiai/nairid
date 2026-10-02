@@ -110,6 +110,7 @@ func RecoverJobs(
 					Message:              jobData.LastMessage,
 					ProcessedMessageID:   jobData.ProcessedMessageID,
 					MessageLink:          jobData.MessageLink,
+					Mode:                 jobData.Mode,
 					ReasoningEffort:      jobData.ReasoningEffort,
 					ReasoningEffortModel: jobData.EffortModel,
 				},
