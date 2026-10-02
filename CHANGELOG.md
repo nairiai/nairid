@@ -1,3 +1,13 @@
+## [v0.0.121] - 2026-10-02
+
+### Bugfixes
+
+- Keep the reasoning effort on every turn of a conversation ([#225](https://github.com/nairiai/nairid/pull/225))
+  - `AppState.GetJobData` / `GetAllJobs` copied `JobData` field by field and dropped `ReasoningEffort`, so every follow-up turn ran at the model default on all three CLIs; both now copy the whole struct
+  - A reply that is upgraded to a conversation start (no CLI session yet) and crash recovery of an unstarted conversation now carry the job's level
+  - `JobData` also stores `effort_model`, the model the level was checked against; every turn re-resolves the level against the model the agent runs now, so a model switch drops it (Codex fails on unsupported levels) and switching back restores it
+  - Follow-up turns now log `Reasoning effort for job <id>: <level|model default>` too
+
 ## [v0.0.120] - 2026-10-02
 
 ### Features
