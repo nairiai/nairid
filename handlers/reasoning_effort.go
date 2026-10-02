@@ -1,6 +1,9 @@
 package handlers
 
-import "nairid/core/log"
+import (
+	"nairid/core/log"
+	"nairid/models"
+)
 
 var validReasoningEfforts = map[string]bool{
 	"low":    true,
@@ -32,4 +35,36 @@ func resolveReasoningEffort(level, checkedModel, ownModel string) string {
 		return ""
 	}
 	return level
+}
+
+// effortForTurn is the level one CLI run gets. It is resolved again on every
+// turn: a conversation can outlive a model switch, and Codex fails a turn that
+// asks for a level the new model does not have.
+func effortForTurn(jobID, level, checkedModel, ownModel string) string {
+	effort := resolveReasoningEffort(level, checkedModel, ownModel)
+	if effort == "" {
+		log.Info("🧠 Reasoning effort for job %s: model default", jobID)
+	} else {
+		log.Info("🧠 Reasoning effort for job %s: %s", jobID, effort)
+	}
+	return effort
+}
+
+// startPayloadForUnstartedJob turns a reply into a conversation start, for a job
+// that has no CLI session yet. job is nil when this agent has never seen the job.
+func startPayloadForUnstartedJob(reply models.UserMessagePayload, job *models.JobData) models.StartConversationPayload {
+	start := models.StartConversationPayload{
+		JobID:              reply.JobID,
+		Message:            reply.Message,
+		ProcessedMessageID: reply.ProcessedMessageID,
+		MessageLink:        reply.MessageLink,
+		Attachments:        reply.Attachments,
+		PreviousMessages:   reply.PreviousMessages,
+		SenderMetadata:     reply.SenderMetadata,
+	}
+	if job != nil {
+		start.ReasoningEffort = job.ReasoningEffort
+		start.ReasoningEffortModel = job.EffortModel
+	}
+	return start
 }

@@ -106,10 +106,12 @@ func RecoverJobs(
 				ID:   core.NewID("msg"),
 				Type: models.MessageTypeStartConversation,
 				Payload: models.StartConversationPayload{
-					JobID:              jobID,
-					Message:            jobData.LastMessage,
-					ProcessedMessageID: jobData.ProcessedMessageID,
-					MessageLink:        jobData.MessageLink,
+					JobID:                jobID,
+					Message:              jobData.LastMessage,
+					ProcessedMessageID:   jobData.ProcessedMessageID,
+					MessageLink:          jobData.MessageLink,
+					ReasoningEffort:      jobData.ReasoningEffort,
+					ReasoningEffortModel: jobData.EffortModel,
 				},
 			}
 		} else {

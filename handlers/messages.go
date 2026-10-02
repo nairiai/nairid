@@ -255,12 +255,7 @@ func (mh *MessageHandler) handleStartConversation(msg models.BaseMessage) error 
 	log.Info("🔄 Refreshed environment variables before starting conversation")
 
 	// The level is fixed for the whole conversation; replies reuse it from JobData.
-	reasoningEffort := resolveReasoningEffort(payload.ReasoningEffort, payload.ReasoningEffortModel, mh.claudeService.Model())
-	if reasoningEffort == "" {
-		log.Info("🧠 Reasoning effort for job %s: model default", payload.JobID)
-	} else {
-		log.Info("🧠 Reasoning effort for job %s: %s", payload.JobID, reasoningEffort)
-	}
+	reasoningEffort := effortForTurn(payload.JobID, payload.ReasoningEffort, payload.ReasoningEffortModel, mh.claudeService.Model())
 
 	// Persist job state with message BEFORE calling Claude
 	// This enables crash recovery and future reprocessing
@@ -275,7 +270,8 @@ func (mh *MessageHandler) handleStartConversation(msg models.BaseMessage) error 
 		MessageLink:        payload.MessageLink,
 		Status:             models.JobStatusInProgress,
 		Mode:               payload.Mode,
-		ReasoningEffort:    reasoningEffort,
+		ReasoningEffort:    payload.ReasoningEffort,
+		EffortModel:        payload.ReasoningEffortModel,
 		UpdatedAt:          time.Now(),
 	}); err != nil {
 		log.Error("❌ Failed to persist job state before Claude call: %v", err)
@@ -381,7 +377,8 @@ func (mh *MessageHandler) handleStartConversation(msg models.BaseMessage) error 
 			MessageLink:        payload.MessageLink,
 			Status:             models.JobStatusFailed,
 			Mode:               payload.Mode,
-			ReasoningEffort:    reasoningEffort,
+			ReasoningEffort:    payload.ReasoningEffort,
+			EffortModel:        payload.ReasoningEffortModel,
 			UpdatedAt:          time.Now(),
 		}); updateErr != nil {
 			log.Error("❌ Failed to mark job as failed: %v", updateErr)
@@ -476,7 +473,8 @@ func (mh *MessageHandler) handleStartConversation(msg models.BaseMessage) error 
 		MessageLink:        payload.MessageLink,
 		Status:             models.JobStatusCompleted,
 		Mode:               payload.Mode,
-		ReasoningEffort:    reasoningEffort,
+		ReasoningEffort:    payload.ReasoningEffort,
+		EffortModel:        payload.ReasoningEffortModel,
 		UpdatedAt:          time.Now(),
 	}); err != nil {
 		log.Error("❌ Failed to persist final job state: %v", err)
@@ -554,16 +552,7 @@ func (mh *MessageHandler) handleUserMessage(msg models.BaseMessage) error {
 			log.Info("⚠️ No Claude session ID for job %s, upgrading to start_conversation", payload.JobID)
 		}
 
-		startPayload := models.StartConversationPayload{
-			JobID:              payload.JobID,
-			Message:            payload.Message,
-			ProcessedMessageID: payload.ProcessedMessageID,
-			MessageLink:        payload.MessageLink,
-			Attachments:        payload.Attachments,
-			PreviousMessages:   payload.PreviousMessages,
-			SenderMetadata:     payload.SenderMetadata,
-		}
-		startPayloadBytes, marshalErr := json.Marshal(startPayload)
+		startPayloadBytes, marshalErr := json.Marshal(startPayloadForUnstartedJob(payload, jobData))
 		if marshalErr != nil {
 			return fmt.Errorf("failed to marshal start_conversation payload: %w", marshalErr)
 		}
@@ -686,6 +675,7 @@ func (mh *MessageHandler) handleUserMessage(msg models.BaseMessage) error {
 		MessageLink:        payload.MessageLink,
 		Status:             models.JobStatusInProgress,
 		ReasoningEffort:    jobData.ReasoningEffort,
+		EffortModel:        jobData.EffortModel,
 		UpdatedAt:          time.Now(),
 	}); err != nil {
 		log.Error("❌ Failed to persist job state before Claude call: %v", err)
@@ -752,7 +742,8 @@ func (mh *MessageHandler) handleUserMessage(msg models.BaseMessage) error {
 	if jobData.WorktreePath != "" {
 		log.Info("🌳 Continuing Claude session in worktree: %s", jobData.WorktreePath)
 	}
-	claudeResult, err = mh.claudeService.ContinueConversationWithProgress(sessionID, finalPrompt, outboundSystemPrompt, jobData.WorktreePath, jobData.ReasoningEffort, progressEmitter)
+	reasoningEffort := effortForTurn(payload.JobID, jobData.ReasoningEffort, jobData.EffortModel, mh.claudeService.Model())
+	claudeResult, err = mh.claudeService.ContinueConversationWithProgress(sessionID, finalPrompt, outboundSystemPrompt, jobData.WorktreePath, reasoningEffort, progressEmitter)
 	if err != nil {
 		log.Info("❌ Error continuing Claude session: %v", err)
 		systemErr := mh.sendSystemMessage(
@@ -777,6 +768,7 @@ func (mh *MessageHandler) handleUserMessage(msg models.BaseMessage) error {
 			Status:             models.JobStatusFailed,
 			Mode:               jobData.Mode,
 			ReasoningEffort:    jobData.ReasoningEffort,
+			EffortModel:        jobData.EffortModel,
 			UpdatedAt:          time.Now(),
 		}); updateErr != nil {
 			log.Error("❌ Failed to mark job as failed: %v", updateErr)
@@ -866,6 +858,7 @@ func (mh *MessageHandler) handleUserMessage(msg models.BaseMessage) error {
 		WorktreePath:       jobData.WorktreePath, // Preserve worktree path
 		Mode:               jobData.Mode,
 		ReasoningEffort:    jobData.ReasoningEffort,
+		EffortModel:        jobData.EffortModel,
 		ClaudeSessionID:    claudeResult.SessionID,
 		PullRequestID:      prID,
 		LastMessage:        payload.Message,

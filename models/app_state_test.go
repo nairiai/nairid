@@ -22,6 +22,7 @@ func TestJobDataIsReadBackWithEveryField(t *testing.T) {
 		Status:             JobStatusCompleted,
 		Mode:               AgentModeExecute,
 		ReasoningEffort:    "xhigh",
+		EffortModel:        "claude-opus-4-8",
 		UpdatedAt:          time.Date(2026, 10, 2, 10, 0, 0, 0, time.UTC),
 	}
 	fields := reflect.ValueOf(want)
