@@ -1,3 +1,12 @@
+## [v0.0.122] - 2026-10-02
+
+### Bugfixes
+
+- Keep ask mode when a conversation is restarted or recovered ([#226](https://github.com/nairiai/nairid/pull/226))
+  - A reply that restarts a conversation with no CLI session now carries the job's mode; an empty mode used to run as execute (no ask-mode instructions, execute-only post-turn steps)
+  - The job state saved before a follow-up runs now keeps `Mode`, so a follow-up recovered after a crash stays in ask mode
+  - Crash recovery of an unstarted conversation passes the mode too
+
 ## [v0.0.121] - 2026-10-02
 
 ### Bugfixes
