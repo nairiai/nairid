@@ -1,3 +1,12 @@
+## [v0.0.120] - 2026-10-02
+
+### Features
+
+- Send the description Claude writes with each Bash command ([#224](https://github.com/nairiai/nairid/pull/224))
+  - Progress events carry a new optional `tool_description` field on both the tool start and its paired result, holding the short "what this command does" line Claude Code attaches to every `Bash` call
+  - `tool_input` still holds the raw command, so existing readers are unchanged; only `Bash` sends a description
+  - The backend uses it to show what each step is for in the Slack checklist instead of the bare program name; backends that don't know the field ignore it
+
 ## [v0.0.119] - 2026-10-01
 
 ### Features
