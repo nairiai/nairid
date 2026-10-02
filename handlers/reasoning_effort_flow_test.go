@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -18,14 +19,19 @@ import (
 // effortRecordingAgent stands in for a CLI: it records the effort each turn was run with.
 type effortRecordingAgent struct {
 	services.CLIAgent
-	model string
-	turns []string
+	model          string
+	turns          []string
+	failsNextStart bool
 }
 
 func (a *effortRecordingAgent) StartNewConversationWithProgress(
 	prompt, systemPrompt, workDir, effort string, emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
 	a.turns = append(a.turns, "start:"+effort)
+	if a.failsNextStart {
+		a.failsNextStart = false
+		return nil, errors.New("the CLI could not start a session")
+	}
 	return &services.CLIAgentResult{Output: "done", SessionID: "session-1"}, nil
 }
 
@@ -119,6 +125,41 @@ func TestReasoningEffortReachesEveryTurnOfAConversation(t *testing.T) {
 		"continue:",     // the agent now runs a model the level was not checked for
 		"continue:high", // back on the model it was checked for
 	}
+	if !reflect.DeepEqual(agent.turns, want) {
+		t.Errorf("turns ran with %v, want %v", agent.turns, want)
+	}
+}
+
+func TestReasoningEffortSurvivesAFailedFirstTurn(t *testing.T) {
+	t.Setenv("NAIRI_CONFIG_DIR", t.TempDir())
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+	agent := &effortRecordingAgent{model: "gpt-5.5", failsNextStart: true}
+	handler := startHandlerLikeAFreshProcess(t, agent, filepath.Join(t.TempDir(), "state.json"), backend.URL)
+
+	err := handler.handleStartConversation(models.BaseMessage{
+		ID:   "msg_0",
+		Type: models.MessageTypeStartConversation,
+		Payload: models.StartConversationPayload{
+			JobID: "j1", Message: "hello", ProcessedMessageID: "cmsg_0",
+			ReasoningEffort: "high", ReasoningEffortModel: "gpt-5.5",
+		},
+	})
+	if err == nil {
+		t.Fatal("the first turn was meant to fail")
+	}
+	err = handler.handleUserMessage(models.BaseMessage{
+		ID:      "msg_1",
+		Type:    models.MessageTypeUserMessage,
+		Payload: models.UserMessagePayload{JobID: "j1", Message: "try again", ProcessedMessageID: "cmsg_1"},
+	})
+	if err != nil {
+		t.Fatalf("reply: %v", err)
+	}
+
+	want := []string{"start:high", "start:high"}
 	if !reflect.DeepEqual(agent.turns, want) {
 		t.Errorf("turns ran with %v, want %v", agent.turns, want)
 	}
