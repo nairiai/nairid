@@ -40,7 +40,8 @@ type JobData struct {
 	MessageLink        string    `json:"message_link"`               // Link to the original chat message
 	Status             JobStatus `json:"status"`                     // Current status of the job: "in_progress" or "completed"
 	Mode               AgentMode `json:"mode"`                       // "execute" or "ask" - determines if agent can modify files
-	ReasoningEffort    string    `json:"reasoning_effort,omitempty"` // CLI effort level fixed when the conversation started; empty = model default
+	ReasoningEffort    string    `json:"reasoning_effort,omitempty"` // CLI effort level the backend sent when the conversation started; empty = model default
+	EffortModel        string    `json:"effort_model,omitempty"`     // --model id the level was checked against; it applies only while the agent runs that model
 	UpdatedAt          time.Time `json:"updated_at"`
 }
 
@@ -164,20 +165,10 @@ func (a *AppState) GetJobData(jobID string) (*JobData, bool) {
 	if !exists {
 		return nil, false
 	}
-	// Return a copy to avoid race conditions
-	return &JobData{
-		JobID:              data.JobID,
-		BranchName:         data.BranchName,
-		WorktreePath:       data.WorktreePath,
-		ClaudeSessionID:    data.ClaudeSessionID,
-		PullRequestID:      data.PullRequestID,
-		LastMessage:        data.LastMessage,
-		ProcessedMessageID: data.ProcessedMessageID,
-		MessageLink:        data.MessageLink,
-		Status:             data.Status,
-		Mode:               data.Mode,
-		UpdatedAt:          data.UpdatedAt,
-	}, true
+	// Return a copy to avoid race conditions. JobData holds only values, so
+	// copying the struct copies every field, including ones added later.
+	jobCopy := *data
+	return &jobCopy, true
 }
 
 // RemoveJob removes job data for a given JobID
@@ -200,19 +191,7 @@ func (a *AppState) GetAllJobs() map[string]JobData {
 	defer a.mutex.RUnlock()
 	result := make(map[string]JobData)
 	for jobID, data := range a.jobs {
-		result[jobID] = JobData{
-			JobID:              data.JobID,
-			BranchName:         data.BranchName,
-			WorktreePath:       data.WorktreePath,
-			ClaudeSessionID:    data.ClaudeSessionID,
-			PullRequestID:      data.PullRequestID,
-			LastMessage:        data.LastMessage,
-			ProcessedMessageID: data.ProcessedMessageID,
-			MessageLink:        data.MessageLink,
-			Status:             data.Status,
-			Mode:               data.Mode,
-			UpdatedAt:          data.UpdatedAt,
-		}
+		result[jobID] = *data
 	}
 	return result
 }

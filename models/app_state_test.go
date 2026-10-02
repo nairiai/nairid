@@ -2,8 +2,50 @@ package models
 
 import (
 	"path/filepath"
+	"reflect"
 	"testing"
+	"time"
 )
+
+// A follow-up message reads the job back before it runs the CLI again, so a field
+// the read drops (the reasoning effort was one) is lost from the second turn on.
+func TestJobDataIsReadBackWithEveryField(t *testing.T) {
+	want := JobData{
+		JobID:              "j1",
+		BranchName:         "nairi/fix-login",
+		WorktreePath:       "/tmp/worktrees/j1",
+		ClaudeSessionID:    "ses_1",
+		PullRequestID:      "42",
+		LastMessage:        "fix the login test",
+		ProcessedMessageID: "cmsg_1",
+		MessageLink:        "https://example.slack.com/archives/C1/p1",
+		Status:             JobStatusCompleted,
+		Mode:               AgentModeExecute,
+		ReasoningEffort:    "xhigh",
+		EffortModel:        "claude-opus-4-8",
+		UpdatedAt:          time.Date(2026, 10, 2, 10, 0, 0, 0, time.UTC),
+	}
+	fields := reflect.ValueOf(want)
+	for i := 0; i < fields.NumField(); i++ {
+		if fields.Field(i).IsZero() {
+			t.Fatalf("set JobData.%s in this test, so that reading it back is checked", fields.Type().Field(i).Name)
+		}
+	}
+
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	state := NewAppState("agent", statePath)
+	if err := state.UpdateJobData("j1", want); err != nil {
+		t.Fatalf("seed job: %v", err)
+	}
+
+	got, exists := state.GetJobData("j1")
+	if !exists || !reflect.DeepEqual(*got, want) {
+		t.Errorf("GetJobData = %+v, want %+v", got, want)
+	}
+	if all := state.GetAllJobs(); !reflect.DeepEqual(all["j1"], want) {
+		t.Errorf("GetAllJobs = %+v, want %+v", all["j1"], want)
+	}
+}
 
 func TestSetJobPullRequestIDKeepsConcurrentStatusChange(t *testing.T) {
 	state := NewAppState("agent", filepath.Join(t.TempDir(), "state.json"))
