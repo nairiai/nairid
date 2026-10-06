@@ -1126,7 +1126,7 @@ func (g *GitClient) ValidateRemoteAccess() error {
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Error("❌ Remote access validation failed: %v\nOutput: %s", err, string(output))
+		log.Error("❌ Remote access validation failed: %v\nOutput: %s", err, RedactURLCredentials(string(output)))
 		return g.parseRemoteAccessError(err, string(output), rawRemoteURL)
 	}
 
@@ -1138,6 +1138,8 @@ func (g *GitClient) ValidateRemoteAccess() error {
 func (g *GitClient) parseRemoteAccessError(err error, output, remoteURL string) error {
 	remoteURL = RedactURLCredentials(remoteURL)
 	outputStr := strings.ToLower(output)
+	remoteURL = RedactURLCredentials(remoteURL)
+	output = RedactURLCredentials(output)
 
 	// Check for timeout first
 	if strings.Contains(err.Error(), "context deadline exceeded") {
