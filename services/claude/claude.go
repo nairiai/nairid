@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -127,10 +128,11 @@ func (c *ClaudeService) mergeOptions(options *clients.ClaudeOptions) *clients.Cl
 }
 
 func (c *ClaudeService) StartNewConversation(prompt string) (*services.CLIAgentResult, error) {
-	return c.StartNewConversationWithOptions(prompt, nil, nil)
+	return c.StartNewConversationWithOptions(context.Background(), prompt, nil, nil)
 }
 
 func (c *ClaudeService) StartNewConversationWithOptions(
+	ctx context.Context,
 	prompt string,
 	options *clients.ClaudeOptions,
 	emitter services.ProgressEmitter,
@@ -151,7 +153,10 @@ func (c *ClaudeService) StartNewConversationWithOptions(
 		}
 	}
 
-	rawOutput, err := c.claudeClient.StartNewSession(prompt, mergedOptions, onLine)
+	rawOutput, err := c.claudeClient.StartNewSession(ctx, prompt, mergedOptions, onLine)
+	if err != nil && ctx.Err() == context.Canceled {
+		return nil, &core.ErrTurnStopped{SessionID: c.sessionIDFromStoppedRun(err)}
+	}
 	if err != nil {
 		log.Error("Failed to start new Claude session: %v", err)
 		handledErr := c.handleClaudeClientError(err, "failed to start new Claude session")
@@ -209,7 +214,7 @@ func (c *ClaudeService) StartNewConversationWithOptions(
 func (c *ClaudeService) StartNewConversationWithSystemPrompt(
 	prompt, systemPrompt string,
 ) (*services.CLIAgentResult, error) {
-	return c.StartNewConversationWithOptions(prompt, &clients.ClaudeOptions{
+	return c.StartNewConversationWithOptions(context.Background(), prompt, &clients.ClaudeOptions{
 		SystemPrompt: systemPrompt,
 	}, nil)
 }
@@ -218,24 +223,24 @@ func (c *ClaudeService) StartNewConversationWithDisallowedTools(
 	prompt string,
 	disallowedTools []string,
 ) (*services.CLIAgentResult, error) {
-	return c.StartNewConversationWithOptions(prompt, &clients.ClaudeOptions{
+	return c.StartNewConversationWithOptions(context.Background(), prompt, &clients.ClaudeOptions{
 		DisallowedTools: disallowedTools,
 	}, nil)
 }
 
 func (c *ClaudeService) ContinueConversation(sessionID, prompt string) (*services.CLIAgentResult, error) {
-	return c.ContinueConversationWithOptions(sessionID, prompt, nil, nil)
+	return c.ContinueConversationWithOptions(context.Background(), sessionID, prompt, nil, nil)
 }
 
 func (c *ClaudeService) ContinueConversationWithSystemPrompt(sessionID, prompt, systemPrompt string) (*services.CLIAgentResult, error) {
-	return c.ContinueConversationWithOptions(sessionID, prompt, &clients.ClaudeOptions{
+	return c.ContinueConversationWithOptions(context.Background(), sessionID, prompt, &clients.ClaudeOptions{
 		SystemPrompt: systemPrompt,
 	}, nil)
 }
 
 // StartNewConversationInDir starts a new conversation in a specific working directory
 func (c *ClaudeService) StartNewConversationInDir(prompt, workDir string) (*services.CLIAgentResult, error) {
-	return c.StartNewConversationWithOptions(prompt, &clients.ClaudeOptions{
+	return c.StartNewConversationWithOptions(context.Background(), prompt, &clients.ClaudeOptions{
 		WorkDir: workDir,
 	}, nil)
 }
@@ -244,7 +249,7 @@ func (c *ClaudeService) StartNewConversationInDir(prompt, workDir string) (*serv
 func (c *ClaudeService) StartNewConversationWithSystemPromptInDir(
 	prompt, systemPrompt, workDir string,
 ) (*services.CLIAgentResult, error) {
-	return c.StartNewConversationWithOptions(prompt, &clients.ClaudeOptions{
+	return c.StartNewConversationWithOptions(context.Background(), prompt, &clients.ClaudeOptions{
 		SystemPrompt: systemPrompt,
 		WorkDir:      workDir,
 	}, nil)
@@ -252,19 +257,20 @@ func (c *ClaudeService) StartNewConversationWithSystemPromptInDir(
 
 // ContinueConversationInDir continues an existing conversation in a specific directory
 func (c *ClaudeService) ContinueConversationInDir(sessionID, prompt, workDir string) (*services.CLIAgentResult, error) {
-	return c.ContinueConversationWithOptions(sessionID, prompt, &clients.ClaudeOptions{
+	return c.ContinueConversationWithOptions(context.Background(), sessionID, prompt, &clients.ClaudeOptions{
 		WorkDir: workDir,
 	}, nil)
 }
 
 func (c *ClaudeService) ContinueConversationWithSystemPromptInDir(sessionID, prompt, systemPrompt, workDir string) (*services.CLIAgentResult, error) {
-	return c.ContinueConversationWithOptions(sessionID, prompt, &clients.ClaudeOptions{
+	return c.ContinueConversationWithOptions(context.Background(), sessionID, prompt, &clients.ClaudeOptions{
 		SystemPrompt: systemPrompt,
 		WorkDir:      workDir,
 	}, nil)
 }
 
 func (c *ClaudeService) ContinueConversationWithOptions(
+	ctx context.Context,
 	sessionID, prompt string,
 	options *clients.ClaudeOptions,
 	emitter services.ProgressEmitter,
@@ -285,7 +291,10 @@ func (c *ClaudeService) ContinueConversationWithOptions(
 		}
 	}
 
-	rawOutput, err := c.claudeClient.ContinueSession(sessionID, prompt, mergedOptions, onLine)
+	rawOutput, err := c.claudeClient.ContinueSession(ctx, sessionID, prompt, mergedOptions, onLine)
+	if err != nil && ctx.Err() == context.Canceled {
+		return nil, &core.ErrTurnStopped{SessionID: c.sessionIDFromStoppedRun(err)}
+	}
 	if err != nil {
 		log.Error("Failed to continue Claude session: %v", err)
 		handledErr := c.handleClaudeClientError(err, "failed to continue Claude session")
@@ -622,10 +631,11 @@ func (c *ClaudeService) handleClaudeClientError(err error, operation string) err
 
 // StartNewConversationWithProgress starts a new conversation with progress streaming.
 func (c *ClaudeService) StartNewConversationWithProgress(
+	ctx context.Context,
 	prompt, systemPrompt, workDir, effort string,
 	emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
-	return c.StartNewConversationWithOptions(prompt, &clients.ClaudeOptions{
+	return c.StartNewConversationWithOptions(ctx, prompt, &clients.ClaudeOptions{
 		SystemPrompt: systemPrompt,
 		WorkDir:      workDir,
 		Effort:       effort,
@@ -634,10 +644,11 @@ func (c *ClaudeService) StartNewConversationWithProgress(
 
 // ContinueConversationWithProgress continues a conversation with progress streaming.
 func (c *ClaudeService) ContinueConversationWithProgress(
+	ctx context.Context,
 	sessionID, prompt, systemPrompt, workDir, effort string,
 	emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
-	return c.ContinueConversationWithOptions(sessionID, prompt, &clients.ClaudeOptions{
+	return c.ContinueConversationWithOptions(ctx, sessionID, prompt, &clients.ClaudeOptions{
 		SystemPrompt: systemPrompt,
 		WorkDir:      workDir,
 		Effort:       effort,
@@ -651,4 +662,17 @@ func (c *ClaudeService) Model() string {
 // AgentName identifies this service implementation
 func (c *ClaudeService) AgentName() string {
 	return "claude"
+}
+
+// sessionIDFromStoppedRun reads the session id out of what the CLI printed before it was stopped.
+func (c *ClaudeService) sessionIDFromStoppedRun(err error) string {
+	commandErr, ok := core.IsClaudeCommandErr(err)
+	if !ok {
+		return ""
+	}
+	messages, parseErr := services.MapClaudeOutputToMessages(commandErr.Output)
+	if parseErr != nil {
+		return ""
+	}
+	return c.extractSessionID(messages)
 }

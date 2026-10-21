@@ -18,7 +18,7 @@ func NewCursorClient() *CursorClient {
 	return &CursorClient{}
 }
 
-func (c *CursorClient) StartNewSession(prompt string, options *clients.CursorOptions) (string, error) {
+func (c *CursorClient) StartNewSession(ctx context.Context, prompt string, options *clients.CursorOptions) (string, error) {
 	log.Info("📋 Starting to create new Cursor session")
 
 	// Prepend system prompt if provided in options
@@ -47,13 +47,16 @@ func (c *CursorClient) StartNewSession(prompt string, options *clients.CursorOpt
 	log.Info("Command arguments: %v", args)
 
 	timeout := clients.SessionTimeout()
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	cmd := clients.BuildAgentCommandWithContext(ctx, "cursor-agent", args...)
 
 	log.Info("Running Cursor command (timeout: %s)", timeout)
 	output, err := cmd.CombinedOutput()
+	if err == nil && ctx.Err() != nil {
+		err = ctx.Err()
+	}
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			log.Error("⏰ Cursor session timed out after %s", timeout)
@@ -74,7 +77,7 @@ func (c *CursorClient) StartNewSession(prompt string, options *clients.CursorOpt
 	return result, nil
 }
 
-func (c *CursorClient) ContinueSession(sessionID, prompt string, options *clients.CursorOptions) (string, error) {
+func (c *CursorClient) ContinueSession(ctx context.Context, sessionID, prompt string, options *clients.CursorOptions) (string, error) {
 	log.Info("📋 Starting to continue Cursor session: %s", sessionID)
 	args := []string{
 		"--force", // otherwise, it will wait for approval for all mutation commands
@@ -93,13 +96,16 @@ func (c *CursorClient) ContinueSession(sessionID, prompt string, options *client
 	log.Info("Command arguments: %v", args)
 
 	timeout := clients.SessionTimeout()
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	cmd := clients.BuildAgentCommandWithContext(ctx, "cursor-agent", args...)
 
 	log.Info("Running Cursor command (timeout: %s)", timeout)
 	output, err := cmd.CombinedOutput()
+	if err == nil && ctx.Err() != nil {
+		err = ctx.Err()
+	}
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			log.Error("⏰ Cursor session timed out after %s", timeout)

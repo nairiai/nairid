@@ -102,7 +102,7 @@ func (o *OpenCodeService) CleanupOldLogs(maxAgeDays int) error {
 }
 
 func (o *OpenCodeService) StartNewConversation(prompt string) (*services.CLIAgentResult, error) {
-	return o.StartNewConversationWithOptions(prompt, nil, nil)
+	return o.StartNewConversationWithOptions(context.Background(), prompt, nil, nil)
 }
 
 // deriveOpenCodeOptions creates a final options struct, applying service model if set
@@ -131,6 +131,7 @@ func (o *OpenCodeService) deriveOpenCodeOptions(options *clients.OpenCodeOptions
 }
 
 func (o *OpenCodeService) StartNewConversationWithOptions(
+	ctx context.Context,
 	prompt string,
 	options *clients.OpenCodeOptions,
 	emitter services.ProgressEmitter,
@@ -150,7 +151,10 @@ func (o *OpenCodeService) StartNewConversationWithOptions(
 	}
 
 	runStart := time.Now().Add(-1 * time.Second) // small skew tolerance
-	rawOutput, err := o.openCodeClient.StartNewSession(prompt, finalOptions, onLine)
+	rawOutput, err := o.openCodeClient.StartNewSession(ctx, prompt, finalOptions, onLine)
+	if err != nil && ctx.Err() == context.Canceled {
+		return nil, &core.ErrTurnStopped{SessionID: o.sessionIDFromStoppedRun(err)}
+	}
 	if err != nil {
 		log.Error("Failed to start new OpenCode session: %v", err)
 		return nil, o.handleOpenCodeClientError(err, "failed to start new OpenCode session")
@@ -201,7 +205,7 @@ func (o *OpenCodeService) StartNewConversationWithSystemPrompt(
 		"# USER MESSAGE\n" +
 		prompt
 	log.Info("Prepending system prompt to user prompt with clear delimiters")
-	return o.StartNewConversationWithOptions(finalPrompt, nil, nil)
+	return o.StartNewConversationWithOptions(context.Background(), finalPrompt, nil, nil)
 }
 
 func (o *OpenCodeService) StartNewConversationWithDisallowedTools(
@@ -210,11 +214,11 @@ func (o *OpenCodeService) StartNewConversationWithDisallowedTools(
 ) (*services.CLIAgentResult, error) {
 	// OpenCode doesn't have a disallowed tools option via CLI
 	log.Info("⚠️ OpenCode doesn't support disallowed tools via CLI")
-	return o.StartNewConversationWithOptions(prompt, nil, nil)
+	return o.StartNewConversationWithOptions(context.Background(), prompt, nil, nil)
 }
 
 func (o *OpenCodeService) ContinueConversation(sessionID, prompt string) (*services.CLIAgentResult, error) {
-	return o.ContinueConversationWithOptions(sessionID, prompt, nil, nil)
+	return o.ContinueConversationWithOptions(context.Background(), sessionID, prompt, nil, nil)
 }
 
 func (o *OpenCodeService) ContinueConversationWithSystemPrompt(sessionID, prompt, systemPrompt string) (*services.CLIAgentResult, error) {
@@ -224,7 +228,7 @@ func (o *OpenCodeService) ContinueConversationWithSystemPrompt(sessionID, prompt
 
 // StartNewConversationInDir starts a new conversation in a specific working directory
 func (o *OpenCodeService) StartNewConversationInDir(prompt, workDir string) (*services.CLIAgentResult, error) {
-	return o.StartNewConversationWithOptions(prompt, &clients.OpenCodeOptions{
+	return o.StartNewConversationWithOptions(context.Background(), prompt, &clients.OpenCodeOptions{
 		WorkDir: workDir,
 	}, nil)
 }
@@ -240,7 +244,7 @@ func (o *OpenCodeService) StartNewConversationWithSystemPromptInDir(
 		"# USER MESSAGE\n" +
 		prompt
 	log.Info("Prepending system prompt to user prompt with clear delimiters")
-	return o.StartNewConversationWithOptions(finalPrompt, &clients.OpenCodeOptions{
+	return o.StartNewConversationWithOptions(context.Background(), finalPrompt, &clients.OpenCodeOptions{
 		WorkDir: workDir,
 	}, nil)
 }
@@ -252,12 +256,13 @@ func (o *OpenCodeService) ContinueConversationWithSystemPromptInDir(sessionID, p
 
 // ContinueConversationInDir continues an existing conversation in a specific directory
 func (o *OpenCodeService) ContinueConversationInDir(sessionID, prompt, workDir string) (*services.CLIAgentResult, error) {
-	return o.ContinueConversationWithOptions(sessionID, prompt, &clients.OpenCodeOptions{
+	return o.ContinueConversationWithOptions(context.Background(), sessionID, prompt, &clients.OpenCodeOptions{
 		WorkDir: workDir,
 	}, nil)
 }
 
 func (o *OpenCodeService) ContinueConversationWithOptions(
+	ctx context.Context,
 	sessionID, prompt string,
 	options *clients.OpenCodeOptions,
 	emitter services.ProgressEmitter,
@@ -277,7 +282,10 @@ func (o *OpenCodeService) ContinueConversationWithOptions(
 	}
 
 	runStart := time.Now().Add(-1 * time.Second) // small skew tolerance
-	rawOutput, err := o.openCodeClient.ContinueSession(sessionID, prompt, finalOptions, onLine)
+	rawOutput, err := o.openCodeClient.ContinueSession(ctx, sessionID, prompt, finalOptions, onLine)
+	if err != nil && ctx.Err() == context.Canceled {
+		return nil, &core.ErrTurnStopped{SessionID: o.sessionIDFromStoppedRun(err)}
+	}
 	if err != nil {
 		log.Error("Failed to continue OpenCode session: %v", err)
 		return nil, o.handleOpenCodeClientError(err, "failed to continue OpenCode session")
@@ -353,6 +361,7 @@ func (o *OpenCodeService) handleOpenCodeClientError(err error, operation string)
 
 // StartNewConversationWithProgress starts a new conversation with progress streaming.
 func (o *OpenCodeService) StartNewConversationWithProgress(
+	ctx context.Context,
 	prompt, systemPrompt, workDir, effort string,
 	emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
@@ -363,16 +372,17 @@ func (o *OpenCodeService) StartNewConversationWithProgress(
 			"# USER MESSAGE\n" +
 			prompt
 	}
-	return o.StartNewConversationWithOptions(finalPrompt, openCodeOptionsFor(workDir, effort), emitter)
+	return o.StartNewConversationWithOptions(ctx, finalPrompt, openCodeOptionsFor(workDir, effort), emitter)
 }
 
 // ContinueConversationWithProgress continues a conversation with progress streaming.
 func (o *OpenCodeService) ContinueConversationWithProgress(
+	ctx context.Context,
 	sessionID, prompt, systemPrompt, workDir, effort string,
 	emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
 	// OpenCode: system prompt persists from turn 1
-	return o.ContinueConversationWithOptions(sessionID, prompt, openCodeOptionsFor(workDir, effort), emitter)
+	return o.ContinueConversationWithOptions(ctx, sessionID, prompt, openCodeOptionsFor(workDir, effort), emitter)
 }
 
 func openCodeOptionsFor(workDir, effort string) *clients.OpenCodeOptions {
@@ -389,4 +399,17 @@ func (o *OpenCodeService) Model() string {
 // AgentName identifies this service implementation
 func (o *OpenCodeService) AgentName() string {
 	return "opencode"
+}
+
+// sessionIDFromStoppedRun reads the session id out of what the CLI printed before it was stopped.
+func (o *OpenCodeService) sessionIDFromStoppedRun(err error) string {
+	commandErr, ok := core.IsClaudeCommandErr(err)
+	if !ok {
+		return ""
+	}
+	messages, parseErr := MapOpenCodeOutputToMessages(commandErr.Output)
+	if parseErr != nil {
+		return ""
+	}
+	return ExtractOpenCodeSessionID(messages)
 }

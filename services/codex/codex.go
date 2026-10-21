@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -95,7 +96,7 @@ func (c *CodexService) CleanupOldLogs(maxAgeDays int) error {
 }
 
 func (c *CodexService) StartNewConversation(prompt string) (*services.CLIAgentResult, error) {
-	return c.StartNewConversationWithOptions(prompt, nil, nil)
+	return c.StartNewConversationWithOptions(context.Background(), prompt, nil, nil)
 }
 
 // deriveCodexOptions creates a final options struct, applying service model if set
@@ -118,6 +119,7 @@ func (c *CodexService) deriveCodexOptions(options *clients.CodexOptions) *client
 }
 
 func (c *CodexService) StartNewConversationWithOptions(
+	ctx context.Context,
 	prompt string,
 	options *clients.CodexOptions,
 	emitter services.ProgressEmitter,
@@ -136,7 +138,10 @@ func (c *CodexService) StartNewConversationWithOptions(
 		}
 	}
 
-	rawOutput, err := c.codexClient.StartNewSession(prompt, finalOptions, onLine)
+	rawOutput, err := c.codexClient.StartNewSession(ctx, prompt, finalOptions, onLine)
+	if err != nil && ctx.Err() == context.Canceled {
+		return nil, &core.ErrTurnStopped{SessionID: c.sessionIDFromStoppedRun(err)}
+	}
 	if err != nil {
 		log.Error("Failed to start new Codex session: %v", err)
 		return nil, c.handleCodexClientError(err, "failed to start new Codex session")
@@ -197,7 +202,7 @@ func (c *CodexService) StartNewConversationWithSystemPrompt(
 		"# USER MESSAGE\n" +
 		prompt
 	log.Info("Prepending system prompt to user prompt with clear delimiters")
-	return c.StartNewConversationWithOptions(finalPrompt, nil, nil)
+	return c.StartNewConversationWithOptions(context.Background(), finalPrompt, nil, nil)
 }
 
 func (c *CodexService) StartNewConversationWithDisallowedTools(
@@ -206,11 +211,11 @@ func (c *CodexService) StartNewConversationWithDisallowedTools(
 ) (*services.CLIAgentResult, error) {
 	// Codex doesn't have a disallowed tools option
 	// Return the conversation without this feature
-	return c.StartNewConversationWithOptions(prompt, nil, nil)
+	return c.StartNewConversationWithOptions(context.Background(), prompt, nil, nil)
 }
 
 func (c *CodexService) ContinueConversation(sessionID, prompt string) (*services.CLIAgentResult, error) {
-	return c.ContinueConversationWithOptions(sessionID, prompt, nil, nil)
+	return c.ContinueConversationWithOptions(context.Background(), sessionID, prompt, nil, nil)
 }
 
 func (c *CodexService) ContinueConversationWithSystemPrompt(sessionID, prompt, systemPrompt string) (*services.CLIAgentResult, error) {
@@ -247,6 +252,7 @@ func (c *CodexService) ContinueConversationInDir(sessionID, prompt, workDir stri
 }
 
 func (c *CodexService) ContinueConversationWithOptions(
+	ctx context.Context,
 	sessionID, prompt string,
 	options *clients.CodexOptions,
 	emitter services.ProgressEmitter,
@@ -265,7 +271,10 @@ func (c *CodexService) ContinueConversationWithOptions(
 		}
 	}
 
-	rawOutput, err := c.codexClient.ContinueSession(sessionID, prompt, finalOptions, onLine)
+	rawOutput, err := c.codexClient.ContinueSession(ctx, sessionID, prompt, finalOptions, onLine)
+	if err != nil && ctx.Err() == context.Canceled {
+		return nil, &core.ErrTurnStopped{SessionID: c.sessionIDFromStoppedRun(err)}
+	}
 	if err != nil {
 		log.Error("Failed to continue Codex session: %v", err)
 		return nil, c.handleCodexClientError(err, "failed to continue Codex session")
@@ -341,6 +350,7 @@ func (c *CodexService) handleCodexClientError(err error, operation string) error
 
 // StartNewConversationWithProgress starts a new conversation with progress streaming.
 func (c *CodexService) StartNewConversationWithProgress(
+	ctx context.Context,
 	prompt, systemPrompt, workDir, effort string,
 	emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
@@ -351,16 +361,17 @@ func (c *CodexService) StartNewConversationWithProgress(
 			"# USER MESSAGE\n" +
 			prompt
 	}
-	return c.StartNewConversationWithOptions(finalPrompt, codexOptionsForEffort(effort), emitter)
+	return c.StartNewConversationWithOptions(ctx, finalPrompt, codexOptionsForEffort(effort), emitter)
 }
 
 // ContinueConversationWithProgress continues a conversation with progress streaming.
 func (c *CodexService) ContinueConversationWithProgress(
+	ctx context.Context,
 	sessionID, prompt, systemPrompt, workDir, effort string,
 	emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
 	// Codex: system prompt persists from turn 1, workDir not supported on continue
-	return c.ContinueConversationWithOptions(sessionID, prompt, codexOptionsForEffort(effort), emitter)
+	return c.ContinueConversationWithOptions(ctx, sessionID, prompt, codexOptionsForEffort(effort), emitter)
 }
 
 func codexOptionsForEffort(effort string) *clients.CodexOptions {
@@ -377,4 +388,17 @@ func (c *CodexService) Model() string {
 // AgentName identifies this service implementation
 func (c *CodexService) AgentName() string {
 	return "codex"
+}
+
+// sessionIDFromStoppedRun reads the thread id out of what the CLI printed before it was stopped.
+func (c *CodexService) sessionIDFromStoppedRun(err error) string {
+	commandErr, ok := core.IsClaudeCommandErr(err)
+	if !ok {
+		return ""
+	}
+	messages, parseErr := MapCodexOutputToMessages(commandErr.Output)
+	if parseErr != nil {
+		return ""
+	}
+	return ExtractCodexThreadID(messages)
 }

@@ -21,6 +21,8 @@ import (
 // processing a job when an unrecoverable error occurs.
 type JobEvictor interface {
 	EvictJob(jobID string)
+	// DropQueuedMessages returns the messages still waiting in the job's queue and leaves it empty.
+	DropQueuedMessages(jobID string) []models.BaseMessage
 }
 
 type MessageHandler struct {
@@ -31,6 +33,7 @@ type MessageHandler struct {
 	messageSender   *MessageSender
 	agentsApiClient *clients.AgentsApiClient
 	jobEvictor      JobEvictor
+	turns           *turnRegistry
 }
 
 func NewMessageHandler(
@@ -48,6 +51,7 @@ func NewMessageHandler(
 		envManager:      envManager,
 		messageSender:   messageSender,
 		agentsApiClient: agentsApiClient,
+		turns:           newTurnRegistry(),
 	}
 }
 
@@ -209,6 +213,10 @@ func (mh *MessageHandler) HandleMessage(msg models.BaseMessage) {
 		if err := mh.handleCheckIdleJobs(msg); err != nil {
 			log.Info("❌ Error handling CheckIdleJobs message: %v", err)
 		}
+	case models.MessageTypeStopTurn:
+		if err := mh.handleStopTurn(msg); err != nil {
+			log.Error("❌ Error handling StopTurn message: %v", err)
+		}
 	default:
 		log.Info("⚠️ Unhandled message type: %s", msg.Type)
 	}
@@ -227,6 +235,11 @@ func (mh *MessageHandler) handleStartConversation(msg models.BaseMessage) error 
 		log.Info("❌ Failed to send processing message notification: %v", err)
 		return fmt.Errorf("failed to send processing message notification: %w", err)
 	}
+
+	// The turn counts as running from here: a stop that lands while the worktree is
+	// being prepared still ends it (the CLI then refuses to start on a cancelled ctx).
+	turnCtx := mh.turns.Begin(payload.JobID, payload.ProcessedMessageID)
+	defer mh.turns.End(payload.JobID)
 
 	log.Info("🚀 Starting new conversation with message: %s", payload.Message)
 
@@ -352,7 +365,20 @@ func (mh *MessageHandler) handleStartConversation(msg models.BaseMessage) error 
 	if worktreePath != "" {
 		log.Info("🌳 Starting Claude session in worktree: %s", worktreePath)
 	}
-	claudeResult, err = mh.claudeService.StartNewConversationWithProgress(finalPrompt, systemPrompt, worktreePath, reasoningEffort, progressEmitter)
+	claudeResult, err = mh.claudeService.StartNewConversationWithProgress(turnCtx, finalPrompt, systemPrompt, worktreePath, reasoningEffort, progressEmitter)
+	if stopped, stoppedBy := mh.turns.End(payload.JobID); stopped {
+		return mh.finishStoppedTurn(models.JobData{
+			JobID:              payload.JobID,
+			BranchName:         branchName,
+			WorktreePath:       worktreePath,
+			LastMessage:        payload.Message,
+			ProcessedMessageID: payload.ProcessedMessageID,
+			MessageLink:        payload.MessageLink,
+			Mode:               payload.Mode,
+			ReasoningEffort:    payload.ReasoningEffort,
+			EffortModel:        payload.ReasoningEffortModel,
+		}, claudeResult, err, stoppedBy)
+	}
 
 	if err != nil {
 		log.Info("❌ Error starting Claude session: %v", err)
@@ -539,6 +565,9 @@ func (mh *MessageHandler) handleUserMessage(msg models.BaseMessage) error {
 	}
 
 	log.Info("💬 Continuing conversation with message: %s", payload.Message)
+
+	turnCtx := mh.turns.Begin(payload.JobID, payload.ProcessedMessageID)
+	defer mh.turns.End(payload.JobID)
 
 	// Get the current job data to retrieve the Claude session ID and branch
 	jobData, exists := mh.appState.GetJobData(payload.JobID)
@@ -744,7 +773,14 @@ func (mh *MessageHandler) handleUserMessage(msg models.BaseMessage) error {
 		log.Info("🌳 Continuing Claude session in worktree: %s", jobData.WorktreePath)
 	}
 	reasoningEffort := effortForTurn(payload.JobID, jobData.ReasoningEffort, jobData.EffortModel, mh.claudeService.Model())
-	claudeResult, err = mh.claudeService.ContinueConversationWithProgress(sessionID, finalPrompt, outboundSystemPrompt, jobData.WorktreePath, reasoningEffort, progressEmitter)
+	claudeResult, err = mh.claudeService.ContinueConversationWithProgress(turnCtx, sessionID, finalPrompt, outboundSystemPrompt, jobData.WorktreePath, reasoningEffort, progressEmitter)
+	if stopped, stoppedBy := mh.turns.End(payload.JobID); stopped {
+		stoppedJob := *jobData
+		stoppedJob.LastMessage = payload.Message
+		stoppedJob.ProcessedMessageID = payload.ProcessedMessageID
+		stoppedJob.MessageLink = payload.MessageLink
+		return mh.finishStoppedTurn(stoppedJob, claudeResult, err, stoppedBy)
+	}
 	if err != nil {
 		log.Info("❌ Error continuing Claude session: %v", err)
 		systemErr := mh.sendSystemMessage(

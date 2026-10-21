@@ -175,6 +175,26 @@ func (d *JobDispatcher) EvictJob(jobID string) {
 	d.cleanup(jobID)
 }
 
+// DropQueuedMessages empties the job's channel and returns what was waiting in it.
+// The worker is busy with the running turn, so nothing else reads the channel now.
+func (d *JobDispatcher) DropQueuedMessages(jobID string) []models.BaseMessage {
+	d.mutex.Lock()
+	ch, exists := d.activeJobs[jobID]
+	d.mutex.Unlock()
+	if !exists {
+		return nil
+	}
+	var dropped []models.BaseMessage
+	for {
+		select {
+		case msg := <-ch:
+			dropped = append(dropped, msg)
+		default:
+			return dropped
+		}
+	}
+}
+
 // extractJobID extracts the job ID from a message based on its type
 func (d *JobDispatcher) extractJobID(msg models.BaseMessage) string {
 	switch msg.Type {

@@ -1,6 +1,7 @@
 package cursor
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -95,7 +96,7 @@ func (c *CursorService) CleanupOldLogs(maxAgeDays int) error {
 }
 
 func (c *CursorService) StartNewConversation(prompt string) (*services.CLIAgentResult, error) {
-	return c.StartNewConversationWithOptions(prompt, nil)
+	return c.StartNewConversationWithOptions(context.Background(), prompt, nil)
 }
 
 // deriveCursorOptions creates a final options struct, applying service model if set
@@ -116,6 +117,7 @@ func (c *CursorService) deriveCursorOptions(options *clients.CursorOptions) *cli
 }
 
 func (c *CursorService) StartNewConversationWithOptions(
+	ctx context.Context,
 	prompt string,
 	options *clients.CursorOptions,
 ) (*services.CLIAgentResult, error) {
@@ -123,7 +125,10 @@ func (c *CursorService) StartNewConversationWithOptions(
 
 	finalOptions := c.deriveCursorOptions(options)
 
-	rawOutput, err := c.cursorClient.StartNewSession(prompt, finalOptions)
+	rawOutput, err := c.cursorClient.StartNewSession(ctx, prompt, finalOptions)
+	if err != nil && ctx.Err() == context.Canceled {
+		return nil, &core.ErrTurnStopped{SessionID: c.sessionIDFromStoppedRun(err)}
+	}
 	if err != nil {
 		log.Error("Failed to start new Cursor session: %v", err)
 		return nil, c.handleCursorClientError(err, "failed to start new Cursor session")
@@ -166,7 +171,7 @@ func (c *CursorService) StartNewConversationWithOptions(
 func (c *CursorService) StartNewConversationWithSystemPrompt(
 	prompt, systemPrompt string,
 ) (*services.CLIAgentResult, error) {
-	return c.StartNewConversationWithOptions(prompt, &clients.CursorOptions{
+	return c.StartNewConversationWithOptions(context.Background(), prompt, &clients.CursorOptions{
 		SystemPrompt: systemPrompt,
 	})
 }
@@ -175,18 +180,18 @@ func (c *CursorService) StartNewConversationWithDisallowedTools(
 	prompt string,
 	disallowedTools []string,
 ) (*services.CLIAgentResult, error) {
-	return c.StartNewConversationWithOptions(prompt, &clients.CursorOptions{
+	return c.StartNewConversationWithOptions(context.Background(), prompt, &clients.CursorOptions{
 		// DisallowedTools not supported in CursorOptions yet
 	})
 }
 
 func (c *CursorService) ContinueConversation(sessionID, prompt string) (*services.CLIAgentResult, error) {
-	return c.ContinueConversationWithOptions(sessionID, prompt, nil)
+	return c.ContinueConversationWithOptions(context.Background(), sessionID, prompt, nil)
 }
 
 func (c *CursorService) ContinueConversationWithSystemPrompt(sessionID, prompt, systemPrompt string) (*services.CLIAgentResult, error) {
 	// System prompt persists from turn 1 (prepended into user message), no action needed on continue
-	return c.ContinueConversation(sessionID, prompt)
+	return c.ContinueConversationWithOptions(context.Background(), sessionID, prompt, nil)
 }
 
 // StartNewConversationInDir starts a new conversation in a specific working directory
@@ -202,14 +207,14 @@ func (c *CursorService) StartNewConversationWithSystemPromptInDir(
 	prompt, systemPrompt, workDir string,
 ) (*services.CLIAgentResult, error) {
 	log.Warn("⚠️ Cursor does not support custom working directories, ignoring workDir: %s", workDir)
-	return c.StartNewConversationWithSystemPrompt(prompt, systemPrompt)
+	return c.StartNewConversationWithOptions(context.Background(), prompt, &clients.CursorOptions{SystemPrompt: systemPrompt})
 }
 
 // ContinueConversationInDir continues an existing conversation in a specific directory
 // Note: Cursor does not support custom working directories yet, falls back to default behavior
 func (c *CursorService) ContinueConversationInDir(sessionID, prompt, workDir string) (*services.CLIAgentResult, error) {
 	log.Warn("Cursor does not support custom working directories, ignoring workDir: %s", workDir)
-	return c.ContinueConversation(sessionID, prompt)
+	return c.ContinueConversationWithOptions(context.Background(), sessionID, prompt, nil)
 }
 
 func (c *CursorService) ContinueConversationWithSystemPromptInDir(sessionID, prompt, systemPrompt, workDir string) (*services.CLIAgentResult, error) {
@@ -218,6 +223,7 @@ func (c *CursorService) ContinueConversationWithSystemPromptInDir(sessionID, pro
 }
 
 func (c *CursorService) ContinueConversationWithOptions(
+	ctx context.Context,
 	sessionID, prompt string,
 	options *clients.CursorOptions,
 ) (*services.CLIAgentResult, error) {
@@ -225,7 +231,10 @@ func (c *CursorService) ContinueConversationWithOptions(
 
 	finalOptions := c.deriveCursorOptions(options)
 
-	rawOutput, err := c.cursorClient.ContinueSession(sessionID, prompt, finalOptions)
+	rawOutput, err := c.cursorClient.ContinueSession(ctx, sessionID, prompt, finalOptions)
+	if err != nil && ctx.Err() == context.Canceled {
+		return nil, &core.ErrTurnStopped{SessionID: c.sessionIDFromStoppedRun(err)}
+	}
 	if err != nil {
 		log.Error("Failed to continue Cursor session: %v", err)
 		return nil, c.handleCursorClientError(err, "failed to continue Cursor session")
@@ -305,19 +314,21 @@ func (c *CursorService) handleCursorClientError(err error, operation string) err
 // Note: Cursor doesn't support progress streaming; emitter is ignored.
 // Cursor has no effort setting; effort is ignored.
 func (c *CursorService) StartNewConversationWithProgress(
+	ctx context.Context,
 	prompt, systemPrompt, workDir, effort string,
 	emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
-	return c.StartNewConversationWithSystemPrompt(prompt, systemPrompt)
+	return c.StartNewConversationWithOptions(ctx, prompt, &clients.CursorOptions{SystemPrompt: systemPrompt})
 }
 
 // ContinueConversationWithProgress continues a conversation with progress streaming.
 // Note: Cursor doesn't support progress streaming; emitter is ignored.
 func (c *CursorService) ContinueConversationWithProgress(
+	ctx context.Context,
 	sessionID, prompt, systemPrompt, workDir, effort string,
 	emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
-	return c.ContinueConversation(sessionID, prompt)
+	return c.ContinueConversationWithOptions(ctx, sessionID, prompt, nil)
 }
 
 func (c *CursorService) Model() string {
@@ -327,4 +338,17 @@ func (c *CursorService) Model() string {
 // AgentName identifies this service implementation
 func (c *CursorService) AgentName() string {
 	return "cursor"
+}
+
+// sessionIDFromStoppedRun reads the session id out of what the CLI printed before it was stopped.
+func (c *CursorService) sessionIDFromStoppedRun(err error) string {
+	commandErr, ok := core.IsClaudeCommandErr(err)
+	if !ok {
+		return ""
+	}
+	messages, parseErr := MapCursorOutputToMessages(commandErr.Output)
+	if parseErr != nil {
+		return ""
+	}
+	return ExtractCursorSessionID(messages)
 }

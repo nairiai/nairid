@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -26,7 +27,7 @@ type effortRecordingAgent struct {
 }
 
 func (a *effortRecordingAgent) StartNewConversationWithProgress(
-	prompt, systemPrompt, workDir, effort string, emitter services.ProgressEmitter,
+	_ context.Context, prompt, systemPrompt, workDir, effort string, emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
 	a.turns = append(a.turns, "start:"+effort)
 	if a.duringTurn != nil {
@@ -40,7 +41,7 @@ func (a *effortRecordingAgent) StartNewConversationWithProgress(
 }
 
 func (a *effortRecordingAgent) ContinueConversationWithProgress(
-	sessionID, prompt, systemPrompt, workDir, effort string, emitter services.ProgressEmitter,
+	_ context.Context, sessionID, prompt, systemPrompt, workDir, effort string, emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
 	a.turns = append(a.turns, "continue:"+effort)
 	if a.duringTurn != nil {

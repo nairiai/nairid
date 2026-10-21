@@ -1,6 +1,10 @@
 package services
 
-import "nairid/models"
+import (
+	"context"
+
+	"nairid/models"
+)
 
 // CLIAgentResult represents the result of a CLI agent conversation.
 // Cost and Usage fields are optional; harnesses that do not report them
@@ -62,12 +66,13 @@ type CLIAgent interface {
 	// StartNewConversationWithProgress starts a new conversation with progress streaming.
 	// Empty systemPrompt, workDir or effort are ignored. Effort is a CLI reasoning
 	// level (low/medium/high/xhigh/max) and must be passed on every call: no CLI keeps
-	// it across a resume.
-	StartNewConversationWithProgress(prompt, systemPrompt, workDir, effort string, emitter ProgressEmitter) (*CLIAgentResult, error)
+	// it across a resume. Cancelling ctx ends the CLI run; the call then returns
+	// *core.ErrTurnStopped carrying the session id the CLI had printed so far.
+	StartNewConversationWithProgress(ctx context.Context, prompt, systemPrompt, workDir, effort string, emitter ProgressEmitter) (*CLIAgentResult, error)
 
 	// ContinueConversationWithProgress continues a conversation with progress streaming.
 	// Empty systemPrompt, workDir or effort are ignored.
-	ContinueConversationWithProgress(sessionID, prompt, systemPrompt, workDir, effort string, emitter ProgressEmitter) (*CLIAgentResult, error)
+	ContinueConversationWithProgress(ctx context.Context, sessionID, prompt, systemPrompt, workDir, effort string, emitter ProgressEmitter) (*CLIAgentResult, error)
 
 	// Model returns the model this agent was started with, after agent defaults
 	// are applied. Empty when the CLI picks its own default.
