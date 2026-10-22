@@ -24,11 +24,11 @@ import (
 // waits to be stopped, and a stopped turn reports what the CLI printed by then.
 type stoppableAgent struct {
 	services.CLIAgent
-	mu               sync.Mutex
-	blockNext        bool
-	sessionWhenDone  string
-	sessionWhenStopd string
-	started          chan struct{}
+	mu                 sync.Mutex
+	blockNext          bool
+	sessionWhenDone    string
+	sessionWhenStopped string
+	started            chan struct{}
 }
 
 func (a *stoppableAgent) run(ctx context.Context, sessionID string) (*services.CLIAgentResult, error) {
@@ -41,7 +41,7 @@ func (a *stoppableAgent) run(ctx context.Context, sessionID string) (*services.C
 	}
 	close(a.started)
 	<-ctx.Done()
-	return nil, &core.ErrTurnStopped{SessionID: a.sessionWhenStopd}
+	return nil, &core.ErrTurnStopped{SessionID: a.sessionWhenStopped}
 }
 
 func (a *stoppableAgent) StartNewConversationWithProgress(
@@ -173,7 +173,7 @@ func waitForStop(t *testing.T, box *outbox) models.TurnStoppedPayload {
 func TestStopTurn_EndsAFirstTurnAndKeepsItsSession(t *testing.T) {
 	f := newStopFixture(t)
 	f.agent.blockNext = true
-	f.agent.sessionWhenStopd = "session-partial"
+	f.agent.sessionWhenStopped = "session-partial"
 
 	done := make(chan error, 1)
 	go func() { done <- f.handler.handleStartConversation(startMessage("0")) }()
@@ -259,7 +259,7 @@ func TestStopTurn_AnswersNotRunningWhenNothingRuns(t *testing.T) {
 func TestStopTurn_ForgetsAJobWhoseTurnNeverStarted(t *testing.T) {
 	f := newStopFixture(t)
 	f.agent.blockNext = true
-	f.agent.sessionWhenStopd = ""
+	f.agent.sessionWhenStopped = ""
 
 	done := make(chan error, 1)
 	go func() { done <- f.handler.handleStartConversation(startMessage("0")) }()
@@ -305,5 +305,25 @@ func TestStopTurn_DropsAMessageStillWaitingForAWorker(t *testing.T) {
 	}
 	if _, exists := dispatcher.activeJobs["j1"]; exists {
 		t.Error("the job's queue must be gone so its worker exits instead of waiting forever")
+	}
+}
+
+func TestStopTurn_AnswersAStopWhenTheTurnFailedBeforeTheCLIRan(t *testing.T) {
+	f := newStopFixture(t)
+	if err := f.handler.handleStartConversation(startMessage("0")); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	// The handler's deferred answer, as it runs when git prep fails between Begin and the CLI call.
+	f.handler.turns.Begin("j1", "cmsg_1")
+	f.handler.StopTurn("j1", "U1", "2026-10-22T11:00:00Z")
+	if got := f.outbox.ofType(models.MessageTypeTurnStopped); len(got) != 0 {
+		t.Fatalf("a running turn was answered before it ended: %+v", got)
+	}
+	f.handler.answerStopIfTurnEndedEarly("j1", "cmsg_1")
+
+	stop := waitForStop(t, f.outbox)
+	if stop.Outcome != models.TurnStopOutcomeStopped || stop.ProcessedMessageID != "cmsg_1" || stop.SessionID != "session-1" {
+		t.Errorf("turn_stopped = %+v, want stopped for cmsg_1 with session-1", stop)
 	}
 }

@@ -686,8 +686,8 @@ func TestConfigureProcessGroup_SelfHosted(t *testing.T) {
 	}
 
 	// Should have WaitDelay
-	if cmd.WaitDelay != WaitDelayAfterKill {
-		t.Errorf("WaitDelay = %v, want %v", cmd.WaitDelay, WaitDelayAfterKill)
+	if cmd.WaitDelay != WaitDelayAfterCancel {
+		t.Errorf("WaitDelay = %v, want %v", cmd.WaitDelay, WaitDelayAfterCancel)
 	}
 }
 
@@ -712,8 +712,8 @@ func TestConfigureProcessGroup_Managed(t *testing.T) {
 	}
 
 	// Should have WaitDelay
-	if cmd.WaitDelay != WaitDelayAfterKill {
-		t.Errorf("WaitDelay = %v, want %v", cmd.WaitDelay, WaitDelayAfterKill)
+	if cmd.WaitDelay != WaitDelayAfterCancel {
+		t.Errorf("WaitDelay = %v, want %v", cmd.WaitDelay, WaitDelayAfterCancel)
 	}
 }
 

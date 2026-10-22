@@ -12,10 +12,8 @@ import (
 	"time"
 )
 
-// WaitDelayAfterKill bounds how long Go waits for the process to exit and its
-// pipes to close once the context is done. It must outlast the whole stop
-// signal ladder (see process_unix.go), after which Go kills the leader itself.
-const WaitDelayAfterKill = 40 * time.Second
+// Must outlast the whole stop signal ladder in process_unix.go; then Go kills the leader itself.
+const WaitDelayAfterCancel = 40 * time.Second
 
 // DefaultSessionTimeout is the fallback maximum duration an agent CLI session
 // can run before being killed. Prefer SessionTimeout() at runtime, which

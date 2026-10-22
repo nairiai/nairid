@@ -239,7 +239,7 @@ func (mh *MessageHandler) handleStartConversation(msg models.BaseMessage) error 
 	// The turn counts as running from here: a stop that lands while the worktree is
 	// being prepared still ends it (the CLI then refuses to start on a cancelled ctx).
 	turnCtx := mh.turns.Begin(payload.JobID, payload.ProcessedMessageID)
-	defer mh.turns.End(payload.JobID)
+	defer mh.answerStopIfTurnEndedEarly(payload.JobID, payload.ProcessedMessageID)
 
 	log.Info("🚀 Starting new conversation with message: %s", payload.Message)
 
@@ -567,7 +567,7 @@ func (mh *MessageHandler) handleUserMessage(msg models.BaseMessage) error {
 	log.Info("💬 Continuing conversation with message: %s", payload.Message)
 
 	turnCtx := mh.turns.Begin(payload.JobID, payload.ProcessedMessageID)
-	defer mh.turns.End(payload.JobID)
+	defer mh.answerStopIfTurnEndedEarly(payload.JobID, payload.ProcessedMessageID)
 
 	// Get the current job data to retrieve the Claude session ID and branch
 	jobData, exists := mh.appState.GetJobData(payload.JobID)

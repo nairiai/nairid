@@ -12,7 +12,6 @@ type runningTurn struct {
 	stoppedBy          string
 }
 
-// turnRegistry knows which job is running a CLI turn right now and how to end it.
 // The stop flag, not the CLI's exit code, says whether a turn was stopped: Claude
 // exits 0 after SIGINT and Codex exits 1.
 type turnRegistry struct {
@@ -25,7 +24,6 @@ func newTurnRegistry() *turnRegistry {
 	return &turnRegistry{turns: map[string]*runningTurn{}, seenStopRequests: map[string]string{}}
 }
 
-// Begin registers the turn and returns the context its CLI run must use.
 func (r *turnRegistry) Begin(jobID, processedMessageID string) context.Context {
 	ctx, cancel := context.WithCancel(context.Background())
 	r.mu.Lock()
@@ -45,7 +43,6 @@ func (r *turnRegistry) Begin(jobID, processedMessageID string) context.Context {
 	return ctx
 }
 
-// Stop ends the job's running turn. It reports whether a turn was running.
 func (r *turnRegistry) Stop(jobID, requestedBy string) (processedMessageID string, running bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -59,8 +56,7 @@ func (r *turnRegistry) Stop(jobID, requestedBy string) (processedMessageID strin
 	return turn.processedMessageID, true
 }
 
-// End forgets the turn and reports whether a stop was asked for while it ran.
-// Calling it again for the same turn is a no-op.
+// Ending the same turn twice is a no-op.
 func (r *turnRegistry) End(jobID string) (stopped bool, stoppedBy string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -73,17 +69,16 @@ func (r *turnRegistry) End(jobID string) (stopped bool, stoppedBy string) {
 	return turn.stopRequested, turn.stoppedBy
 }
 
-// FirstSightOf reports whether this stop request (job + requested_at) is new. The
-// same request can arrive over the socket and again from the job poll.
-func (r *turnRegistry) FirstSightOf(jobID, requestedAt string) bool {
+// The same request can arrive over the socket and again from the job poll.
+func (r *turnRegistry) recordStopRequest(jobID, requestedAt string) (seenBefore bool) {
 	if requestedAt == "" {
-		return true
+		return false
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.seenStopRequests[jobID] == requestedAt {
-		return false
+		return true
 	}
 	r.seenStopRequests[jobID] = requestedAt
-	return true
+	return false
 }

@@ -1147,13 +1147,8 @@ func (cr *CmdRunner) startSocketIOClient(serverURLStr, apiKey string) error {
 			// processing, the message stays unacked and will be re-delivered by the
 			// HTTP poller.
 			cr.dispatcher.Dispatch(msg)
-		case models.MessageTypeCheckIdleJobs:
-			// PR status checks can run in parallel without blocking conversations
-			instantWorkerPool.Submit(func() {
-				cr.messageHandler.HandleMessage(msg)
-			})
-		case models.MessageTypeStopTurn:
-			// The blocking pool is busy with the very turn this message stops
+		case models.MessageTypeCheckIdleJobs, models.MessageTypeStopTurn:
+			// Neither may wait behind a turn: the blocking pool is busy with the very turn a stop ends
 			instantWorkerPool.Submit(func() {
 				cr.messageHandler.HandleMessage(msg)
 			})

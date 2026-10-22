@@ -152,8 +152,8 @@ func (o *OpenCodeService) StartNewConversationWithOptions(
 
 	runStart := time.Now().Add(-1 * time.Second) // small skew tolerance
 	rawOutput, err := o.openCodeClient.StartNewSession(ctx, prompt, finalOptions, onLine)
-	if err != nil && ctx.Err() == context.Canceled {
-		return nil, &core.ErrTurnStopped{SessionID: o.sessionIDFromStoppedRun(err)}
+	if stopped, ok := services.StoppedRun(ctx, err, o.sessionIDFromOutput); ok {
+		return nil, stopped
 	}
 	if err != nil {
 		log.Error("Failed to start new OpenCode session: %v", err)
@@ -283,8 +283,8 @@ func (o *OpenCodeService) ContinueConversationWithOptions(
 
 	runStart := time.Now().Add(-1 * time.Second) // small skew tolerance
 	rawOutput, err := o.openCodeClient.ContinueSession(ctx, sessionID, prompt, finalOptions, onLine)
-	if err != nil && ctx.Err() == context.Canceled {
-		return nil, &core.ErrTurnStopped{SessionID: o.sessionIDFromStoppedRun(err)}
+	if stopped, ok := services.StoppedRun(ctx, err, o.sessionIDFromOutput); ok {
+		return nil, stopped
 	}
 	if err != nil {
 		log.Error("Failed to continue OpenCode session: %v", err)
@@ -401,14 +401,9 @@ func (o *OpenCodeService) AgentName() string {
 	return "opencode"
 }
 
-// sessionIDFromStoppedRun reads the session id out of what the CLI printed before it was stopped.
-func (o *OpenCodeService) sessionIDFromStoppedRun(err error) string {
-	commandErr, ok := core.IsClaudeCommandErr(err)
-	if !ok {
-		return ""
-	}
-	messages, parseErr := MapOpenCodeOutputToMessages(commandErr.Output)
-	if parseErr != nil {
+func (o *OpenCodeService) sessionIDFromOutput(output string) string {
+	messages, err := MapOpenCodeOutputToMessages(output)
+	if err != nil {
 		return ""
 	}
 	return services.SessionIDIfKnown(ExtractOpenCodeSessionID(messages))

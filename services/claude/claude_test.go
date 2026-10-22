@@ -1394,7 +1394,7 @@ func TestClaudeService_WriteErrorLogHandling(t *testing.T) {
 	// Mock verification not needed with function-based mocks
 }
 
-func TestClaudeService_sessionIDFromStoppedRun_TrustsOnlyInitAndResult(t *testing.T) {
+func TestClaudeService_sessionIDFromOutput_TrustsOnlyInitAndResult(t *testing.T) {
 	const hookSessionID = "d4fc5e9b-9b59-48d2-adea-681896611b37"
 	const resumedSessionID = "db36dd99-af77-4503-8858-fe703fac288f"
 	hookLine := `{"type":"system","subtype":"hook_started","hook_name":"SessionStart:resume","session_id":"` + hookSessionID + `"}`
@@ -1412,9 +1412,9 @@ func TestClaudeService_sessionIDFromStoppedRun_TrustsOnlyInitAndResult(t *testin
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			service := NewClaudeService(&services.MockClaudeClient{}, "/tmp", "", nil, nil)
-			got := service.sessionIDFromStoppedRun(&core.ErrClaudeCommandErr{Output: tt.output})
+			got := service.sessionIDFromOutput(tt.output)
 			if got != tt.want {
-				t.Errorf("sessionIDFromStoppedRun() = %q, want %q", got, tt.want)
+				t.Errorf("sessionIDFromOutput() = %q, want %q", got, tt.want)
 			}
 		})
 	}

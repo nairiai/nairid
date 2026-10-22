@@ -136,7 +136,7 @@ func TestRunCommandStreaming_TimeoutKillsProcessTree(t *testing.T) {
 
 	// Should complete within a reasonable time (timeout + WaitDelay + margin).
 	// If process group kill is broken, this would block for 300 seconds.
-	maxExpected := 500*time.Millisecond + WaitDelayAfterKill + 5*time.Second
+	maxExpected := 500*time.Millisecond + WaitDelayAfterCancel + 5*time.Second
 	if elapsed > maxExpected {
 		t.Errorf("RunCommandStreaming took %v, expected under %v (process group kill may not be working)", elapsed, maxExpected)
 	}

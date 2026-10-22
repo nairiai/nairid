@@ -139,8 +139,8 @@ func (c *CodexService) StartNewConversationWithOptions(
 	}
 
 	rawOutput, err := c.codexClient.StartNewSession(ctx, prompt, finalOptions, onLine)
-	if err != nil && ctx.Err() == context.Canceled {
-		return nil, &core.ErrTurnStopped{SessionID: c.sessionIDFromStoppedRun(err)}
+	if stopped, ok := services.StoppedRun(ctx, err, c.sessionIDFromOutput); ok {
+		return nil, stopped
 	}
 	if err != nil {
 		log.Error("Failed to start new Codex session: %v", err)
@@ -272,8 +272,8 @@ func (c *CodexService) ContinueConversationWithOptions(
 	}
 
 	rawOutput, err := c.codexClient.ContinueSession(ctx, sessionID, prompt, finalOptions, onLine)
-	if err != nil && ctx.Err() == context.Canceled {
-		return nil, &core.ErrTurnStopped{SessionID: c.sessionIDFromStoppedRun(err)}
+	if stopped, ok := services.StoppedRun(ctx, err, c.sessionIDFromOutput); ok {
+		return nil, stopped
 	}
 	if err != nil {
 		log.Error("Failed to continue Codex session: %v", err)
@@ -390,14 +390,9 @@ func (c *CodexService) AgentName() string {
 	return "codex"
 }
 
-// sessionIDFromStoppedRun reads the thread id out of what the CLI printed before it was stopped.
-func (c *CodexService) sessionIDFromStoppedRun(err error) string {
-	commandErr, ok := core.IsClaudeCommandErr(err)
-	if !ok {
-		return ""
-	}
-	messages, parseErr := MapCodexOutputToMessages(commandErr.Output)
-	if parseErr != nil {
+func (c *CodexService) sessionIDFromOutput(output string) string {
+	messages, err := MapCodexOutputToMessages(output)
+	if err != nil {
 		return ""
 	}
 	return services.SessionIDIfKnown(ExtractCodexThreadID(messages))

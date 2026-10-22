@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 
+	"nairid/core"
 	"nairid/models"
 )
 
@@ -84,6 +85,22 @@ type CLIAgent interface {
 	// AgentName returns the identifier for the concrete agent implementation
 	// (e.g., "claude" or "cursor") so callers can adapt behavior per agent
 	AgentName() string
+}
+
+// Claude exits 0 after SIGINT and Codex exits 1, so the context, not the exit code, says a run was stopped.
+func StoppedRun(
+	ctx context.Context,
+	err error,
+	sessionIDFromOutput func(output string) string,
+) (*core.ErrTurnStopped, bool) {
+	if err == nil || ctx.Err() != context.Canceled {
+		return nil, false
+	}
+	sessionID := ""
+	if commandErr, ok := core.IsClaudeCommandErr(err); ok {
+		sessionID = sessionIDFromOutput(commandErr.Output)
+	}
+	return &core.ErrTurnStopped{SessionID: sessionID}, true
 }
 
 // The CLI output parsers answer "unknown" when no line carried a session id.

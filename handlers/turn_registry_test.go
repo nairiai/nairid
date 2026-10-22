@@ -54,17 +54,17 @@ func TestTurnRegistry_StopSurvivesTheHandOverToAStart(t *testing.T) {
 
 func TestTurnRegistry_SameStopRequestIsSeenOnce(t *testing.T) {
 	registry := newTurnRegistry()
-	if !registry.FirstSightOf("j1", "2026-10-21T20:00:00Z") {
+	if registry.recordStopRequest("j1", "2026-10-21T20:00:00Z") {
 		t.Fatal("first sight")
 	}
-	if registry.FirstSightOf("j1", "2026-10-21T20:00:00Z") {
+	if !registry.recordStopRequest("j1", "2026-10-21T20:00:00Z") {
 		t.Fatal("the same request again must not count")
 	}
-	if !registry.FirstSightOf("j1", "2026-10-21T20:05:00Z") {
+	if registry.recordStopRequest("j1", "2026-10-21T20:05:00Z") {
 		t.Fatal("a later request for the same job is new")
 	}
 	for i := 0; i < 2; i++ {
-		if !registry.FirstSightOf("j1", "") {
+		if registry.recordStopRequest("j1", "") {
 			t.Fatal("a request with no timestamp cannot be deduplicated")
 		}
 	}

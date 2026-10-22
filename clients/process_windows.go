@@ -8,5 +8,5 @@ import "os/exec"
 // Process group isolation via Setpgid and SIGKILL are POSIX-only.
 // On Windows, cmd.Process.Kill() is used by default which terminates the process.
 func configureProcessGroup(cmd *exec.Cmd) {
-	cmd.WaitDelay = WaitDelayAfterKill
+	cmd.WaitDelay = WaitDelayAfterCancel
 }

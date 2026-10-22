@@ -126,8 +126,8 @@ func (c *CursorService) StartNewConversationWithOptions(
 	finalOptions := c.deriveCursorOptions(options)
 
 	rawOutput, err := c.cursorClient.StartNewSession(ctx, prompt, finalOptions)
-	if err != nil && ctx.Err() == context.Canceled {
-		return nil, &core.ErrTurnStopped{SessionID: c.sessionIDFromStoppedRun(err)}
+	if stopped, ok := services.StoppedRun(ctx, err, c.sessionIDFromOutput); ok {
+		return nil, stopped
 	}
 	if err != nil {
 		log.Error("Failed to start new Cursor session: %v", err)
@@ -232,8 +232,8 @@ func (c *CursorService) ContinueConversationWithOptions(
 	finalOptions := c.deriveCursorOptions(options)
 
 	rawOutput, err := c.cursorClient.ContinueSession(ctx, sessionID, prompt, finalOptions)
-	if err != nil && ctx.Err() == context.Canceled {
-		return nil, &core.ErrTurnStopped{SessionID: c.sessionIDFromStoppedRun(err)}
+	if stopped, ok := services.StoppedRun(ctx, err, c.sessionIDFromOutput); ok {
+		return nil, stopped
 	}
 	if err != nil {
 		log.Error("Failed to continue Cursor session: %v", err)
@@ -340,14 +340,9 @@ func (c *CursorService) AgentName() string {
 	return "cursor"
 }
 
-// sessionIDFromStoppedRun reads the session id out of what the CLI printed before it was stopped.
-func (c *CursorService) sessionIDFromStoppedRun(err error) string {
-	commandErr, ok := core.IsClaudeCommandErr(err)
-	if !ok {
-		return ""
-	}
-	messages, parseErr := MapCursorOutputToMessages(commandErr.Output)
-	if parseErr != nil {
+func (c *CursorService) sessionIDFromOutput(output string) string {
+	messages, err := MapCursorOutputToMessages(output)
+	if err != nil {
 		return ""
 	}
 	return services.SessionIDIfKnown(ExtractCursorSessionID(messages))

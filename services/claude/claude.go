@@ -154,8 +154,8 @@ func (c *ClaudeService) StartNewConversationWithOptions(
 	}
 
 	rawOutput, err := c.claudeClient.StartNewSession(ctx, prompt, mergedOptions, onLine)
-	if err != nil && ctx.Err() == context.Canceled {
-		return nil, &core.ErrTurnStopped{SessionID: c.sessionIDFromStoppedRun(err)}
+	if stopped, ok := services.StoppedRun(ctx, err, c.sessionIDFromOutput); ok {
+		return nil, stopped
 	}
 	if err != nil {
 		log.Error("Failed to start new Claude session: %v", err)
@@ -292,8 +292,8 @@ func (c *ClaudeService) ContinueConversationWithOptions(
 	}
 
 	rawOutput, err := c.claudeClient.ContinueSession(ctx, sessionID, prompt, mergedOptions, onLine)
-	if err != nil && ctx.Err() == context.Canceled {
-		return nil, &core.ErrTurnStopped{SessionID: c.sessionIDFromStoppedRun(err)}
+	if stopped, ok := services.StoppedRun(ctx, err, c.sessionIDFromOutput); ok {
+		return nil, stopped
 	}
 	if err != nil {
 		log.Error("Failed to continue Claude session: %v", err)
@@ -664,14 +664,9 @@ func (c *ClaudeService) AgentName() string {
 	return "claude"
 }
 
-// sessionIDFromStoppedRun reads the session id out of what the CLI printed before it was stopped.
-func (c *ClaudeService) sessionIDFromStoppedRun(err error) string {
-	commandErr, ok := core.IsClaudeCommandErr(err)
-	if !ok {
-		return ""
-	}
-	messages, parseErr := services.MapClaudeOutputToMessages(commandErr.Output)
-	if parseErr != nil {
+func (c *ClaudeService) sessionIDFromOutput(output string) string {
+	messages, err := services.MapClaudeOutputToMessages(output)
+	if err != nil {
 		return ""
 	}
 	return sessionIDFromInitOrResult(messages)

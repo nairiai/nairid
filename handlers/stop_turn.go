@@ -25,12 +25,16 @@ func (mh *MessageHandler) handleStopTurn(msg models.BaseMessage) error {
 
 // A running turn is answered by its handler once the CLI has exited; anything else at once.
 func (mh *MessageHandler) StopTurn(jobID, requestedBy, requestedAt string) {
-	if !mh.turns.FirstSightOf(jobID, requestedAt) {
+	if mh.turns.recordStopRequest(jobID, requestedAt) {
 		log.Info("🛑 Stop request for job %s already handled (requested at %s)", jobID, requestedAt)
 		return
 	}
 	processedMessageID, running := mh.turns.Stop(jobID, requestedBy)
 	dropped := mh.dropQueuedTurns(jobID)
+	// The backend ended every message of the job; a restart must not replay them.
+	if err := mh.appState.RemoveQueuedMessagesForJob(jobID); err != nil {
+		log.Warn("⚠️ Failed to clean up queued messages for job %s: %v", jobID, err)
+	}
 	if running {
 		log.Info("🛑 Stopping the running turn of job %s (message %s, requested by %q)", jobID, processedMessageID, requestedBy)
 		return
@@ -65,11 +69,6 @@ func (mh *MessageHandler) dropQueuedTurns(jobID string) []string {
 		log.Info("🛑 Dropped queued message %s for job %s", id, jobID)
 		if err := mh.agentsApiClient.AckMessage(id); err != nil {
 			log.Warn("⚠️ Failed to ack dropped message %s: %v", id, err)
-		}
-	}
-	if len(dropped) > 0 {
-		if err := mh.appState.RemoveQueuedMessagesForJob(jobID); err != nil {
-			log.Warn("⚠️ Failed to clean up queued messages for job %s: %v", jobID, err)
 		}
 	}
 	return dropped
@@ -165,9 +164,20 @@ func (mh *MessageHandler) ackStoppedMessage(jobData models.JobData) {
 	if err := mh.agentsApiClient.AckMessage(jobData.ProcessedMessageID); err != nil {
 		log.Warn("⚠️ Failed to ack stopped message %s: %v", jobData.ProcessedMessageID, err)
 	}
-	if err := mh.appState.RemoveQueuedMessagesForJob(jobData.JobID); err != nil {
-		log.Warn("⚠️ Failed to clean up queued messages for job %s: %v", jobData.JobID, err)
+}
+
+// A turn that failed before its CLI ran (git prep, attachments) still owes the backend an answer.
+func (mh *MessageHandler) answerStopIfTurnEndedEarly(jobID, processedMessageID string) {
+	stopped, stoppedBy := mh.turns.End(jobID)
+	if !stopped {
+		return
 	}
+	sessionID := ""
+	if jobData, exists := mh.appState.GetJobData(jobID); exists {
+		sessionID = jobData.ClaudeSessionID
+	}
+	log.Info("🛑 Turn of job %s ended before the CLI ran; answering the stop by %q", jobID, stoppedBy)
+	mh.sendTurnStopped(jobID, processedMessageID, models.TurnStopOutcomeStopped, sessionID)
 }
 
 func (mh *MessageHandler) sendTurnStopped(jobID, processedMessageID, outcome, sessionID string) {
