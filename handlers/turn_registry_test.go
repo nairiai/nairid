@@ -36,19 +36,19 @@ func TestTurnRegistry_FinishedTurnIsNotStopped(t *testing.T) {
 	}
 }
 
-// A reply without a session is re-run as a conversation start, which registers the
-// job again from inside the same handler call.
-func TestTurnRegistry_StopSurvivesTheHandOverToAStart(t *testing.T) {
+func TestTurnRegistry_BeginReplacesALeftoverTurn(t *testing.T) {
 	registry := newTurnRegistry()
-	registry.Begin("j1", "cmsg_1")
-	registry.Stop("j1", "U1")
+	leftover := registry.Begin("j1", "cmsg_1")
 
-	ctx := registry.Begin("j1", "cmsg_1")
-	if ctx.Err() == nil {
-		t.Fatal("the re-registered turn must start cancelled")
+	ctx := registry.Begin("j1", "cmsg_2")
+	if leftover.Err() == nil {
+		t.Fatal("the leftover turn must be cancelled")
 	}
-	if stopped, by := registry.End("j1"); !stopped || by != "U1" {
-		t.Fatalf("End = (%v, %q), want (true, U1)", stopped, by)
+	if ctx.Err() != nil {
+		t.Fatal("the new turn must start running")
+	}
+	if id, running := registry.Stop("j1", "U1"); !running || id != "cmsg_2" {
+		t.Fatalf("Stop = (%q, %v), want the new turn", id, running)
 	}
 }
 

@@ -29,13 +29,14 @@ func stopProcessGroup(pid int) error {
 	if err := syscall.Kill(-pid, syscall.SIGINT); err != nil {
 		return err
 	}
+	graceAfterInterrupt, graceAfterTerm := stopGraceAfterInterrupt, stopGraceAfterTerm
 	go func() {
-		time.Sleep(stopGraceAfterInterrupt)
+		time.Sleep(graceAfterInterrupt)
 		if !groupAlive(pid) {
 			return
 		}
 		_ = syscall.Kill(-pid, syscall.SIGTERM)
-		time.Sleep(stopGraceAfterTerm)
+		time.Sleep(graceAfterTerm)
 		if !groupAlive(pid) {
 			return
 		}

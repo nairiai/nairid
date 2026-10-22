@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -186,29 +187,23 @@ func (mh *MessageHandler) formatThreadContext(
 func (mh *MessageHandler) HandleMessage(msg models.BaseMessage) {
 	switch msg.Type {
 	case models.MessageTypeStartConversation:
-		if err := mh.handleStartConversation(msg); err != nil {
-			// Extract ProcessedMessageID and JobID from payload for error reporting
-			var payload models.StartConversationPayload
-			if unmarshalErr := unmarshalPayload(msg.Payload, &payload); unmarshalErr != nil {
-				log.Error("Failed to unmarshal StartConversationPayload for error reporting: %v", unmarshalErr)
-				return
-			}
-			if sendErr := mh.sendErrorMessage(err, payload.ProcessedMessageID, payload.JobID); sendErr != nil {
-				log.Error("Failed to send error message: %v", sendErr)
-			}
+		var payload models.StartConversationPayload
+		if err := unmarshalPayload(msg.Payload, &payload); err != nil {
+			log.Error("Failed to unmarshal StartConversationPayload: %v", err)
+			return
 		}
+		mh.runTurn(payload.JobID, payload.ProcessedMessageID, func(ctx context.Context) error {
+			return mh.handleStartConversation(ctx, msg)
+		})
 	case models.MessageTypeUserMessage:
-		if err := mh.handleUserMessage(msg); err != nil {
-			// Extract ProcessedMessageID and JobID from payload for error reporting
-			var payload models.UserMessagePayload
-			if unmarshalErr := unmarshalPayload(msg.Payload, &payload); unmarshalErr != nil {
-				log.Error("Failed to unmarshal UserMessagePayload for error reporting: %v", unmarshalErr)
-				return
-			}
-			if sendErr := mh.sendErrorMessage(err, payload.ProcessedMessageID, payload.JobID); sendErr != nil {
-				log.Error("Failed to send error message: %v", sendErr)
-			}
+		var payload models.UserMessagePayload
+		if err := unmarshalPayload(msg.Payload, &payload); err != nil {
+			log.Error("Failed to unmarshal UserMessagePayload: %v", err)
+			return
 		}
+		mh.runTurn(payload.JobID, payload.ProcessedMessageID, func(ctx context.Context) error {
+			return mh.handleUserMessage(ctx, msg)
+		})
 	case models.MessageTypeCheckIdleJobs:
 		if err := mh.handleCheckIdleJobs(msg); err != nil {
 			log.Info("❌ Error handling CheckIdleJobs message: %v", err)
@@ -222,7 +217,7 @@ func (mh *MessageHandler) HandleMessage(msg models.BaseMessage) {
 	}
 }
 
-func (mh *MessageHandler) handleStartConversation(msg models.BaseMessage) error {
+func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg models.BaseMessage) error {
 	log.Info("📋 Starting to handle start conversation message")
 	var payload models.StartConversationPayload
 	if err := unmarshalPayload(msg.Payload, &payload); err != nil {
@@ -235,11 +230,6 @@ func (mh *MessageHandler) handleStartConversation(msg models.BaseMessage) error 
 		log.Info("❌ Failed to send processing message notification: %v", err)
 		return fmt.Errorf("failed to send processing message notification: %w", err)
 	}
-
-	// The turn counts as running from here: a stop that lands while the worktree is
-	// being prepared still ends it (the CLI then refuses to start on a cancelled ctx).
-	turnCtx := mh.turns.Begin(payload.JobID, payload.ProcessedMessageID)
-	defer mh.answerStopIfTurnEndedEarly(payload.JobID, payload.ProcessedMessageID)
 
 	log.Info("🚀 Starting new conversation with message: %s", payload.Message)
 
@@ -550,7 +540,7 @@ func (mh *MessageHandler) handleStartConversation(msg models.BaseMessage) error 
 	return nil
 }
 
-func (mh *MessageHandler) handleUserMessage(msg models.BaseMessage) error {
+func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.BaseMessage) error {
 	log.Info("📋 Starting to handle user message")
 	var payload models.UserMessagePayload
 	if err := unmarshalPayload(msg.Payload, &payload); err != nil {
@@ -565,9 +555,6 @@ func (mh *MessageHandler) handleUserMessage(msg models.BaseMessage) error {
 	}
 
 	log.Info("💬 Continuing conversation with message: %s", payload.Message)
-
-	turnCtx := mh.turns.Begin(payload.JobID, payload.ProcessedMessageID)
-	defer mh.answerStopIfTurnEndedEarly(payload.JobID, payload.ProcessedMessageID)
 
 	// Get the current job data to retrieve the Claude session ID and branch
 	jobData, exists := mh.appState.GetJobData(payload.JobID)
@@ -591,7 +578,7 @@ func (mh *MessageHandler) handleUserMessage(msg models.BaseMessage) error {
 			Type:    models.MessageTypeStartConversation,
 			Payload: json.RawMessage(startPayloadBytes),
 		}
-		return mh.handleStartConversation(startMsg)
+		return mh.handleStartConversation(turnCtx, startMsg)
 	}
 
 	sessionID := jobData.ClaudeSessionID

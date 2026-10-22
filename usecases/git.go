@@ -1396,6 +1396,49 @@ func (g *GitUseCase) PrepareWorktreeForJob(worktreePath, branchName string) erro
 	return nil
 }
 
+// CommitStoppedWork keeps what a stopped turn left behind as a local WIP commit. Nothing is
+// pushed and no PR is opened: the user asked for the work to stop, and asking Claude for a
+// commit message would start the very turn that was just ended.
+func (g *GitUseCase) CommitStoppedWork(worktreePath, stoppedBy string) error {
+	if !g.appState.GetRepositoryContext().IsRepoMode {
+		return nil
+	}
+	message := "WIP: turn stopped"
+	if stoppedBy != "" {
+		message = fmt.Sprintf("WIP: turn stopped by %s", stoppedBy)
+	}
+	if worktreePath != "" {
+		hasChanges, err := g.gitClient.HasUncommittedChangesInWorktree(worktreePath)
+		if err != nil {
+			return fmt.Errorf("failed to check for uncommitted changes in worktree: %w", err)
+		}
+		if !hasChanges {
+			return nil
+		}
+		if err := g.gitClient.AddAllInWorktree(worktreePath); err != nil {
+			return fmt.Errorf("failed to stage the stopped work: %w", err)
+		}
+		if err := g.gitClient.CommitInWorktree(worktreePath, message); err != nil {
+			return fmt.Errorf("failed to commit the stopped work: %w", err)
+		}
+		return nil
+	}
+	hasChanges, err := g.gitClient.HasUncommittedChanges()
+	if err != nil {
+		return fmt.Errorf("failed to check for uncommitted changes: %w", err)
+	}
+	if !hasChanges {
+		return nil
+	}
+	if err := g.gitClient.AddAll(); err != nil {
+		return fmt.Errorf("failed to stage the stopped work: %w", err)
+	}
+	if err := g.gitClient.Commit(message); err != nil {
+		return fmt.Errorf("failed to commit the stopped work: %w", err)
+	}
+	return nil
+}
+
 // CleanupJobWorktree removes the worktree for a completed or abandoned job
 func (g *GitUseCase) CleanupJobWorktree(worktreePath, branchName string) error {
 	log.Info("📋 Starting to cleanup job worktree: %s", worktreePath)

@@ -12,8 +12,6 @@ type runningTurn struct {
 	stoppedBy          string
 }
 
-// The stop flag, not the CLI's exit code, says whether a turn was stopped: Claude
-// exits 0 after SIGINT and Codex exits 1.
 type turnRegistry struct {
 	mu               sync.Mutex
 	turns            map[string]*runningTurn
@@ -24,22 +22,15 @@ func newTurnRegistry() *turnRegistry {
 	return &turnRegistry{turns: map[string]*runningTurn{}, seenStopRequests: map[string]string{}}
 }
 
+// Begin registers the job's turn; a turn still registered for the job is cancelled and replaced.
 func (r *turnRegistry) Begin(jobID, processedMessageID string) context.Context {
 	ctx, cancel := context.WithCancel(context.Background())
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	turn := &runningTurn{cancel: cancel, processedMessageID: processedMessageID}
-	// A reply with no session is re-run as a conversation start inside the same
-	// handler call; a stop asked for in between must not get lost in the hand-over.
 	if previous, exists := r.turns[jobID]; exists {
 		previous.cancel()
-		turn.stopRequested = previous.stopRequested
-		turn.stoppedBy = previous.stoppedBy
 	}
-	if turn.stopRequested {
-		cancel()
-	}
-	r.turns[jobID] = turn
+	r.turns[jobID] = &runningTurn{cancel: cancel, processedMessageID: processedMessageID}
 	return ctx
 }
 

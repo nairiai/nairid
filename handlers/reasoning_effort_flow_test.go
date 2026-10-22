@@ -87,7 +87,7 @@ func TestReasoningEffortReachesEveryTurnOfAConversation(t *testing.T) {
 	reply := func(handler *MessageHandler) {
 		t.Helper()
 		messages++
-		err := handler.handleUserMessage(models.BaseMessage{
+		err := handler.handleUserMessage(context.Background(), models.BaseMessage{
 			ID:   fmt.Sprintf("msg_%d", messages),
 			Type: models.MessageTypeUserMessage,
 			Payload: models.UserMessagePayload{
@@ -100,7 +100,7 @@ func TestReasoningEffortReachesEveryTurnOfAConversation(t *testing.T) {
 	}
 
 	handler := startHandlerLikeAFreshProcess(t, agent, statePath, backend.URL)
-	err := handler.handleStartConversation(models.BaseMessage{
+	err := handler.handleStartConversation(context.Background(), models.BaseMessage{
 		ID:   "msg_0",
 		Type: models.MessageTypeStartConversation,
 		Payload: models.StartConversationPayload{
@@ -147,7 +147,7 @@ func TestReasoningEffortSurvivesAFailedFirstTurn(t *testing.T) {
 	agent := &effortRecordingAgent{model: "gpt-5.5", failsNextStart: true}
 	handler := startHandlerLikeAFreshProcess(t, agent, filepath.Join(t.TempDir(), "state.json"), backend.URL)
 
-	err := handler.handleStartConversation(models.BaseMessage{
+	err := handler.handleStartConversation(context.Background(), models.BaseMessage{
 		ID:   "msg_0",
 		Type: models.MessageTypeStartConversation,
 		Payload: models.StartConversationPayload{
@@ -158,7 +158,7 @@ func TestReasoningEffortSurvivesAFailedFirstTurn(t *testing.T) {
 	if err == nil {
 		t.Fatal("the first turn was meant to fail")
 	}
-	err = handler.handleUserMessage(models.BaseMessage{
+	err = handler.handleUserMessage(context.Background(), models.BaseMessage{
 		ID:      "msg_1",
 		Type:    models.MessageTypeUserMessage,
 		Payload: models.UserMessagePayload{JobID: "j1", Message: "try again", ProcessedMessageID: "cmsg_1"},
@@ -189,7 +189,7 @@ func TestAskModeStaysOnEveryTurnOfAConversation(t *testing.T) {
 	}
 	reply := func(id string) {
 		t.Helper()
-		err := handler.handleUserMessage(models.BaseMessage{
+		err := handler.handleUserMessage(context.Background(), models.BaseMessage{
 			ID:      "msg_" + id,
 			Type:    models.MessageTypeUserMessage,
 			Payload: models.UserMessagePayload{JobID: "j1", Message: "and again", ProcessedMessageID: "cmsg_" + id},
@@ -199,7 +199,7 @@ func TestAskModeStaysOnEveryTurnOfAConversation(t *testing.T) {
 		}
 	}
 
-	err := handler.handleStartConversation(models.BaseMessage{
+	err := handler.handleStartConversation(context.Background(), models.BaseMessage{
 		ID:   "msg_0",
 		Type: models.MessageTypeStartConversation,
 		Payload: models.StartConversationPayload{
