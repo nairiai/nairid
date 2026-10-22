@@ -187,7 +187,10 @@ func (d *JobDispatcher) DropQueuedMessages(jobID string) []models.BaseMessage {
 	var dropped []models.BaseMessage
 	for {
 		select {
-		case msg := <-ch:
+		case msg, open := <-ch:
+			if !open {
+				return dropped
+			}
 			dropped = append(dropped, msg)
 		default:
 			return dropped

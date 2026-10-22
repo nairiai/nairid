@@ -1,11 +1,11 @@
-## [v0.0.123] - 2026-10-21
+## [v0.0.123] - 2026-10-22
 
 ### Features
 
 - Stop a running turn on request ([#227](https://github.com/nairiai/nairid/pull/227))
   - New inbound message `stop_turn_v1` `{job_id, requested_by, requested_at}`: ends the CLI run of that job's current turn. It is handled on the instant worker pool, since the blocking pool is busy with the very turn it stops. A stop the backend reports on `GET /api/agents/jobs` (`stop_requested`, `stop_requested_by`, `stop_requested_at`) is honoured too; the same request seen twice is answered once
   - New outbound message `turn_stopped_v1` `{job_id, processed_message_id, outcome, session_id}` with outcome `stopped` (the turn was running and is now over) or `not_running` (nothing was running for that job). `session_id` is the CLI session the conversation goes on from
-  - A stopped turn keeps the job open: the session id the CLI had printed by then is saved (or the previous one is kept), nothing is auto-committed or pushed, no answer and no "nairid encountered error" is posted, the message is acked, and follow-ups queued behind the stopped turn are dropped and acked
+  - A stopped turn keeps the job open: the partial work is auto-committed like a finished turn's (so the next reply can pull and resume), the session id the CLI had printed by then is saved (or the previous one is kept), no answer and no "nairid encountered error" is posted, the message is acked, and follow-ups queued behind the stopped turn are dropped and acked. A stop that lands before the CLI printed a session id forgets the job and cleans its worktree, so the next message starts over. A stop on a job whose message is still waiting for a worker drops that message and is answered `stopped`
   - The CLI process group now gets SIGINT first, like Ctrl-C, so Claude Code, Codex and OpenCode end their turn and keep the session resumable; SIGTERM follows after 10 s and SIGKILL 20 s later. The session timeout uses the same ladder, and a run that exits 0 after being told to stop no longer counts as a finished turn
   - `services.CLIAgent`'s `StartNewConversationWithProgress` / `ContinueConversationWithProgress` and every CLI client's `StartNewSession` / `ContinueSession` take a `context.Context` first; a cancelled run returns `*core.ErrTurnStopped`
 

@@ -400,5 +400,5 @@ func (c *CodexService) sessionIDFromStoppedRun(err error) string {
 	if parseErr != nil {
 		return ""
 	}
-	return ExtractCodexThreadID(messages)
+	return services.SessionIDIfKnown(ExtractCodexThreadID(messages))
 }

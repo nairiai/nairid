@@ -411,5 +411,5 @@ func (o *OpenCodeService) sessionIDFromStoppedRun(err error) string {
 	if parseErr != nil {
 		return ""
 	}
-	return ExtractOpenCodeSessionID(messages)
+	return services.SessionIDIfKnown(ExtractOpenCodeSessionID(messages))
 }

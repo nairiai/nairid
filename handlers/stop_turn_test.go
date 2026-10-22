@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gammazero/workerpool"
+
 	"nairid/clients"
 	"nairid/core"
 	"nairid/core/env"
@@ -251,5 +253,57 @@ func TestStopTurn_AnswersNotRunningWhenNothingRuns(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if got := f.outbox.ofType(models.MessageTypeTurnStopped); len(got) != 1 {
 		t.Errorf("sent %d turn_stopped messages, want 1", len(got))
+	}
+}
+
+func TestStopTurn_ForgetsAJobWhoseTurnNeverStarted(t *testing.T) {
+	f := newStopFixture(t)
+	f.agent.blockNext = true
+	f.agent.sessionWhenStopd = ""
+
+	done := make(chan error, 1)
+	go func() { done <- f.handler.handleStartConversation(startMessage("0")) }()
+	<-f.agent.started
+	f.handler.StopTurn("j1", "U1", "2026-10-22T10:00:00Z")
+
+	if err := <-done; err != nil {
+		t.Fatalf("a stopped turn must not be reported as an error, got: %v", err)
+	}
+	stop := waitForStop(t, f.outbox)
+	if stop.Outcome != models.TurnStopOutcomeStopped || stop.SessionID != "" || stop.ProcessedMessageID != "cmsg_0" {
+		t.Errorf("turn_stopped = %+v, want stopped with no session for cmsg_0", stop)
+	}
+	if _, exists := f.handler.appState.GetJobData("j1"); exists {
+		t.Error("a job that never got a session must be forgotten so the next message starts it over")
+	}
+	if acked := f.acked(); len(acked) != 1 || acked[0] != "cmsg_0" {
+		t.Errorf("acked %v, want [cmsg_0]", acked)
+	}
+}
+
+func TestStopTurn_DropsAMessageStillWaitingForAWorker(t *testing.T) {
+	f := newStopFixture(t)
+	if err := f.handler.handleStartConversation(startMessage("0")); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	pool := workerpool.New(1)
+	busy := make(chan struct{})
+	pool.Submit(func() { <-busy })
+	defer close(busy)
+	dispatcher := NewJobDispatcher(f.handler, pool, f.handler.appState)
+	f.handler.SetJobEvictor(dispatcher)
+	dispatcher.Dispatch(replyMessage("1"))
+
+	f.handler.StopTurn("j1", "U1", "2026-10-22T10:00:00Z")
+
+	stop := waitForStop(t, f.outbox)
+	if stop.Outcome != models.TurnStopOutcomeStopped || stop.ProcessedMessageID != "cmsg_1" || stop.SessionID != "session-1" {
+		t.Errorf("turn_stopped = %+v, want stopped for cmsg_1 with session-1", stop)
+	}
+	if acked := f.acked(); len(acked) != 2 || acked[1] != "cmsg_1" {
+		t.Errorf("acked %v, want the waiting message acked", acked)
+	}
+	if _, exists := dispatcher.activeJobs["j1"]; exists {
+		t.Error("the job's queue must be gone so its worker exits instead of waiting forever")
 	}
 }

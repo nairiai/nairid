@@ -674,5 +674,22 @@ func (c *ClaudeService) sessionIDFromStoppedRun(err error) string {
 	if parseErr != nil {
 		return ""
 	}
-	return c.extractSessionID(messages)
+	return sessionIDFromInitOrResult(messages)
+}
+
+// Hook lines printed before init carry a throw-away bootstrap id, so only init and result count.
+func sessionIDFromInitOrResult(messages []services.ClaudeMessage) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		switch message := messages[i].(type) {
+		case services.ResultMessage:
+			if message.GetSessionID() != "" {
+				return message.GetSessionID()
+			}
+		case services.SystemMessage:
+			if message.Subtype == "init" && message.GetSessionID() != "" {
+				return message.GetSessionID()
+			}
+		}
+	}
+	return ""
 }

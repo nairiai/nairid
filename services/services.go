@@ -85,3 +85,11 @@ type CLIAgent interface {
 	// (e.g., "claude" or "cursor") so callers can adapt behavior per agent
 	AgentName() string
 }
+
+// The CLI output parsers answer "unknown" when no line carried a session id.
+func SessionIDIfKnown(sessionID string) string {
+	if sessionID == "unknown" {
+		return ""
+	}
+	return sessionID
+}

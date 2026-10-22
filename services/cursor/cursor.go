@@ -350,5 +350,5 @@ func (c *CursorService) sessionIDFromStoppedRun(err error) string {
 	if parseErr != nil {
 		return ""
 	}
-	return ExtractCursorSessionID(messages)
+	return services.SessionIDIfKnown(ExtractCursorSessionID(messages))
 }

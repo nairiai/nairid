@@ -3,6 +3,7 @@ package handlers
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/gammazero/workerpool"
 
@@ -33,5 +34,24 @@ func TestDropQueuedMessages_EmptiesTheJobQueue(t *testing.T) {
 	}
 	if dispatcher.DropQueuedMessages("unknown") != nil {
 		t.Error("a job with no channel has nothing to drop")
+	}
+}
+
+func TestDropQueuedMessages_ReturnsWhenTheChannelIsClosed(t *testing.T) {
+	appState := models.NewAppState("agent", filepath.Join(t.TempDir(), "state.json"))
+	dispatcher := NewJobDispatcher(&MessageHandler{}, workerpool.New(1), appState)
+	closed := make(chan models.BaseMessage, 1)
+	close(closed)
+	dispatcher.activeJobs["j1"] = closed
+
+	done := make(chan []models.BaseMessage, 1)
+	go func() { done <- dispatcher.DropQueuedMessages("j1") }()
+	select {
+	case dropped := <-done:
+		if len(dropped) != 0 {
+			t.Errorf("a closed channel has nothing to drop, got %d", len(dropped))
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("DropQueuedMessages did not return on a closed channel")
 	}
 }
