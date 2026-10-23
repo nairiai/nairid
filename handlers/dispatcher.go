@@ -128,7 +128,8 @@ func (d *JobDispatcher) processJobMessages(jobID string, ch chan models.BaseMess
 
 		// If job is completed or failed AND no more messages buffered, exit
 		// This ensures we process all queued messages before exiting
-		if (jobData.Status == models.JobStatusCompleted || jobData.Status == models.JobStatusFailed) && len(ch) == 0 {
+		if (jobData.Status == models.JobStatusCompleted || jobData.Status == models.JobStatusFailed) &&
+			d.closeIfEmpty(jobID, ch) {
 			log.Info("✅ Job %s %s and channel empty, exiting processor", jobID, jobData.Status)
 			return
 		}
@@ -148,6 +149,22 @@ func (d *JobDispatcher) cleanup(jobID string, ch chan models.BaseMessage) {
 	delete(d.activeJobs, jobID)
 	close(ch)
 	log.Info("🧹 Cleaned up channel for job %s", jobID)
+}
+
+// closeIfEmpty checks and closes under the same lock Dispatch sends under, so a message
+// queued while the processor decides to exit is processed instead of closed in.
+func (d *JobDispatcher) closeIfEmpty(jobID string, ch chan models.BaseMessage) bool {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	if len(ch) > 0 {
+		return false
+	}
+	if d.activeJobs[jobID] == ch {
+		delete(d.activeJobs, jobID)
+		close(ch)
+		log.Info("🧹 Cleaned up channel for job %s", jobID)
+	}
+	return true
 }
 
 // IsMessageSeen checks if a ProcessedMessageID has already been seen (dispatched).
