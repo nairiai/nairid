@@ -5,22 +5,46 @@ package clients
 import (
 	"os/exec"
 	"syscall"
+	"time"
 )
 
-// configureProcessGroup sets up process group isolation and kill behavior for agent commands.
-// It ensures that when the context expires (timeout), the entire process tree is killed —
-// not just the top-level process. Without this, child processes (e.g. opencode, node) survive
-// as orphans and hold stdout pipes open, causing cmd.Wait() to block indefinitely.
-//
-// It also sets WaitDelay so that if the pipe is still held open after the process is killed
-// (e.g. by a grandchild process that wasn't in the process group), Wait() returns after
-// a bounded delay instead of blocking forever.
+// A cancelled run gets the same treatment as a Ctrl-C in a terminal: SIGINT lets
+// the CLI end its turn and save its session, and only a CLI that ignores that is
+// terminated, then killed. Variables so tests can shorten the waits.
+var (
+	stopGraceAfterInterrupt = 10 * time.Second
+	stopGraceAfterTerm      = 20 * time.Second
+)
+
+// The command gets its own process group so signals reach every child (sudo → bash → node → cli).
 func configureProcessGroup(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
-		// Kill the entire process group (negative PID) instead of just the leader.
-		// This ensures sudo → bash → node → opencode all get SIGKILL.
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		return stopProcessGroup(cmd.Process.Pid)
 	}
-	cmd.WaitDelay = WaitDelayAfterKill
+	cmd.WaitDelay = WaitDelayAfterCancel
+}
+
+func stopProcessGroup(pid int) error {
+	if err := syscall.Kill(-pid, syscall.SIGINT); err != nil {
+		return err
+	}
+	graceAfterInterrupt, graceAfterTerm := stopGraceAfterInterrupt, stopGraceAfterTerm
+	go func() {
+		time.Sleep(graceAfterInterrupt)
+		if !groupAlive(pid) {
+			return
+		}
+		_ = syscall.Kill(-pid, syscall.SIGTERM)
+		time.Sleep(graceAfterTerm)
+		if !groupAlive(pid) {
+			return
+		}
+		_ = syscall.Kill(-pid, syscall.SIGKILL)
+	}()
+	return nil
+}
+
+func groupAlive(pid int) bool {
+	return syscall.Kill(-pid, 0) == nil
 }

@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -194,7 +195,7 @@ func TestCodexService_StartNewConversationWithOptions(t *testing.T) {
 			service := NewCodexService(mockClient, tmpDir, tt.serviceModel)
 
 			// Execute
-			result, err := service.StartNewConversationWithOptions(tt.prompt, tt.options, nil)
+			result, err := service.StartNewConversationWithOptions(context.Background(), tt.prompt, tt.options, nil)
 
 			// Verify error expectation
 			if tt.expectError && err == nil {
@@ -474,7 +475,7 @@ func TestCodexService_ContinueConversationWithOptions(t *testing.T) {
 			service := NewCodexService(mockClient, tmpDir, tt.serviceModel)
 
 			// Execute
-			result, err := service.ContinueConversationWithOptions(tt.threadID, tt.prompt, tt.options, nil)
+			result, err := service.ContinueConversationWithOptions(context.Background(), tt.threadID, tt.prompt, tt.options, nil)
 
 			// Verify error expectation
 			if tt.expectError && err == nil {

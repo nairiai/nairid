@@ -23,7 +23,7 @@ func NewCodexClient(permissionMode, workDir string) *CodexClient {
 	}
 }
 
-func (c *CodexClient) StartNewSession(prompt string, options *clients.CodexOptions, onLine clients.ProgressCallback) (string, error) {
+func (c *CodexClient) StartNewSession(ctx context.Context, prompt string, options *clients.CodexOptions, onLine clients.ProgressCallback) (string, error) {
 	log.Info("📋 Starting to create new Codex session")
 
 	args := c.buildBaseArgs(options)
@@ -33,7 +33,7 @@ func (c *CodexClient) StartNewSession(prompt string, options *clients.CodexOptio
 	log.Info("Command arguments: %v", args)
 
 	timeout := clients.SessionTimeout()
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	cmd := clients.BuildAgentCommandWithContext(ctx, "codex", args...)
@@ -52,7 +52,7 @@ func (c *CodexClient) StartNewSession(prompt string, options *clients.CodexOptio
 	return result, nil
 }
 
-func (c *CodexClient) ContinueSession(threadID, prompt string, options *clients.CodexOptions, onLine clients.ProgressCallback) (string, error) {
+func (c *CodexClient) ContinueSession(ctx context.Context, threadID, prompt string, options *clients.CodexOptions, onLine clients.ProgressCallback) (string, error) {
 	log.Info("📋 Starting to continue Codex session: %s", threadID)
 
 	// Command structure: codex [GLOBAL_OPTIONS] exec [EXEC_OPTIONS] resume [SESSION_ID] [PROMPT]
@@ -65,7 +65,7 @@ func (c *CodexClient) ContinueSession(threadID, prompt string, options *clients.
 	log.Info("Command arguments: %v", args)
 
 	timeout := clients.SessionTimeout()
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	cmd := clients.BuildAgentCommandWithContext(ctx, "codex", args...)

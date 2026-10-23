@@ -85,8 +85,8 @@ func (d *JobDispatcher) Dispatch(msg models.BaseMessage) {
 		return
 	}
 
-	// Check/create channel under lock, but don't call Submit while holding lock
-	// (Submit can block if worker pool is full, causing mutex contention)
+	// The send is non-blocking and happens under the lock, so a finishing worker cannot close
+	// the channel in between.
 	d.mutex.Lock()
 	ch, exists := d.activeJobs[jobID]
 	if !exists {
@@ -94,21 +94,18 @@ func (d *JobDispatcher) Dispatch(msg models.BaseMessage) {
 		d.activeJobs[jobID] = ch
 		log.Info("🔀 Created per-job channel for job %s", jobID)
 	}
-	d.mutex.Unlock()
-
-	// Submit worker outside of lock to avoid blocking other dispatchers
-	if !exists {
-		d.workerPool.Submit(func() {
-			d.processJobMessages(jobID, ch)
-		})
-	}
-
-	// Send message to the job's channel (non-blocking since buffer is 100)
 	select {
 	case ch <- msg:
 		log.Info("📥 Queued message to job %s channel", jobID)
 	default:
 		log.Error("❌ Job %s channel is full, dropping message", jobID)
+	}
+	d.mutex.Unlock()
+
+	if !exists {
+		d.workerPool.Submit(func() {
+			d.processJobMessages(jobID, ch)
+		})
 	}
 }
 
@@ -116,8 +113,7 @@ func (d *JobDispatcher) Dispatch(msg models.BaseMessage) {
 func (d *JobDispatcher) processJobMessages(jobID string, ch chan models.BaseMessage) {
 	log.Info("🔄 Started message processor for job %s", jobID)
 
-	// Ensure channel is cleaned up when we exit
-	defer d.cleanup(jobID)
+	defer d.cleanup(jobID, ch)
 
 	for msg := range ch {
 		log.Info("🔧 Processing message for job %s", jobID)
@@ -132,7 +128,8 @@ func (d *JobDispatcher) processJobMessages(jobID string, ch chan models.BaseMess
 
 		// If job is completed or failed AND no more messages buffered, exit
 		// This ensures we process all queued messages before exiting
-		if (jobData.Status == models.JobStatusCompleted || jobData.Status == models.JobStatusFailed) && len(ch) == 0 {
+		if (jobData.Status == models.JobStatusCompleted || jobData.Status == models.JobStatusFailed) &&
+			d.closeIfEmpty(jobID, ch) {
 			log.Info("✅ Job %s %s and channel empty, exiting processor", jobID, jobData.Status)
 			return
 		}
@@ -141,21 +138,33 @@ func (d *JobDispatcher) processJobMessages(jobID string, ch chan models.BaseMess
 	log.Info("📤 Message processor for job %s exited (channel closed)", jobID)
 }
 
-// cleanup removes a job's channel from the activeJobs map
-func (d *JobDispatcher) cleanup(jobID string) {
+func (d *JobDispatcher) cleanup(jobID string, ch chan models.BaseMessage) {
 	d.mutex.Lock()
-	ch, exists := d.activeJobs[jobID]
-	if exists {
-		// Remove from map first to prevent new messages being sent
-		delete(d.activeJobs, jobID)
-	}
-	d.mutex.Unlock()
+	defer d.mutex.Unlock()
+	d.closeLocked(jobID, ch)
+}
 
-	if exists {
-		// Close channel outside of mutex to avoid holding it while draining
-		close(ch)
-		log.Info("🧹 Cleaned up channel for job %s", jobID)
+// closeIfEmpty checks and closes under the same lock Dispatch sends under, so a message
+// queued while the processor decides to exit is processed instead of closed in.
+func (d *JobDispatcher) closeIfEmpty(jobID string, ch chan models.BaseMessage) bool {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	if len(ch) > 0 {
+		return false
 	}
+	d.closeLocked(jobID, ch)
+	return true
+}
+
+// closeLocked closes the job's channel only while it is still ch: a processor of an evicted
+// job may exit after a newer channel for the same job was created.
+func (d *JobDispatcher) closeLocked(jobID string, ch chan models.BaseMessage) {
+	if d.activeJobs[jobID] != ch {
+		return
+	}
+	delete(d.activeJobs, jobID)
+	close(ch)
+	log.Info("🧹 Cleaned up channel for job %s", jobID)
 }
 
 // IsMessageSeen checks if a ProcessedMessageID has already been seen (dispatched).
@@ -166,13 +175,45 @@ func (d *JobDispatcher) IsMessageSeen(processedMsgID string) bool {
 	return seen
 }
 
+func (d *JobDispatcher) ForgetMessage(processedMsgID string) {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	delete(d.seenMessages, processedMsgID)
+}
+
 // EvictJob forcefully removes a job from the dispatcher, closing its channel
 // and causing the processor goroutine to exit. This should be called when a
 // job encounters an unrecoverable error (e.g., API error) to immediately free
 // up the worker slot instead of waiting for the next message.
 func (d *JobDispatcher) EvictJob(jobID string) {
 	log.Info("🚫 Evicting job %s from dispatcher", jobID)
-	d.cleanup(jobID)
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	if ch, exists := d.activeJobs[jobID]; exists {
+		d.closeLocked(jobID, ch)
+	}
+}
+
+// DropQueuedMessages empties the job's channel and returns what was waiting in it.
+func (d *JobDispatcher) DropQueuedMessages(jobID string) []models.BaseMessage {
+	d.mutex.Lock()
+	ch, exists := d.activeJobs[jobID]
+	d.mutex.Unlock()
+	if !exists {
+		return nil
+	}
+	var dropped []models.BaseMessage
+	for {
+		select {
+		case msg, open := <-ch:
+			if !open {
+				return dropped
+			}
+			dropped = append(dropped, msg)
+		default:
+			return dropped
+		}
+	}
 }
 
 // extractJobID extracts the job ID from a message based on its type

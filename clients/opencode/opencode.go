@@ -24,7 +24,7 @@ func NewOpenCodeClient() *OpenCodeClient {
 	return &OpenCodeClient{}
 }
 
-func (c *OpenCodeClient) StartNewSession(prompt string, options *clients.OpenCodeOptions, onLine clients.ProgressCallback) (string, error) {
+func (c *OpenCodeClient) StartNewSession(ctx context.Context, prompt string, options *clients.OpenCodeOptions, onLine clients.ProgressCallback) (string, error) {
 	log.Info("📋 Starting to create new OpenCode session")
 
 	args := buildRunArgs("", modelFromOptions(options), effortFromOptions(options), prompt, opencodeSupportsStandalone())
@@ -33,7 +33,7 @@ func (c *OpenCodeClient) StartNewSession(prompt string, options *clients.OpenCod
 	log.Info("Command arguments: %v", args)
 
 	timeout := clients.SessionTimeout()
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	cmd := buildCommand(ctx, options, args)
@@ -49,7 +49,7 @@ func (c *OpenCodeClient) StartNewSession(prompt string, options *clients.OpenCod
 	return result, nil
 }
 
-func (c *OpenCodeClient) ContinueSession(sessionID, prompt string, options *clients.OpenCodeOptions, onLine clients.ProgressCallback) (string, error) {
+func (c *OpenCodeClient) ContinueSession(ctx context.Context, sessionID, prompt string, options *clients.OpenCodeOptions, onLine clients.ProgressCallback) (string, error) {
 	log.Info("📋 Starting to continue OpenCode session: %s", sessionID)
 
 	args := buildRunArgs(sessionID, modelFromOptions(options), effortFromOptions(options), prompt, opencodeSupportsStandalone())
@@ -58,7 +58,7 @@ func (c *OpenCodeClient) ContinueSession(sessionID, prompt string, options *clie
 	log.Info("Command arguments: %v", args)
 
 	timeout := clients.SessionTimeout()
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	cmd := buildCommand(ctx, options, args)

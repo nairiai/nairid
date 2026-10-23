@@ -23,7 +23,7 @@ func NewClaudeClient(permissionMode string) *ClaudeClient {
 	}
 }
 
-func (c *ClaudeClient) StartNewSession(prompt string, options *clients.ClaudeOptions, onLine clients.ProgressCallback) (string, error) {
+func (c *ClaudeClient) StartNewSession(ctx context.Context, prompt string, options *clients.ClaudeOptions, onLine clients.ProgressCallback) (string, error) {
 	log.Info("📋 Starting to create new Claude session")
 	args := c.buildPermissionArgs()
 	args = append(args,
@@ -40,7 +40,7 @@ func (c *ClaudeClient) StartNewSession(prompt string, options *clients.ClaudeOpt
 	log.Info("Command arguments: %v", args)
 
 	timeout := clients.SessionTimeout()
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	cmd := c.buildCommand(ctx, options, args)
@@ -79,7 +79,7 @@ func appendOptionArgs(args []string, options *clients.ClaudeOptions) []string {
 	return args
 }
 
-func (c *ClaudeClient) ContinueSession(sessionID, prompt string, options *clients.ClaudeOptions, onLine clients.ProgressCallback) (string, error) {
+func (c *ClaudeClient) ContinueSession(ctx context.Context, sessionID, prompt string, options *clients.ClaudeOptions, onLine clients.ProgressCallback) (string, error) {
 	log.Info("📋 Starting to continue Claude session: %s", sessionID)
 	args := c.buildPermissionArgs()
 	args = append(args,
@@ -97,7 +97,7 @@ func (c *ClaudeClient) ContinueSession(sessionID, prompt string, options *client
 	log.Info("Command arguments: %v", args)
 
 	timeout := clients.SessionTimeout()
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	cmd := c.buildCommand(ctx, options, args)

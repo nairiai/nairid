@@ -1396,6 +1396,50 @@ func (g *GitUseCase) PrepareWorktreeForJob(worktreePath, branchName string) erro
 	return nil
 }
 
+const stoppedWorkCommitMessage = "WIP: turn stopped"
+
+// CommitStoppedWork keeps what a stopped turn left behind as a WIP commit on the job's branch and
+// pushes it, so the work survives the idle-job cleanup. No commit message is asked of Claude and no
+// PR is opened: the user asked for the work to stop.
+func (g *GitUseCase) CommitStoppedWork(worktreePath, branchName string) error {
+	repoContext := g.appState.GetRepositoryContext()
+	if !repoContext.IsRepoMode {
+		return nil
+	}
+	dir := worktreePath
+	if dir == "" {
+		dir = repoContext.RepoPath
+	}
+	hasChanges, err := g.gitClient.HasUncommittedChangesInWorktree(dir)
+	if err != nil {
+		return fmt.Errorf("failed to check for uncommitted changes: %w", err)
+	}
+	if !hasChanges {
+		return nil
+	}
+	currentBranch, err := g.gitClient.GetCurrentBranchInWorktree(dir)
+	if err != nil {
+		return fmt.Errorf("failed to get current branch: %w", err)
+	}
+	if currentBranch != branchName {
+		return fmt.Errorf(
+			"the turn left %q checked out instead of the job's branch %q, so nothing was committed",
+			currentBranch,
+			branchName,
+		)
+	}
+	if err := g.gitClient.AddAllInWorktree(dir); err != nil {
+		return fmt.Errorf("failed to stage the stopped work: %w", err)
+	}
+	if err := g.gitClient.CommitInWorktree(dir, stoppedWorkCommitMessage); err != nil {
+		return fmt.Errorf("failed to commit the stopped work: %w", err)
+	}
+	if err := g.gitClient.PushBranchFromWorktree(dir, branchName); err != nil {
+		return fmt.Errorf("failed to push the stopped work: %w", err)
+	}
+	return nil
+}
+
 // CleanupJobWorktree removes the worktree for a completed or abandoned job
 func (g *GitUseCase) CleanupJobWorktree(worktreePath, branchName string) error {
 	log.Info("📋 Starting to cleanup job worktree: %s", worktreePath)

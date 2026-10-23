@@ -686,8 +686,8 @@ func TestConfigureProcessGroup_SelfHosted(t *testing.T) {
 	}
 
 	// Should have WaitDelay
-	if cmd.WaitDelay != WaitDelayAfterKill {
-		t.Errorf("WaitDelay = %v, want %v", cmd.WaitDelay, WaitDelayAfterKill)
+	if cmd.WaitDelay != WaitDelayAfterCancel {
+		t.Errorf("WaitDelay = %v, want %v", cmd.WaitDelay, WaitDelayAfterCancel)
 	}
 }
 
@@ -712,19 +712,19 @@ func TestConfigureProcessGroup_Managed(t *testing.T) {
 	}
 
 	// Should have WaitDelay
-	if cmd.WaitDelay != WaitDelayAfterKill {
-		t.Errorf("WaitDelay = %v, want %v", cmd.WaitDelay, WaitDelayAfterKill)
+	if cmd.WaitDelay != WaitDelayAfterCancel {
+		t.Errorf("WaitDelay = %v, want %v", cmd.WaitDelay, WaitDelayAfterCancel)
 	}
 }
 
 func TestProcessGroupKill_KillsChildProcesses(t *testing.T) {
-	original := os.Getenv("AGENT_EXEC_USER")
-	defer func() { _ = os.Setenv("AGENT_EXEC_USER", original) }()
-	_ = os.Unsetenv("AGENT_EXEC_USER")
+	shortStopLadder(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
+	// A background job of a non-interactive shell ignores SIGINT, so only the
+	// SIGTERM step of the ladder ends the sleep.
 	cmd := BuildAgentCommandWithContext(ctx, "sh", "-c", "sleep 300 & wait")
 
 	err := cmd.Start()
@@ -737,14 +737,13 @@ func TestProcessGroupKill_KillsChildProcesses(t *testing.T) {
 	// Wait for the process to be killed by context timeout
 	_ = cmd.Wait()
 
-	// Wait a short time for the OS to fully reap the process group
-	time.Sleep(100 * time.Millisecond)
-
-	// Verify the process group is dead by trying to signal it.
-	err = syscall.Kill(-pgid, 0)
-	if err == nil {
-		_ = syscall.Kill(-pgid, syscall.SIGKILL)
-		t.Error("process group should be dead after context cancellation, but it's still alive")
+	deadline := time.Now().Add(2 * time.Second)
+	for syscall.Kill(-pgid, 0) == nil {
+		if time.Now().After(deadline) {
+			_ = syscall.Kill(-pgid, syscall.SIGKILL)
+			t.Fatal("process group should be dead after context cancellation, but it's still alive")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

@@ -1152,6 +1152,9 @@ func (cr *CmdRunner) startSocketIOClient(serverURLStr, apiKey string) error {
 			instantWorkerPool.Submit(func() {
 				cr.messageHandler.HandleMessage(msg)
 			})
+		case models.MessageTypeStopTurn:
+			// Not in a pool: a stop must not wait behind turns or idle checks.
+			go cr.messageHandler.HandleMessage(msg)
 		default:
 			// Route other message types through dispatcher
 			cr.dispatcher.Dispatch(msg)

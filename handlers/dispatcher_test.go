@@ -81,7 +81,7 @@ func newTestableDispatcher(poolSize int, appState *models.AppState) *testableDis
 
 // Override processJobMessages to use mock handler
 func (td *testableDispatcher) processJobMessagesWithMock(jobID string, ch chan models.BaseMessage) {
-	defer td.cleanup(jobID)
+	defer td.cleanup(jobID, ch)
 
 	for msg := range ch {
 		td.mockHandler.HandleMessage(msg)
@@ -525,7 +525,7 @@ func TestCleanupRemovesChannelFromActiveJobs(t *testing.T) {
 	}
 
 	// Call cleanup
-	dispatcher.cleanup(jobID)
+	dispatcher.cleanup(jobID, ch)
 
 	// Verify channel was removed
 	dispatcher.mutex.Lock()
