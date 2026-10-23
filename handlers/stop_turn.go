@@ -25,25 +25,26 @@ func (mh *MessageHandler) handleStopTurn(msg models.BaseMessage) error {
 }
 
 // A running turn is answered by runTurn once its handler returns; anything else at once.
-func (mh *MessageHandler) stopTurn(jobID, requestedBy, requestedAt string) {
-	if mh.turns.isRepeatedStopRequest(jobID, requestedAt) {
+func (mh *MessageHandler) stopTurn(jobID, requestedBy, requestedAt string) (droppedIDs []string) {
+	if !mh.turns.claimStopRequest(jobID, requestedAt) {
 		log.Info("🛑 Stop request for job %s already handled (requested at %s)", jobID, requestedAt)
-		return
+		return nil
 	}
-	running := mh.turns.Stop(jobID, requestedBy)
+	running := mh.turns.Stop(jobID)
 	dropped := mh.dropQueuedMessages(jobID)
 	if running {
 		log.Info("🛑 Stopping the running turn of job %s (requested by %q)", jobID, requestedBy)
-		return
+		return dropped
 	}
 	if len(dropped) == 0 {
 		log.Info("🛑 Stop requested for job %s but no turn is running", jobID)
 		mh.sendTurnStopped(jobID, "", models.TurnStopOutcomeNotRunning)
-		return
+		return nil
 	}
 	log.Info("🛑 Stop requested for job %s before its turn started; %d waiting message(s) dropped", jobID, len(dropped))
 	mh.jobEvictor.EvictJob(jobID)
 	mh.sendTurnStopped(jobID, dropped[0], models.TurnStopOutcomeStopped)
+	return dropped
 }
 
 // The backend ended and acked these messages when the stop was pressed.
@@ -86,10 +87,9 @@ func (mh *MessageHandler) finishStoppedTurn(
 	jobData models.JobData,
 	result *services.CLIAgentResult,
 	runErr error,
-	stoppedBy string,
 ) error {
 	jobData.ClaudeSessionID = sessionIDAfterStop(jobData.ClaudeSessionID, result, runErr)
-	log.Info("🛑 Turn of job %s stopped by %q (session %q)", jobData.JobID, stoppedBy, jobData.ClaudeSessionID)
+	log.Info("🛑 Turn of job %s stopped (session %q)", jobData.JobID, jobData.ClaudeSessionID)
 	if jobData.ClaudeSessionID == "" {
 		if jobData.WorktreePath != "" {
 			if err := mh.gitUseCase.CleanupJobWorktree(jobData.WorktreePath, jobData.BranchName); err != nil {
@@ -108,7 +108,7 @@ func (mh *MessageHandler) finishStoppedTurn(
 		return fmt.Errorf("failed to persist job state after stop: %w", err)
 	}
 	if jobData.Mode != models.AgentModeAsk {
-		if err := mh.gitUseCase.CommitStoppedWork(jobData.WorktreePath, jobData.BranchName, stoppedBy); err != nil {
+		if err := mh.gitUseCase.CommitStoppedWork(jobData.WorktreePath); err != nil {
 			log.Error("❌ Failed to save the work of stopped job %s: %v", jobData.JobID, err)
 			notice := fmt.Sprintf("Stopped, but the work so far could not be saved: %v", clients.RedactURLCredentials(err.Error()))
 			if sendErr := mh.sendSystemMessage(notice, jobData.ProcessedMessageID, jobData.JobID); sendErr != nil {
@@ -158,20 +158,22 @@ func jobDataForStart(start models.StartConversationPayload) models.JobData {
 	}
 }
 
-// The turn counts as running from the moment its message leaves the queue, so a stop that
-// lands while the worktree is being prepared still ends it.
+// The turn is registered before its handler prepares the worktree, so a stop that lands
+// during the preparation still ends it.
 func (mh *MessageHandler) runTurn(jobID, processedMessageID string, handle func(ctx context.Context) error) {
 	turn := mh.turns.Begin(jobID)
 	err := handle(turn.ctx)
-	if mh.turns.End(jobID, turn) {
-		outcome := models.TurnStopOutcomeStopped
-		if err == nil {
-			// The stop came after the CLI had finished; the turn's answer is already out.
-			outcome = models.TurnStopOutcomeNotRunning
-		}
-		log.Info("🛑 Answering the stop of job %s: %s (%v)", jobID, outcome, err)
-		mh.sendTurnStopped(jobID, processedMessageID, outcome)
+	stopPressed := mh.turns.End(jobID, turn)
+	if _, stopped := core.IsTurnStopped(err); stopped {
+		log.Info("🛑 Answering the stop of job %s: stopped", jobID)
+		mh.sendTurnStopped(jobID, processedMessageID, models.TurnStopOutcomeStopped)
 		return
+	}
+	if stopPressed {
+		// The stop came after the CLI had finished, or the turn failed on its own; either way
+		// the turn is reported as it went.
+		log.Info("🛑 Answering the stop of job %s: not running (%v)", jobID, err)
+		mh.sendTurnStopped(jobID, processedMessageID, models.TurnStopOutcomeNotRunning)
 	}
 	if err == nil {
 		return

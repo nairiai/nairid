@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -320,27 +322,78 @@ func TestStopTurn_DropsAMessageStillWaitingForAWorker(t *testing.T) {
 	}
 }
 
-func TestStopTurn_AnswersAStopWhenTheTurnFailedBeforeTheCLIRan(t *testing.T) {
+func TestStopTurn_ReportsAFailureTheStopDidNotCause(t *testing.T) {
 	f := newStopFixture(t)
 	f.mustHandle(t, startMessage("0"))
 
-	// Git prep fails for its own reason while a stop is pending: the stop is answered and
-	// no "nairid encountered error" follows.
+	// The push after a finished CLI run fails while a stop is pending: the failure is reported
+	// and the stop is answered as not running.
 	f.handler.runTurn("j1", "cmsg_1", func(ctx context.Context) error {
 		f.handler.stopTurn("j1", "U1", "2026-10-22T11:00:00Z")
 		if got := f.outbox.ofType(models.MessageTypeTurnStopped); len(got) != 0 {
 			t.Fatalf("a running turn was answered before it ended: %+v", got)
 		}
-		return errors.New("git prep failed")
+		return errors.New("git push failed")
 	})
 
 	stop := waitForStop(t, f.outbox)
-	if stop.Outcome != models.TurnStopOutcomeStopped || stop.ProcessedMessageID != "cmsg_1" || stop.SessionID != "session-1" {
-		t.Errorf("turn_stopped = %+v, want stopped for cmsg_1 with session-1", stop)
+	if stop.Outcome != models.TurnStopOutcomeNotRunning || stop.ProcessedMessageID != "cmsg_1" {
+		t.Errorf("turn_stopped = %+v, want not_running for cmsg_1", stop)
 	}
-	if got := f.outbox.ofType(models.MessageTypeSystemMessage); len(got) != 0 {
-		t.Errorf("a stopped turn must not report its prep failure as an error: %+v", got)
+	errorsSent := f.outbox.ofType(models.MessageTypeSystemMessage)
+	if len(errorsSent) != 1 || !strings.Contains(fmt.Sprint(errorsSent[0].Payload), "git push failed") {
+		t.Errorf("the failure must still reach the user, sent %+v", errorsSent)
 	}
+}
+
+func TestPolledStop_StillRunsAReplySentAfterThePress(t *testing.T) {
+	f := newStopFixture(t)
+	f.mustHandle(t, startMessage("0"))
+	pool := workerpool.New(2)
+	defer pool.Stop()
+	dispatcher := NewJobDispatcher(f.handler, pool, f.handler.appState)
+	f.handler.SetJobEvictor(dispatcher)
+
+	f.agent.blockNext = true
+	dispatcher.Dispatch(replyMessage("1"))
+	<-f.agent.started
+	// The socket send of the stop failed; the user's next message still came over the socket.
+	dispatcher.Dispatch(replyMessage("9"))
+
+	// The backend ended and acked cmsg_1 at the press, so the poll lists only cmsg_9.
+	newer, _ := json.Marshal(models.UserMessagePayload{JobID: "j1", Message: "do Y instead", ProcessedMessageID: "cmsg_9"})
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/ack") {
+			return
+		}
+		_ = json.NewEncoder(w).Encode(clients.AgentJobsResponse{Jobs: []clients.AgentJob{{
+			ID: "j1", Mode: "ask", StopRequested: true, StopRequestedBy: "U1", StopRequestedAt: "2026-10-23T10:00:00.000000Z",
+			Messages: []clients.AgentJobMessage{{ID: "msg_9", Type: models.MessageTypeUserMessage, Payload: newer}},
+		}}})
+	}))
+	defer backend.Close()
+	poller := NewMessagePoller(clients.NewAgentsApiClient("k", backend.URL, "agent"), dispatcher, f.handler, f.handler.appState, time.Hour)
+	poller.pollAndDispatch()
+
+	if stop := waitForStop(t, f.outbox); stop.Outcome != models.TurnStopOutcomeStopped || stop.ProcessedMessageID != "cmsg_1" {
+		t.Errorf("turn_stopped = %+v, want stopped for cmsg_1", stop)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for !answered(f.outbox, "cmsg_9") {
+		if time.Now().After(deadline) {
+			t.Fatal("the reply sent after the press was dropped with the stopped turn")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func answered(box *outbox, processedMessageID string) bool {
+	for _, msg := range box.ofType(models.MessageTypeAssistantMessage) {
+		if payload, ok := msg.Payload.(models.AssistantMessagePayload); ok && payload.ProcessedMessageID == processedMessageID {
+			return true
+		}
+	}
+	return false
 }
 
 func TestStopTurn_AnswersNotRunningWhenTheTurnFinishedFirst(t *testing.T) {

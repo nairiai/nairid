@@ -158,6 +158,12 @@ func (d *JobDispatcher) IsMessageSeen(processedMsgID string) bool {
 	return seen
 }
 
+func (d *JobDispatcher) ForgetMessage(processedMsgID string) {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	delete(d.seenMessages, processedMsgID)
+}
+
 // EvictJob forcefully removes a job from the dispatcher, closing its channel
 // and causing the processor goroutine to exit. This should be called when a
 // job encounters an unrecoverable error (e.g., API error) to immediately free

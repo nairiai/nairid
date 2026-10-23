@@ -6,10 +6,8 @@ import (
 )
 
 type runningTurn struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	stopRequested bool
-	stoppedBy     string
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 type turnRegistry struct {
@@ -31,49 +29,37 @@ func (r *turnRegistry) Begin(jobID string) *runningTurn {
 	return turn
 }
 
-func (r *turnRegistry) Stop(jobID, requestedBy string) (running bool) {
+func (r *turnRegistry) Stop(jobID string) (running bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	turn, exists := r.turns[jobID]
-	if !exists {
-		return false
+	if exists {
+		turn.cancel()
 	}
-	turn.stopRequested = true
-	turn.stoppedBy = requestedBy
-	turn.cancel()
-	return true
+	return exists
 }
 
-func (r *turnRegistry) StopRequested(jobID string) (requested bool, stoppedBy string) {
+func (r *turnRegistry) End(jobID string, turn *runningTurn) (stopped bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	turn, exists := r.turns[jobID]
-	if !exists {
-		return false, ""
-	}
-	return turn.stopRequested, turn.stoppedBy
-}
-
-func (r *turnRegistry) End(jobID string, turn *runningTurn) (stopRequested bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	stopped = turn.ctx.Err() != nil
 	turn.cancel()
 	if r.turns[jobID] == turn {
 		delete(r.turns, jobID)
 	}
-	return turn.stopRequested
+	return stopped
 }
 
 // The same request can arrive over the socket and again from the job poll.
-func (r *turnRegistry) isRepeatedStopRequest(jobID, requestedAt string) bool {
+func (r *turnRegistry) claimStopRequest(jobID, requestedAt string) (first bool) {
 	if requestedAt == "" {
-		return false
+		return true
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.seenStopRequests[jobID] == requestedAt {
-		return true
+		return false
 	}
 	r.seenStopRequests[jobID] = requestedAt
-	return false
+	return true
 }

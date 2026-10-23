@@ -116,7 +116,11 @@ func (mp *MessagePoller) pollAndDispatch() {
 		log.Info("📡 MessagePoller: Processing job %s (exists_locally=%v, messages=%d)", job.ID, jobExists, len(job.Messages))
 
 		if job.StopRequested {
-			mp.messageHandler.stopTurn(job.ID, job.StopRequestedBy, job.StopRequestedAt)
+			// The backend acked every message the stop ended, so a dropped message this poll
+			// still lists was sent after the press and has to run.
+			for _, droppedID := range mp.messageHandler.stopTurn(job.ID, job.StopRequestedBy, job.StopRequestedAt) {
+				mp.dispatcher.ForgetMessage(droppedID)
+			}
 		}
 
 		for _, msg := range job.Messages {

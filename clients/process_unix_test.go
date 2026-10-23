@@ -42,11 +42,14 @@ func TestStopLadder_EscalatesWhenInterruptIsIgnored(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	script := `trap 'echo got-int' INT; trap 'echo got-term; exit 0' TERM; while :; do sleep 0.05; done`
 	cmd := BuildAgentCommandWithContext(ctx, "sh", "-c", script)
-	time.AfterFunc(200*time.Millisecond, cancel)
+	cancelledAt := make(chan time.Time, 1)
+	time.AfterFunc(200*time.Millisecond, func() {
+		cancelledAt <- time.Now()
+		cancel()
+	})
 
-	start := time.Now()
 	_, err := RunCommandStreaming(ctx, cmd, nil)
-	elapsed := time.Since(start)
+	sinceCancel := time.Since(<-cancelledAt)
 	if err == nil {
 		t.Fatal("a cancelled run must not count as finished, even on exit 0")
 	}
@@ -57,7 +60,7 @@ func TestStopLadder_EscalatesWhenInterruptIsIgnored(t *testing.T) {
 	if !strings.Contains(cmdErr.Output, "got-int") || !strings.Contains(cmdErr.Output, "got-term") {
 		t.Errorf("the process should have seen SIGINT then SIGTERM, output: %q", cmdErr.Output)
 	}
-	if elapsed < 150*time.Millisecond || elapsed > 3*time.Second {
-		t.Errorf("took %s, want SIGTERM about 150ms after SIGINT", elapsed)
+	if sinceCancel < 150*time.Millisecond || sinceCancel > 3*time.Second {
+		t.Errorf("ended %s after the cancel, want SIGTERM about 150ms after SIGINT", sinceCancel)
 	}
 }

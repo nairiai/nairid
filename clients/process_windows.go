@@ -11,7 +11,10 @@ import (
 // so cancelling a run ends the whole process tree.
 func configureProcessGroup(cmd *exec.Cmd) {
 	cmd.Cancel = func() error {
-		return exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(cmd.Process.Pid)).Run()
+		if err := exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(cmd.Process.Pid)).Run(); err != nil {
+			return cmd.Process.Kill()
+		}
+		return nil
 	}
 	cmd.WaitDelay = WaitDelayAfterCancel
 }

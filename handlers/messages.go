@@ -355,11 +355,11 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 		log.Info("🌳 Starting Claude session in worktree: %s", worktreePath)
 	}
 	claudeResult, err = mh.claudeService.StartNewConversationWithProgress(turnCtx, finalPrompt, systemPrompt, worktreePath, reasoningEffort, progressEmitter)
-	if stopped, stoppedBy := mh.turns.StopRequested(payload.JobID); stopped {
+	if turnCtx.Err() != nil {
 		stoppedJob := jobDataForStart(payload)
 		stoppedJob.BranchName = branchName
 		stoppedJob.WorktreePath = worktreePath
-		return mh.finishStoppedTurn(stoppedJob, claudeResult, err, stoppedBy)
+		return mh.finishStoppedTurn(stoppedJob, claudeResult, err)
 	}
 
 	if err != nil {
@@ -753,12 +753,12 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 	}
 	reasoningEffort := effortForTurn(payload.JobID, jobData.ReasoningEffort, jobData.EffortModel, mh.claudeService.Model())
 	claudeResult, err = mh.claudeService.ContinueConversationWithProgress(turnCtx, sessionID, finalPrompt, outboundSystemPrompt, jobData.WorktreePath, reasoningEffort, progressEmitter)
-	if stopped, stoppedBy := mh.turns.StopRequested(payload.JobID); stopped {
+	if turnCtx.Err() != nil {
 		stoppedJob := *jobData
 		stoppedJob.LastMessage = payload.Message
 		stoppedJob.ProcessedMessageID = payload.ProcessedMessageID
 		stoppedJob.MessageLink = payload.MessageLink
-		return mh.finishStoppedTurn(stoppedJob, claudeResult, err, stoppedBy)
+		return mh.finishStoppedTurn(stoppedJob, claudeResult, err)
 	}
 	if err != nil {
 		log.Info("❌ Error continuing Claude session: %v", err)

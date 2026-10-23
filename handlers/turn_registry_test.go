@@ -6,22 +6,19 @@ func TestTurnRegistry_StopEndsTheRunningTurn(t *testing.T) {
 	registry := newTurnRegistry()
 	turn := registry.Begin("j1")
 
-	if registry.Stop("j2", "U1") {
+	if registry.Stop("j2") {
 		t.Fatal("a job with no turn must not report a running turn")
 	}
-	if !registry.Stop("j1", "U1") {
+	if !registry.Stop("j1") {
 		t.Fatal("Stop must find the running turn")
 	}
 	if turn.ctx.Err() == nil {
 		t.Fatal("the turn's context must be cancelled by Stop")
 	}
-	if requested, by := registry.StopRequested("j1"); !requested || by != "U1" {
-		t.Fatalf("StopRequested = (%v, %q), want (true, U1)", requested, by)
-	}
 	if !registry.End("j1", turn) {
 		t.Fatal("End must report the stop")
 	}
-	if registry.Stop("j1", "U1") {
+	if registry.Stop("j1") {
 		t.Fatal("an ended turn is not running")
 	}
 }
@@ -43,24 +40,24 @@ func TestTurnRegistry_EndingAnOlderTurnLeavesTheNewerOne(t *testing.T) {
 	newer := registry.Begin("j1")
 
 	registry.End("j1", older)
-	if !registry.Stop("j1", "U1") || newer.ctx.Err() == nil {
+	if !registry.Stop("j1") || newer.ctx.Err() == nil {
 		t.Fatal("the newer turn must still be registered and stoppable")
 	}
 }
 
-func TestTurnRegistry_SameStopRequestIsSeenOnce(t *testing.T) {
+func TestTurnRegistry_SameStopRequestIsClaimedOnce(t *testing.T) {
 	registry := newTurnRegistry()
-	if registry.isRepeatedStopRequest("j1", "2026-10-21T20:00:00Z") {
-		t.Fatal("first sight")
+	if !registry.claimStopRequest("j1", "2026-10-21T20:00:00Z") {
+		t.Fatal("the first delivery must be claimed")
 	}
-	if !registry.isRepeatedStopRequest("j1", "2026-10-21T20:00:00Z") {
-		t.Fatal("the same request again must count as repeated")
+	if registry.claimStopRequest("j1", "2026-10-21T20:00:00Z") {
+		t.Fatal("the same request again must not be claimed")
 	}
-	if registry.isRepeatedStopRequest("j1", "2026-10-21T20:05:00Z") {
+	if !registry.claimStopRequest("j1", "2026-10-21T20:05:00Z") {
 		t.Fatal("a later request for the same job is new")
 	}
 	for i := 0; i < 2; i++ {
-		if registry.isRepeatedStopRequest("j1", "") {
+		if !registry.claimStopRequest("j1", "") {
 			t.Fatal("a request with no timestamp cannot be deduplicated")
 		}
 	}
