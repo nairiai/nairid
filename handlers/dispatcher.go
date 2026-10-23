@@ -85,8 +85,8 @@ func (d *JobDispatcher) Dispatch(msg models.BaseMessage) {
 		return
 	}
 
-	// The send is non-blocking and happens under the lock, so cleanup cannot close the
-	// channel in between. Submit can block when the pool is full, so it runs outside.
+	// The send is non-blocking and happens under the lock, so a finishing worker cannot close
+	// the channel in between.
 	d.mutex.Lock()
 	ch, exists := d.activeJobs[jobID]
 	if !exists {
@@ -138,17 +138,10 @@ func (d *JobDispatcher) processJobMessages(jobID string, ch chan models.BaseMess
 	log.Info("📤 Message processor for job %s exited (channel closed)", jobID)
 }
 
-// cleanup closes the job's channel only while it is still ch: a processor of an evicted
-// job may exit after a newer channel for the same job was created.
 func (d *JobDispatcher) cleanup(jobID string, ch chan models.BaseMessage) {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
-	if d.activeJobs[jobID] != ch {
-		return
-	}
-	delete(d.activeJobs, jobID)
-	close(ch)
-	log.Info("🧹 Cleaned up channel for job %s", jobID)
+	d.closeLocked(jobID, ch)
 }
 
 // closeIfEmpty checks and closes under the same lock Dispatch sends under, so a message
@@ -159,12 +152,19 @@ func (d *JobDispatcher) closeIfEmpty(jobID string, ch chan models.BaseMessage) b
 	if len(ch) > 0 {
 		return false
 	}
-	if d.activeJobs[jobID] == ch {
-		delete(d.activeJobs, jobID)
-		close(ch)
-		log.Info("🧹 Cleaned up channel for job %s", jobID)
-	}
+	d.closeLocked(jobID, ch)
 	return true
+}
+
+// closeLocked closes the job's channel only while it is still ch: a processor of an evicted
+// job may exit after a newer channel for the same job was created.
+func (d *JobDispatcher) closeLocked(jobID string, ch chan models.BaseMessage) {
+	if d.activeJobs[jobID] != ch {
+		return
+	}
+	delete(d.activeJobs, jobID)
+	close(ch)
+	log.Info("🧹 Cleaned up channel for job %s", jobID)
 }
 
 // IsMessageSeen checks if a ProcessedMessageID has already been seen (dispatched).
@@ -188,10 +188,9 @@ func (d *JobDispatcher) ForgetMessage(processedMsgID string) {
 func (d *JobDispatcher) EvictJob(jobID string) {
 	log.Info("🚫 Evicting job %s from dispatcher", jobID)
 	d.mutex.Lock()
-	ch, exists := d.activeJobs[jobID]
-	d.mutex.Unlock()
-	if exists {
-		d.cleanup(jobID, ch)
+	defer d.mutex.Unlock()
+	if ch, exists := d.activeJobs[jobID]; exists {
+		d.closeLocked(jobID, ch)
 	}
 }
 
