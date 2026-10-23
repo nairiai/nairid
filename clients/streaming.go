@@ -60,13 +60,6 @@ func RunCommandStreaming(ctx context.Context, cmd *exec.Cmd, onLine ProgressCall
 			Output: fullOutput.String(),
 		}
 	}
-	// A CLI told to stop can still exit 0 with a partial answer; that is not a finished turn.
-	if ctx.Err() != nil {
-		return "", &CommandError{
-			Err:    ctx.Err(),
-			Output: fullOutput.String(),
-		}
-	}
 
 	return strings.TrimSpace(fullOutput.String()), nil
 }

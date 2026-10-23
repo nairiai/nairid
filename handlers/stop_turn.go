@@ -47,7 +47,8 @@ func (mh *MessageHandler) stopTurn(jobID, requestedBy, requestedAt string) (drop
 	return dropped
 }
 
-// The backend ended and acked these messages when the stop was pressed.
+// The backend ended the messages that were waiting when the stop was pressed; the job poll
+// brings back any sent after it.
 func (mh *MessageHandler) dropQueuedMessages(jobID string) (droppedIDs []string) {
 	if mh.jobEvictor == nil {
 		return nil
@@ -108,15 +109,18 @@ func (mh *MessageHandler) finishStoppedTurn(
 		return fmt.Errorf("failed to persist job state after stop: %w", err)
 	}
 	if jobData.Mode != models.AgentModeAsk {
-		if err := mh.gitUseCase.CommitStoppedWork(jobData.WorktreePath); err != nil {
+		if err := mh.gitUseCase.CommitStoppedWork(jobData.WorktreePath, jobData.BranchName); err != nil {
 			log.Error("❌ Failed to save the work of stopped job %s: %v", jobData.JobID, err)
-			notice := fmt.Sprintf("Stopped, but the work so far could not be saved: %v", clients.RedactURLCredentials(err.Error()))
+			notice := fmt.Sprintf(
+				"Stopped, but saving the work so far failed: %v",
+				clients.RedactURLCredentials(err.Error()),
+			)
 			if sendErr := mh.sendSystemMessage(notice, jobData.ProcessedMessageID, jobData.JobID); sendErr != nil {
 				log.Error("❌ Failed to report the unsaved work of job %s: %v", jobData.JobID, sendErr)
 			}
 		}
 	}
-	return &core.ErrTurnStopped{SessionID: jobData.ClaudeSessionID}
+	return &core.ErrTurnStopped{}
 }
 
 func sessionIDAfterStop(known string, result *services.CLIAgentResult, runErr error) string {
