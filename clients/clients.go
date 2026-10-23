@@ -30,7 +30,6 @@ type CodexOptions struct {
 }
 
 // ClaudeClient defines the interface for Claude CLI interactions
-// Every Start/Continue runs one CLI process; cancelling ctx ends that process early.
 type ClaudeClient interface {
 	StartNewSession(ctx context.Context, prompt string, options *ClaudeOptions, onLine ProgressCallback) (string, error)
 	ContinueSession(ctx context.Context, sessionID, prompt string, options *ClaudeOptions, onLine ProgressCallback) (string, error)

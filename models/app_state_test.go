@@ -21,6 +21,7 @@ func TestJobDataIsReadBackWithEveryField(t *testing.T) {
 		MessageLink:        "https://example.slack.com/archives/C1/p1",
 		Status:             JobStatusCompleted,
 		Mode:               AgentModeExecute,
+		SystemPrompt:       "Org rule: never push to main.",
 		ReasoningEffort:    "xhigh",
 		EffortModel:        "claude-opus-4-8",
 		UpdatedAt:          time.Date(2026, 10, 2, 10, 0, 0, 0, time.UTC),

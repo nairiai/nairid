@@ -116,7 +116,7 @@ func (mp *MessagePoller) pollAndDispatch() {
 		log.Info("📡 MessagePoller: Processing job %s (exists_locally=%v, messages=%d)", job.ID, jobExists, len(job.Messages))
 
 		if job.StopRequested {
-			mp.messageHandler.StopTurn(job.ID, job.StopRequestedBy, job.StopRequestedAt)
+			mp.messageHandler.stopTurn(job.ID, job.StopRequestedBy, job.StopRequestedAt)
 		}
 
 		for _, msg := range job.Messages {

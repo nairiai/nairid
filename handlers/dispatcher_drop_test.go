@@ -26,7 +26,9 @@ func TestDropQueuedMessages_EmptiesTheJobQueue(t *testing.T) {
 	if len(dropped) != 2 {
 		t.Fatalf("dropped %d messages, want 2", len(dropped))
 	}
-	if processedMessageIDOf(dropped[0]) != "cmsg_1" || processedMessageIDOf(dropped[1]) != "cmsg_2" {
+	first, _ := dropped[0].Payload.(models.UserMessagePayload)
+	second, _ := dropped[1].Payload.(models.UserMessagePayload)
+	if first.ProcessedMessageID != "cmsg_1" || second.ProcessedMessageID != "cmsg_2" {
 		t.Errorf("dropped %v", dropped)
 	}
 	if again := dispatcher.DropQueuedMessages("j1"); len(again) != 0 {
@@ -54,4 +56,20 @@ func TestDropQueuedMessages_ReturnsWhenTheChannelIsClosed(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("DropQueuedMessages did not return on a closed channel")
 	}
+}
+
+func TestCleanup_LeavesANewerChannelOfTheSameJobOpen(t *testing.T) {
+	appState := models.NewAppState("agent", filepath.Join(t.TempDir(), "state.json"))
+	dispatcher := NewJobDispatcher(&MessageHandler{}, workerpool.New(1), appState)
+	evicted := make(chan models.BaseMessage, 1)
+	newer := make(chan models.BaseMessage, 1)
+	dispatcher.activeJobs["j1"] = newer
+
+	// The processor of the evicted channel exits late and cleans up after itself.
+	dispatcher.cleanup("j1", evicted)
+
+	if dispatcher.activeJobs["j1"] != newer {
+		t.Fatal("the newer channel must stay registered")
+	}
+	newer <- replyMessage("1") // panics if cleanup closed it
 }

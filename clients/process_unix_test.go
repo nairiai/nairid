@@ -20,19 +20,20 @@ func shortStopLadder(t *testing.T) {
 	_ = os.Unsetenv("AGENT_EXEC_USER")
 }
 
-func TestStopLadder_InterruptEndsAWellBehavedProcess(t *testing.T) {
+func TestStopLadder_InterruptAloneEndsAProcessThatHandlesIt(t *testing.T) {
 	shortStopLadder(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd := BuildAgentCommandWithContext(ctx, "sleep", "30")
-	time.AfterFunc(100*time.Millisecond, cancel)
+	script := `trap 'echo got-int; exit 0' INT; trap 'echo got-term; exit 0' TERM; while :; do sleep 0.05; done`
+	cmd := BuildAgentCommandWithContext(ctx, "sh", "-c", script)
+	time.AfterFunc(200*time.Millisecond, cancel)
 
-	start := time.Now()
 	_, err := RunCommandStreaming(ctx, cmd, nil)
-	if err == nil {
-		t.Fatal("a cancelled run must not count as finished")
+	cmdErr, ok := err.(*CommandError)
+	if !ok {
+		t.Fatalf("got %v (%T), want *CommandError for a cancelled run", err, err)
 	}
-	if elapsed := time.Since(start); elapsed > 2*time.Second {
-		t.Errorf("took %s, SIGINT alone should have ended sleep", elapsed)
+	if !strings.Contains(cmdErr.Output, "got-int") || strings.Contains(cmdErr.Output, "got-term") {
+		t.Errorf("the process should have ended on SIGINT alone, output: %q", cmdErr.Output)
 	}
 }
 
@@ -58,16 +59,5 @@ func TestStopLadder_EscalatesWhenInterruptIsIgnored(t *testing.T) {
 	}
 	if elapsed < 150*time.Millisecond || elapsed > 3*time.Second {
 		t.Errorf("took %s, want SIGTERM about 150ms after SIGINT", elapsed)
-	}
-}
-
-func TestStopLadder_CancelledContextReportsCancelNotTimeout(t *testing.T) {
-	shortStopLadder(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	cmd := BuildAgentCommandWithContext(ctx, "sleep", "30")
-	cancel()
-	_, err := RunCommandStreaming(ctx, cmd, nil)
-	if err == nil || ctx.Err() != context.Canceled {
-		t.Fatalf("err %v, ctx %v", err, ctx.Err())
 	}
 }

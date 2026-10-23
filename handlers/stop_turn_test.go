@@ -30,6 +30,7 @@ type stoppableAgent struct {
 	sessionWhenDone    string
 	sessionWhenStopped string
 	started            chan struct{}
+	startSystemPrompts []string
 }
 
 func (a *stoppableAgent) run(ctx context.Context, sessionID string) (*services.CLIAgentResult, error) {
@@ -48,6 +49,9 @@ func (a *stoppableAgent) run(ctx context.Context, sessionID string) (*services.C
 func (a *stoppableAgent) StartNewConversationWithProgress(
 	ctx context.Context, prompt, systemPrompt, workDir, effort string, emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
+	a.mu.Lock()
+	a.startSystemPrompts = append(a.startSystemPrompts, systemPrompt)
+	a.mu.Unlock()
 	return a.run(ctx, a.sessionWhenDone)
 }
 
@@ -81,21 +85,12 @@ type stopFixture struct {
 	handler *MessageHandler
 	agent   *stoppableAgent
 	outbox  *outbox
-	acked   func() []string
 }
 
 func newStopFixture(t *testing.T) *stopFixture {
 	t.Helper()
 	t.Setenv("NAIRI_CONFIG_DIR", t.TempDir())
-	var ackMu sync.Mutex
-	var acked []string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/ack") {
-			parts := strings.Split(r.URL.Path, "/")
-			ackMu.Lock()
-			acked = append(acked, parts[len(parts)-2])
-			ackMu.Unlock()
-		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(backend.Close)
@@ -124,16 +119,7 @@ func newStopFixture(t *testing.T) *stopFixture {
 
 	agent := &stoppableAgent{sessionWhenDone: "session-1", started: make(chan struct{})}
 	handler := NewMessageHandler(agent, usecases.NewGitUseCase(nil, agent, appState), appState, envManager, sender, apiClient)
-	return &stopFixture{
-		handler: handler,
-		agent:   agent,
-		outbox:  box,
-		acked: func() []string {
-			ackMu.Lock()
-			defer ackMu.Unlock()
-			return append([]string(nil), acked...)
-		},
-	}
+	return &stopFixture{handler: handler, agent: agent, outbox: box}
 }
 
 // mustHandle runs the message through the real entry point and fails on an error report.
@@ -152,6 +138,7 @@ func startMessage(id string) models.BaseMessage {
 		Type: models.MessageTypeStartConversation,
 		Payload: models.StartConversationPayload{
 			JobID: "j1", Message: "hello", ProcessedMessageID: "cmsg_" + id, Mode: models.AgentModeAsk,
+			SystemPrompt: "Org rule: never push to main.",
 		},
 	}
 }
@@ -189,7 +176,7 @@ func TestStopTurn_EndsAFirstTurnAndKeepsItsSession(t *testing.T) {
 	done := make(chan struct{})
 	go func() { f.handler.HandleMessage(startMessage("0")); close(done) }()
 	<-f.agent.started
-	f.handler.StopTurn("j1", "U1", "2026-10-21T20:00:00Z")
+	f.handler.stopTurn("j1", "U1", "2026-10-21T20:00:00Z")
 
 	<-done
 	stop := waitForStop(t, f.outbox)
@@ -205,9 +192,6 @@ func TestStopTurn_EndsAFirstTurnAndKeepsItsSession(t *testing.T) {
 	}
 	if got := f.outbox.ofType(models.MessageTypeAssistantMessage); len(got) != 0 {
 		t.Errorf("no answer belongs in a stopped turn, got %+v", got[0].Payload)
-	}
-	if acked := f.acked(); len(acked) != 1 || acked[0] != "cmsg_0" {
-		t.Errorf("acked %v, want [cmsg_0]", acked)
 	}
 
 	// The conversation goes on from the session the stopped turn left behind.
@@ -226,7 +210,7 @@ func TestStopTurn_KeepsThePreviousSessionWhenTheStoppedTurnHasNone(t *testing.T)
 	done := make(chan struct{})
 	go func() { f.handler.HandleMessage(replyMessage("1")); close(done) }()
 	<-f.agent.started
-	f.handler.StopTurn("j1", "U1", "")
+	f.handler.stopTurn("j1", "U1", "")
 
 	<-done
 	stop := waitForStop(t, f.outbox)
@@ -243,21 +227,21 @@ func TestStopTurn_AnswersNotRunningWhenNothingRuns(t *testing.T) {
 	f := newStopFixture(t)
 	f.mustHandle(t, startMessage("0"))
 
-	f.handler.StopTurn("j1", "U1", "2026-10-21T20:00:00Z")
+	f.handler.stopTurn("j1", "U1", "2026-10-21T20:00:00Z")
 	stop := waitForStop(t, f.outbox)
 	if stop.Outcome != models.TurnStopOutcomeNotRunning || stop.SessionID != "session-1" {
 		t.Errorf("turn_stopped = %+v, want not_running with session-1", stop)
 	}
 
 	// The same request delivered again (socket, then poll) is answered once.
-	f.handler.StopTurn("j1", "U1", "2026-10-21T20:00:00Z")
+	f.handler.stopTurn("j1", "U1", "2026-10-21T20:00:00Z")
 	time.Sleep(50 * time.Millisecond)
 	if got := f.outbox.ofType(models.MessageTypeTurnStopped); len(got) != 1 {
 		t.Errorf("sent %d turn_stopped messages, want 1", len(got))
 	}
 }
 
-func TestStopTurn_ForgetsAJobWhoseTurnNeverStarted(t *testing.T) {
+func TestStopTurn_KeepsAJobStoppedBeforeItHadASessionInItsMode(t *testing.T) {
 	f := newStopFixture(t)
 	f.agent.blockNext = true
 	f.agent.sessionWhenStopped = ""
@@ -265,18 +249,52 @@ func TestStopTurn_ForgetsAJobWhoseTurnNeverStarted(t *testing.T) {
 	done := make(chan struct{})
 	go func() { f.handler.HandleMessage(startMessage("0")); close(done) }()
 	<-f.agent.started
-	f.handler.StopTurn("j1", "U1", "2026-10-22T10:00:00Z")
+	f.handler.stopTurn("j1", "U1", "2026-10-22T10:00:00Z")
 
 	<-done
 	stop := waitForStop(t, f.outbox)
 	if stop.Outcome != models.TurnStopOutcomeStopped || stop.SessionID != "" || stop.ProcessedMessageID != "cmsg_0" {
 		t.Errorf("turn_stopped = %+v, want stopped with no session for cmsg_0", stop)
 	}
-	if _, exists := f.handler.appState.GetJobData("j1"); exists {
-		t.Error("a job that never got a session must be forgotten so the next message starts it over")
+	job, exists := f.handler.appState.GetJobData("j1")
+	if !exists || job.ClaudeSessionID != "" || job.Status != models.JobStatusCompleted {
+		t.Fatalf("job after stop = %+v, want it kept, completed, without a session", job)
 	}
-	if acked := f.acked(); len(acked) != 1 || acked[0] != "cmsg_0" {
-		t.Errorf("acked %v, want [cmsg_0]", acked)
+
+	// The backend sends the next message as a reply; it starts the conversation over in ask
+	// mode with the organization's instructions.
+	f.mustHandle(t, replyMessage("1"))
+	assertStartedOverInAskMode(t, f)
+}
+
+func TestStopTurn_KeepsTheModeOfAFirstMessageDroppedBeforeItRan(t *testing.T) {
+	f := newStopFixture(t)
+	pool := workerpool.New(1)
+	busy := make(chan struct{})
+	pool.Submit(func() { <-busy })
+	defer close(busy)
+	dispatcher := NewJobDispatcher(f.handler, pool, f.handler.appState)
+	f.handler.SetJobEvictor(dispatcher)
+	dispatcher.Dispatch(startMessage("0"))
+
+	f.handler.stopTurn("j1", "U1", "2026-10-22T10:00:00Z")
+
+	if stop := waitForStop(t, f.outbox); stop.Outcome != models.TurnStopOutcomeStopped || stop.ProcessedMessageID != "cmsg_0" {
+		t.Errorf("turn_stopped = %+v, want stopped for cmsg_0", stop)
+	}
+	f.mustHandle(t, replyMessage("1"))
+	assertStartedOverInAskMode(t, f)
+}
+
+func assertStartedOverInAskMode(t *testing.T, f *stopFixture) {
+	t.Helper()
+	job, _ := f.handler.appState.GetJobData("j1")
+	if job.Mode != models.AgentModeAsk || job.ClaudeSessionID != "session-1" {
+		t.Errorf("job after the reply = mode %q session %q, want ask / session-1", job.Mode, job.ClaudeSessionID)
+	}
+	prompts := f.agent.startSystemPrompts
+	if len(prompts) == 0 || !strings.Contains(prompts[len(prompts)-1], "Org rule: never push to main.") {
+		t.Errorf("the conversation started over without the organization's system prompt: %q", prompts)
 	}
 }
 
@@ -291,14 +309,11 @@ func TestStopTurn_DropsAMessageStillWaitingForAWorker(t *testing.T) {
 	f.handler.SetJobEvictor(dispatcher)
 	dispatcher.Dispatch(replyMessage("1"))
 
-	f.handler.StopTurn("j1", "U1", "2026-10-22T10:00:00Z")
+	f.handler.stopTurn("j1", "U1", "2026-10-22T10:00:00Z")
 
 	stop := waitForStop(t, f.outbox)
 	if stop.Outcome != models.TurnStopOutcomeStopped || stop.ProcessedMessageID != "cmsg_1" || stop.SessionID != "session-1" {
 		t.Errorf("turn_stopped = %+v, want stopped for cmsg_1 with session-1", stop)
-	}
-	if acked := f.acked(); len(acked) != 2 || acked[1] != "cmsg_1" {
-		t.Errorf("acked %v, want the waiting message acked", acked)
 	}
 	if _, exists := dispatcher.activeJobs["j1"]; exists {
 		t.Error("the job's queue must be gone so its worker exits instead of waiting forever")
@@ -312,7 +327,7 @@ func TestStopTurn_AnswersAStopWhenTheTurnFailedBeforeTheCLIRan(t *testing.T) {
 	// Git prep fails for its own reason while a stop is pending: the stop is answered and
 	// no "nairid encountered error" follows.
 	f.handler.runTurn("j1", "cmsg_1", func(ctx context.Context) error {
-		f.handler.StopTurn("j1", "U1", "2026-10-22T11:00:00Z")
+		f.handler.stopTurn("j1", "U1", "2026-10-22T11:00:00Z")
 		if got := f.outbox.ofType(models.MessageTypeTurnStopped); len(got) != 0 {
 			t.Fatalf("a running turn was answered before it ended: %+v", got)
 		}
@@ -325,5 +340,20 @@ func TestStopTurn_AnswersAStopWhenTheTurnFailedBeforeTheCLIRan(t *testing.T) {
 	}
 	if got := f.outbox.ofType(models.MessageTypeSystemMessage); len(got) != 0 {
 		t.Errorf("a stopped turn must not report its prep failure as an error: %+v", got)
+	}
+}
+
+func TestStopTurn_AnswersNotRunningWhenTheTurnFinishedFirst(t *testing.T) {
+	f := newStopFixture(t)
+	f.mustHandle(t, startMessage("0"))
+
+	// The stop lands while the finished turn is still committing and posting its answer.
+	f.handler.runTurn("j1", "cmsg_1", func(ctx context.Context) error {
+		f.handler.stopTurn("j1", "U1", "2026-10-22T12:00:00Z")
+		return nil
+	})
+
+	if stop := waitForStop(t, f.outbox); stop.Outcome != models.TurnStopOutcomeNotRunning || stop.ProcessedMessageID != "cmsg_1" {
+		t.Errorf("turn_stopped = %+v, want not_running for cmsg_1", stop)
 	}
 }

@@ -152,7 +152,7 @@ func (o *OpenCodeService) StartNewConversationWithOptions(
 
 	runStart := time.Now().Add(-1 * time.Second) // small skew tolerance
 	rawOutput, err := o.openCodeClient.StartNewSession(ctx, prompt, finalOptions, onLine)
-	if stopped, ok := services.StoppedRun(ctx, err, o.sessionIDFromOutput); ok {
+	if stopped, ok := services.TurnStoppedError(ctx, err, o.sessionIDFromOutput); ok {
 		return nil, stopped
 	}
 	if err != nil {
@@ -283,7 +283,7 @@ func (o *OpenCodeService) ContinueConversationWithOptions(
 
 	runStart := time.Now().Add(-1 * time.Second) // small skew tolerance
 	rawOutput, err := o.openCodeClient.ContinueSession(ctx, sessionID, prompt, finalOptions, onLine)
-	if stopped, ok := services.StoppedRun(ctx, err, o.sessionIDFromOutput); ok {
+	if stopped, ok := services.TurnStoppedError(ctx, err, o.sessionIDFromOutput); ok {
 		return nil, stopped
 	}
 	if err != nil {

@@ -139,7 +139,7 @@ func (c *CodexService) StartNewConversationWithOptions(
 	}
 
 	rawOutput, err := c.codexClient.StartNewSession(ctx, prompt, finalOptions, onLine)
-	if stopped, ok := services.StoppedRun(ctx, err, c.sessionIDFromOutput); ok {
+	if stopped, ok := services.TurnStoppedError(ctx, err, c.sessionIDFromOutput); ok {
 		return nil, stopped
 	}
 	if err != nil {
@@ -272,7 +272,7 @@ func (c *CodexService) ContinueConversationWithOptions(
 	}
 
 	rawOutput, err := c.codexClient.ContinueSession(ctx, sessionID, prompt, finalOptions, onLine)
-	if stopped, ok := services.StoppedRun(ctx, err, c.sessionIDFromOutput); ok {
+	if stopped, ok := services.TurnStoppedError(ctx, err, c.sessionIDFromOutput); ok {
 		return nil, stopped
 	}
 	if err != nil {

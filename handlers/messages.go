@@ -22,7 +22,6 @@ import (
 // processing a job when an unrecoverable error occurs.
 type JobEvictor interface {
 	EvictJob(jobID string)
-	// DropQueuedMessages returns the messages still waiting in the job's queue and leaves it empty.
 	DropQueuedMessages(jobID string) []models.BaseMessage
 }
 
@@ -356,18 +355,11 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 		log.Info("🌳 Starting Claude session in worktree: %s", worktreePath)
 	}
 	claudeResult, err = mh.claudeService.StartNewConversationWithProgress(turnCtx, finalPrompt, systemPrompt, worktreePath, reasoningEffort, progressEmitter)
-	if stopped, stoppedBy := mh.turns.End(payload.JobID); stopped {
-		return mh.finishStoppedTurn(models.JobData{
-			JobID:              payload.JobID,
-			BranchName:         branchName,
-			WorktreePath:       worktreePath,
-			LastMessage:        payload.Message,
-			ProcessedMessageID: payload.ProcessedMessageID,
-			MessageLink:        payload.MessageLink,
-			Mode:               payload.Mode,
-			ReasoningEffort:    payload.ReasoningEffort,
-			EffortModel:        payload.ReasoningEffortModel,
-		}, claudeResult, err, stoppedBy)
+	if stopped, stoppedBy := mh.turns.StopRequested(payload.JobID); stopped {
+		stoppedJob := jobDataForStart(payload)
+		stoppedJob.BranchName = branchName
+		stoppedJob.WorktreePath = worktreePath
+		return mh.finishStoppedTurn(stoppedJob, claudeResult, err, stoppedBy)
 	}
 
 	if err != nil {
@@ -761,7 +753,7 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 	}
 	reasoningEffort := effortForTurn(payload.JobID, jobData.ReasoningEffort, jobData.EffortModel, mh.claudeService.Model())
 	claudeResult, err = mh.claudeService.ContinueConversationWithProgress(turnCtx, sessionID, finalPrompt, outboundSystemPrompt, jobData.WorktreePath, reasoningEffort, progressEmitter)
-	if stopped, stoppedBy := mh.turns.End(payload.JobID); stopped {
+	if stopped, stoppedBy := mh.turns.StopRequested(payload.JobID); stopped {
 		stoppedJob := *jobData
 		stoppedJob.LastMessage = payload.Message
 		stoppedJob.ProcessedMessageID = payload.ProcessedMessageID

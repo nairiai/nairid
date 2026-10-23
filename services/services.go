@@ -87,8 +87,9 @@ type CLIAgent interface {
 	AgentName() string
 }
 
-// Claude exits 0 after SIGINT and Codex exits 1, so the context, not the exit code, says a run was stopped.
-func StoppedRun(
+// Claude exits 0 after SIGINT and Codex exits 1, so the context, not the exit code, says a run
+// was stopped. A run that hit its timeout is not a stop.
+func TurnStoppedError(
 	ctx context.Context,
 	err error,
 	sessionIDFromOutput func(output string) string,

@@ -154,7 +154,7 @@ func (c *ClaudeService) StartNewConversationWithOptions(
 	}
 
 	rawOutput, err := c.claudeClient.StartNewSession(ctx, prompt, mergedOptions, onLine)
-	if stopped, ok := services.StoppedRun(ctx, err, c.sessionIDFromOutput); ok {
+	if stopped, ok := services.TurnStoppedError(ctx, err, c.sessionIDFromOutput); ok {
 		return nil, stopped
 	}
 	if err != nil {
@@ -292,7 +292,7 @@ func (c *ClaudeService) ContinueConversationWithOptions(
 	}
 
 	rawOutput, err := c.claudeClient.ContinueSession(ctx, sessionID, prompt, mergedOptions, onLine)
-	if stopped, ok := services.StoppedRun(ctx, err, c.sessionIDFromOutput); ok {
+	if stopped, ok := services.TurnStoppedError(ctx, err, c.sessionIDFromOutput); ok {
 		return nil, stopped
 	}
 	if err != nil {
@@ -350,22 +350,8 @@ func (c *ClaudeService) ContinueConversationWithOptions(
 }
 
 func (c *ClaudeService) extractSessionID(messages []services.ClaudeMessage) string {
-	// Prefer the result event's session_id. On --resume, Claude Code's
-	// stream-json output emits SessionStart hook events FIRST, carrying the
-	// CLI's bootstrap session id, BEFORE switchSession() swaps in the actual
-	// resumed id. Earlier versions of this function returned the first
-	// non-empty session_id and so persisted that ephemeral hook id, causing
-	// the next --resume to fail with "No conversation found with session ID".
-	// The result event always carries the post-switch (on-disk) id and is
-	// therefore the safe choice. Fall back to the last non-empty session_id
-	// for the rare case where the CLI exits before emitting a result event.
-	for i := len(messages) - 1; i >= 0; i-- {
-		if resultMsg, ok := messages[i].(services.ResultMessage); ok {
-			if sid := resultMsg.GetSessionID(); sid != "" {
-				return sid
-			}
-			break
-		}
+	if sid := sessionIDFromInitOrResult(messages); sid != "" {
+		return sid
 	}
 	for i := len(messages) - 1; i >= 0; i-- {
 		if sid := messages[i].GetSessionID(); sid != "" {
@@ -672,7 +658,9 @@ func (c *ClaudeService) sessionIDFromOutput(output string) string {
 	return sessionIDFromInitOrResult(messages)
 }
 
-// Hook lines printed before init carry a throw-away bootstrap id, so only init and result count.
+// On --resume, Claude Code prints SessionStart hook events carrying its bootstrap session id
+// before it switches to the resumed one; persisting that id makes the next --resume fail with
+// "No conversation found with session ID". Only init and result carry the real id.
 func sessionIDFromInitOrResult(messages []services.ClaudeMessage) string {
 	for i := len(messages) - 1; i >= 0; i-- {
 		switch message := messages[i].(type) {

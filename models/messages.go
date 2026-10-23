@@ -170,8 +170,7 @@ type JobCompletePayload struct {
 	Reason string `json:"reason"`
 }
 
-// StopTurnPayload asks nairid to end the turn a job is running now. RequestedAt
-// lets the same request be delivered twice (socket and poll) without a second answer.
+// RequestedAt identifies the request, so its second delivery (socket, then poll) is ignored.
 type StopTurnPayload struct {
 	JobID       string `json:"job_id"`
 	RequestedBy string `json:"requested_by,omitempty"`

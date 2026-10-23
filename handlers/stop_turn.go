@@ -20,111 +20,103 @@ func (mh *MessageHandler) handleStopTurn(msg models.BaseMessage) error {
 	if payload.JobID == "" {
 		return fmt.Errorf("stop turn message has no job id")
 	}
-	mh.StopTurn(payload.JobID, payload.RequestedBy, payload.RequestedAt)
+	mh.stopTurn(payload.JobID, payload.RequestedBy, payload.RequestedAt)
 	return nil
 }
 
-// A running turn is answered by its handler once the CLI has exited; anything else at once.
-func (mh *MessageHandler) StopTurn(jobID, requestedBy, requestedAt string) {
-	if mh.turns.recordStopRequest(jobID, requestedAt) {
+// A running turn is answered by runTurn once its handler returns; anything else at once.
+func (mh *MessageHandler) stopTurn(jobID, requestedBy, requestedAt string) {
+	if mh.turns.isRepeatedStopRequest(jobID, requestedAt) {
 		log.Info("🛑 Stop request for job %s already handled (requested at %s)", jobID, requestedAt)
 		return
 	}
-	processedMessageID, running := mh.turns.Stop(jobID, requestedBy)
-	dropped := mh.dropQueuedTurns(jobID)
-	// The backend ended every message of the job; a restart must not replay them.
-	if err := mh.appState.RemoveQueuedMessagesForJob(jobID); err != nil {
-		log.Warn("⚠️ Failed to clean up queued messages for job %s: %v", jobID, err)
-	}
+	running := mh.turns.Stop(jobID, requestedBy)
+	dropped := mh.dropQueuedMessages(jobID)
 	if running {
-		log.Info("🛑 Stopping the running turn of job %s (message %s, requested by %q)", jobID, processedMessageID, requestedBy)
+		log.Info("🛑 Stopping the running turn of job %s (requested by %q)", jobID, requestedBy)
 		return
-	}
-	sessionID := ""
-	if jobData, exists := mh.appState.GetJobData(jobID); exists {
-		sessionID = jobData.ClaudeSessionID
 	}
 	if len(dropped) == 0 {
 		log.Info("🛑 Stop requested for job %s but no turn is running", jobID)
-		mh.sendTurnStopped(jobID, "", models.TurnStopOutcomeNotRunning, sessionID)
+		mh.sendTurnStopped(jobID, "", models.TurnStopOutcomeNotRunning)
 		return
 	}
 	log.Info("🛑 Stop requested for job %s before its turn started; %d waiting message(s) dropped", jobID, len(dropped))
-	if mh.jobEvictor != nil {
-		mh.jobEvictor.EvictJob(jobID)
-	}
-	mh.sendTurnStopped(jobID, dropped[0], models.TurnStopOutcomeStopped, sessionID)
+	mh.jobEvictor.EvictJob(jobID)
+	mh.sendTurnStopped(jobID, dropped[0], models.TurnStopOutcomeStopped)
 }
 
-func (mh *MessageHandler) dropQueuedTurns(jobID string) []string {
+// The backend ended and acked these messages when the stop was pressed.
+func (mh *MessageHandler) dropQueuedMessages(jobID string) (droppedIDs []string) {
 	if mh.jobEvictor == nil {
 		return nil
 	}
-	var dropped []string
 	for _, queued := range mh.jobEvictor.DropQueuedMessages(jobID) {
-		id := processedMessageIDOf(queued)
-		if id == "" {
-			continue
-		}
-		dropped = append(dropped, id)
-		log.Info("🛑 Dropped queued message %s for job %s", id, jobID)
-		if err := mh.agentsApiClient.AckMessage(id); err != nil {
-			log.Warn("⚠️ Failed to ack dropped message %s: %v", id, err)
-		}
-	}
-	return dropped
-}
-
-func processedMessageIDOf(msg models.BaseMessage) string {
-	switch msg.Type {
-	case models.MessageTypeStartConversation:
-		var payload models.StartConversationPayload
-		if err := unmarshalPayload(msg.Payload, &payload); err == nil {
-			return payload.ProcessedMessageID
-		}
-	case models.MessageTypeUserMessage:
-		var payload models.UserMessagePayload
-		if err := unmarshalPayload(msg.Payload, &payload); err == nil {
-			return payload.ProcessedMessageID
+		switch queued.Type {
+		case models.MessageTypeStartConversation:
+			var start models.StartConversationPayload
+			if err := unmarshalPayload(queued.Payload, &start); err != nil {
+				log.Warn("⚠️ Failed to read dropped message of job %s: %v", jobID, err)
+				continue
+			}
+			droppedIDs = append(droppedIDs, start.ProcessedMessageID)
+			if err := mh.keepJobWithoutSession(jobDataForStart(start)); err != nil {
+				log.Error("❌ %v", err)
+			}
+		case models.MessageTypeUserMessage:
+			var reply models.UserMessagePayload
+			if err := unmarshalPayload(queued.Payload, &reply); err != nil {
+				log.Warn("⚠️ Failed to read dropped message of job %s: %v", jobID, err)
+				continue
+			}
+			droppedIDs = append(droppedIDs, reply.ProcessedMessageID)
 		}
 	}
-	return ""
+	// Their handlers would have taken them off the crash-recovery queue; nothing else will.
+	if err := mh.appState.RemoveQueuedMessagesForJob(jobID); err != nil {
+		log.Warn("⚠️ Failed to clean up queued messages for job %s: %v", jobID, err)
+	}
+	return droppedIDs
 }
 
-// The stop is answered first; the partial work is then kept as a local WIP commit (nothing is
-// pushed, no PR is opened), so the next reply's pull --rebase finds a clean tree.
+// The turn's CLI was cut short or never ran: the session it printed is kept for the next
+// message, and the partial work is committed (no Claude call, no PR) so the next turn starts
+// from a clean tree.
 func (mh *MessageHandler) finishStoppedTurn(
 	jobData models.JobData,
 	result *services.CLIAgentResult,
 	runErr error,
 	stoppedBy string,
 ) error {
-	sessionID := sessionIDAfterStop(jobData.ClaudeSessionID, result, runErr)
-	log.Info("🛑 Turn of job %s stopped by %q (session %q)", jobData.JobID, stoppedBy, sessionID)
-	if sessionID == "" {
-		return mh.forgetUnstartedJob(jobData)
+	jobData.ClaudeSessionID = sessionIDAfterStop(jobData.ClaudeSessionID, result, runErr)
+	log.Info("🛑 Turn of job %s stopped by %q (session %q)", jobData.JobID, stoppedBy, jobData.ClaudeSessionID)
+	if jobData.ClaudeSessionID == "" {
+		if jobData.WorktreePath != "" {
+			if err := mh.gitUseCase.CleanupJobWorktree(jobData.WorktreePath, jobData.BranchName); err != nil {
+				log.Warn("⚠️ Failed to clean up the worktree of stopped job %s: %v", jobData.JobID, err)
+			}
+		}
+		if err := mh.keepJobWithoutSession(jobData); err != nil {
+			return err
+		}
+		return &core.ErrTurnStopped{}
 	}
 
-	jobData.ClaudeSessionID = sessionID
 	jobData.Status = models.JobStatusCompleted
 	jobData.UpdatedAt = time.Now()
 	if err := mh.appState.UpdateJobData(jobData.JobID, jobData); err != nil {
 		return fmt.Errorf("failed to persist job state after stop: %w", err)
 	}
-	mh.ackStoppedMessage(jobData)
-	mh.sendTurnStopped(jobData.JobID, jobData.ProcessedMessageID, models.TurnStopOutcomeStopped, sessionID)
-
-	if jobData.Mode == models.AgentModeAsk {
-		return nil
-	}
-	if err := mh.gitUseCase.CommitStoppedWork(jobData.WorktreePath, stoppedBy); err != nil {
-		log.Error("❌ Failed to commit the work of stopped job %s: %v", jobData.JobID, err)
-		notice := fmt.Sprintf("Stopped, but the unsaved changes could not be committed: %v", clients.RedactURLCredentials(err.Error()))
-		if sendErr := mh.sendSystemMessage(notice, jobData.ProcessedMessageID, jobData.JobID); sendErr != nil {
-			log.Error("❌ Failed to report the uncommitted work of job %s: %v", jobData.JobID, sendErr)
+	if jobData.Mode != models.AgentModeAsk {
+		if err := mh.gitUseCase.CommitStoppedWork(jobData.WorktreePath, jobData.BranchName, stoppedBy); err != nil {
+			log.Error("❌ Failed to save the work of stopped job %s: %v", jobData.JobID, err)
+			notice := fmt.Sprintf("Stopped, but the work so far could not be saved: %v", clients.RedactURLCredentials(err.Error()))
+			if sendErr := mh.sendSystemMessage(notice, jobData.ProcessedMessageID, jobData.JobID); sendErr != nil {
+				log.Error("❌ Failed to report the unsaved work of job %s: %v", jobData.JobID, sendErr)
+			}
 		}
 	}
-	return nil
+	return &core.ErrTurnStopped{SessionID: jobData.ClaudeSessionID}
 }
 
 func sessionIDAfterStop(known string, result *services.CLIAgentResult, runErr error) string {
@@ -137,42 +129,48 @@ func sessionIDAfterStop(known string, result *services.CLIAgentResult, runErr er
 	return known
 }
 
-// A turn stopped before the CLI printed a session id has nothing to resume: the job is
-// forgotten so the next message starts it over on a fresh worktree.
-func (mh *MessageHandler) forgetUnstartedJob(jobData models.JobData) error {
-	if jobData.WorktreePath != "" {
-		if err := mh.gitUseCase.CleanupJobWorktree(jobData.WorktreePath, jobData.BranchName); err != nil {
-			log.Warn("⚠️ Failed to clean up the worktree of unstarted job %s: %v", jobData.JobID, err)
-		}
+// A turn stopped before its CLI printed a session id has nothing to resume. The job stays,
+// without a session or worktree, so the next message starts it over in the same mode and
+// with the same instructions.
+func (mh *MessageHandler) keepJobWithoutSession(jobData models.JobData) error {
+	jobData.BranchName = ""
+	jobData.WorktreePath = ""
+	jobData.ClaudeSessionID = ""
+	jobData.PullRequestID = "none"
+	jobData.Status = models.JobStatusCompleted
+	jobData.UpdatedAt = time.Now()
+	if err := mh.appState.UpdateJobData(jobData.JobID, jobData); err != nil {
+		return fmt.Errorf("failed to keep stopped job %s: %w", jobData.JobID, err)
 	}
-	if err := mh.appState.RemoveJob(jobData.JobID); err != nil {
-		return fmt.Errorf("failed to forget unstarted job: %w", err)
-	}
-	mh.ackStoppedMessage(jobData)
-	mh.sendTurnStopped(jobData.JobID, jobData.ProcessedMessageID, models.TurnStopOutcomeStopped, "")
 	return nil
 }
 
-func (mh *MessageHandler) ackStoppedMessage(jobData models.JobData) {
-	if err := mh.agentsApiClient.AckMessage(jobData.ProcessedMessageID); err != nil {
-		log.Warn("⚠️ Failed to ack stopped message %s: %v", jobData.ProcessedMessageID, err)
+func jobDataForStart(start models.StartConversationPayload) models.JobData {
+	return models.JobData{
+		JobID:              start.JobID,
+		LastMessage:        start.Message,
+		ProcessedMessageID: start.ProcessedMessageID,
+		MessageLink:        start.MessageLink,
+		Mode:               start.Mode,
+		SystemPrompt:       start.SystemPrompt,
+		ReasoningEffort:    start.ReasoningEffort,
+		EffortModel:        start.ReasoningEffortModel,
 	}
 }
 
-// The turn counts as running from the moment its message leaves the queue, before anything
-// that can block, so a stop that lands while the worktree is being prepared still ends it.
-// A turn that failed before its CLI ran while a stop was pending owes the backend the stop
-// answer, not an error report.
+// The turn counts as running from the moment its message leaves the queue, so a stop that
+// lands while the worktree is being prepared still ends it.
 func (mh *MessageHandler) runTurn(jobID, processedMessageID string, handle func(ctx context.Context) error) {
-	ctx := mh.turns.Begin(jobID, processedMessageID)
-	err := handle(ctx)
-	if stopped, stoppedBy := mh.turns.End(jobID); stopped {
-		sessionID := ""
-		if jobData, exists := mh.appState.GetJobData(jobID); exists {
-			sessionID = jobData.ClaudeSessionID
+	turn := mh.turns.Begin(jobID)
+	err := handle(turn.ctx)
+	if mh.turns.End(jobID, turn) {
+		outcome := models.TurnStopOutcomeStopped
+		if err == nil {
+			// The stop came after the CLI had finished; the turn's answer is already out.
+			outcome = models.TurnStopOutcomeNotRunning
 		}
-		log.Info("🛑 Turn of job %s ended before the CLI ran (%v); answering the stop by %q", jobID, err, stoppedBy)
-		mh.sendTurnStopped(jobID, processedMessageID, models.TurnStopOutcomeStopped, sessionID)
+		log.Info("🛑 Answering the stop of job %s: %s (%v)", jobID, outcome, err)
+		mh.sendTurnStopped(jobID, processedMessageID, outcome)
 		return
 	}
 	if err == nil {
@@ -183,7 +181,11 @@ func (mh *MessageHandler) runTurn(jobID, processedMessageID string, handle func(
 	}
 }
 
-func (mh *MessageHandler) sendTurnStopped(jobID, processedMessageID, outcome, sessionID string) {
+func (mh *MessageHandler) sendTurnStopped(jobID, processedMessageID, outcome string) {
+	sessionID := ""
+	if jobData, exists := mh.appState.GetJobData(jobID); exists {
+		sessionID = jobData.ClaudeSessionID
+	}
 	stoppedMsg := models.BaseMessage{
 		ID:   core.NewID("msg"),
 		Type: models.MessageTypeTurnStopped,

@@ -126,7 +126,7 @@ func (c *CursorService) StartNewConversationWithOptions(
 	finalOptions := c.deriveCursorOptions(options)
 
 	rawOutput, err := c.cursorClient.StartNewSession(ctx, prompt, finalOptions)
-	if stopped, ok := services.StoppedRun(ctx, err, c.sessionIDFromOutput); ok {
+	if stopped, ok := services.TurnStoppedError(ctx, err, c.sessionIDFromOutput); ok {
 		return nil, stopped
 	}
 	if err != nil {
@@ -232,7 +232,7 @@ func (c *CursorService) ContinueConversationWithOptions(
 	finalOptions := c.deriveCursorOptions(options)
 
 	rawOutput, err := c.cursorClient.ContinueSession(ctx, sessionID, prompt, finalOptions)
-	if stopped, ok := services.StoppedRun(ctx, err, c.sessionIDFromOutput); ok {
+	if stopped, ok := services.TurnStoppedError(ctx, err, c.sessionIDFromOutput); ok {
 		return nil, stopped
 	}
 	if err != nil {

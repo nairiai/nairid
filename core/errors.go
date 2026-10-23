@@ -68,9 +68,8 @@ func IsClaudeCLISuccessfulResponse(err error) (*ErrClaudeCLISuccessfulResponse, 
 	return nil, false
 }
 
-// ErrTurnStopped is returned by a CLI agent service when the run was cancelled on
-// purpose. SessionID is whatever the CLI had printed by then, so the conversation
-// can still be resumed.
+// ErrTurnStopped ends a turn that a stop request cut short. SessionID is what the CLI
+// had printed by then, empty when it never got that far.
 type ErrTurnStopped struct {
 	SessionID string
 }

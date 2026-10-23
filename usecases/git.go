@@ -1396,10 +1396,10 @@ func (g *GitUseCase) PrepareWorktreeForJob(worktreePath, branchName string) erro
 	return nil
 }
 
-// CommitStoppedWork keeps what a stopped turn left behind as a local WIP commit. Nothing is
-// pushed and no PR is opened: the user asked for the work to stop, and asking Claude for a
-// commit message would start the very turn that was just ended.
-func (g *GitUseCase) CommitStoppedWork(worktreePath, stoppedBy string) error {
+// CommitStoppedWork keeps what a stopped turn left behind as a WIP commit, pushed when the
+// branch is already on the remote. No commit message is asked of Claude and no PR is opened:
+// the user asked for the work to stop.
+func (g *GitUseCase) CommitStoppedWork(worktreePath, branchName, stoppedBy string) error {
 	if !g.appState.GetRepositoryContext().IsRepoMode {
 		return nil
 	}
@@ -1407,22 +1407,36 @@ func (g *GitUseCase) CommitStoppedWork(worktreePath, stoppedBy string) error {
 	if stoppedBy != "" {
 		message = fmt.Sprintf("WIP: turn stopped by %s", stoppedBy)
 	}
-	if worktreePath != "" {
-		hasChanges, err := g.gitClient.HasUncommittedChangesInWorktree(worktreePath)
-		if err != nil {
-			return fmt.Errorf("failed to check for uncommitted changes in worktree: %w", err)
-		}
-		if !hasChanges {
-			return nil
-		}
-		if err := g.gitClient.AddAllInWorktree(worktreePath); err != nil {
-			return fmt.Errorf("failed to stage the stopped work: %w", err)
-		}
-		if err := g.gitClient.CommitInWorktree(worktreePath, message); err != nil {
-			return fmt.Errorf("failed to commit the stopped work: %w", err)
-		}
+	if worktreePath == "" {
+		return g.commitStoppedWorkInRepo(branchName, message)
+	}
+	hasChanges, err := g.gitClient.HasUncommittedChangesInWorktree(worktreePath)
+	if err != nil {
+		return fmt.Errorf("failed to check for uncommitted changes in worktree: %w", err)
+	}
+	if !hasChanges {
 		return nil
 	}
+	if err := g.gitClient.AddAllInWorktree(worktreePath); err != nil {
+		return fmt.Errorf("failed to stage the stopped work: %w", err)
+	}
+	if err := g.gitClient.CommitInWorktree(worktreePath, message); err != nil {
+		return fmt.Errorf("failed to commit the stopped work: %w", err)
+	}
+	onRemote, err := g.gitClient.HasUpstreamTrackingInWorktree(worktreePath)
+	if err != nil {
+		return fmt.Errorf("failed to check whether the branch is on the remote: %w", err)
+	}
+	if !onRemote {
+		return nil
+	}
+	if err := g.gitClient.PushBranchFromWorktree(worktreePath, branchName); err != nil {
+		return fmt.Errorf("failed to push the stopped work: %w", err)
+	}
+	return nil
+}
+
+func (g *GitUseCase) commitStoppedWorkInRepo(branchName, message string) error {
 	hasChanges, err := g.gitClient.HasUncommittedChanges()
 	if err != nil {
 		return fmt.Errorf("failed to check for uncommitted changes: %w", err)
@@ -1435,6 +1449,16 @@ func (g *GitUseCase) CommitStoppedWork(worktreePath, stoppedBy string) error {
 	}
 	if err := g.gitClient.Commit(message); err != nil {
 		return fmt.Errorf("failed to commit the stopped work: %w", err)
+	}
+	onRemote, err := g.gitClient.HasUpstreamTracking()
+	if err != nil {
+		return fmt.Errorf("failed to check whether the branch is on the remote: %w", err)
+	}
+	if !onRemote {
+		return nil
+	}
+	if err := g.gitClient.PushBranch(branchName); err != nil {
+		return fmt.Errorf("failed to push the stopped work: %w", err)
 	}
 	return nil
 }

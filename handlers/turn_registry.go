@@ -6,62 +6,66 @@ import (
 )
 
 type runningTurn struct {
-	cancel             context.CancelFunc
-	processedMessageID string
-	stopRequested      bool
-	stoppedBy          string
+	ctx           context.Context
+	cancel        context.CancelFunc
+	stopRequested bool
+	stoppedBy     string
 }
 
 type turnRegistry struct {
 	mu               sync.Mutex
 	turns            map[string]*runningTurn
-	seenStopRequests map[string]string // job id → requested_at already answered
+	seenStopRequests map[string]string // job id → requested_at already handled
 }
 
 func newTurnRegistry() *turnRegistry {
 	return &turnRegistry{turns: map[string]*runningTurn{}, seenStopRequests: map[string]string{}}
 }
 
-// Begin registers the job's turn; a turn still registered for the job is cancelled and replaced.
-func (r *turnRegistry) Begin(jobID, processedMessageID string) context.Context {
+func (r *turnRegistry) Begin(jobID string) *runningTurn {
 	ctx, cancel := context.WithCancel(context.Background())
+	turn := &runningTurn{ctx: ctx, cancel: cancel}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if previous, exists := r.turns[jobID]; exists {
-		previous.cancel()
-	}
-	r.turns[jobID] = &runningTurn{cancel: cancel, processedMessageID: processedMessageID}
-	return ctx
+	r.turns[jobID] = turn
+	return turn
 }
 
-func (r *turnRegistry) Stop(jobID, requestedBy string) (processedMessageID string, running bool) {
+func (r *turnRegistry) Stop(jobID, requestedBy string) (running bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	turn, exists := r.turns[jobID]
 	if !exists {
-		return "", false
+		return false
 	}
 	turn.stopRequested = true
 	turn.stoppedBy = requestedBy
 	turn.cancel()
-	return turn.processedMessageID, true
+	return true
 }
 
-// Ending the same turn twice is a no-op.
-func (r *turnRegistry) End(jobID string) (stopped bool, stoppedBy string) {
+func (r *turnRegistry) StopRequested(jobID string) (requested bool, stoppedBy string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	turn, exists := r.turns[jobID]
 	if !exists {
 		return false, ""
 	}
-	delete(r.turns, jobID)
-	turn.cancel()
 	return turn.stopRequested, turn.stoppedBy
 }
 
+func (r *turnRegistry) End(jobID string, turn *runningTurn) (stopRequested bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	turn.cancel()
+	if r.turns[jobID] == turn {
+		delete(r.turns, jobID)
+	}
+	return turn.stopRequested
+}
+
 // The same request can arrive over the socket and again from the job poll.
-func (r *turnRegistry) recordStopRequest(jobID, requestedAt string) (seenBefore bool) {
+func (r *turnRegistry) isRepeatedStopRequest(jobID, requestedAt string) bool {
 	if requestedAt == "" {
 		return false
 	}
