@@ -54,9 +54,6 @@ func (c *CursorClient) StartNewSession(ctx context.Context, prompt string, optio
 
 	log.Info("Running Cursor command (timeout: %s)", timeout)
 	output, err := cmd.CombinedOutput()
-	if err == nil && ctx.Err() != nil {
-		err = ctx.Err()
-	}
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			log.Error("⏰ Cursor session timed out after %s", timeout)
@@ -103,9 +100,6 @@ func (c *CursorClient) ContinueSession(ctx context.Context, sessionID, prompt st
 
 	log.Info("Running Cursor command (timeout: %s)", timeout)
 	output, err := cmd.CombinedOutput()
-	if err == nil && ctx.Err() != nil {
-		err = ctx.Err()
-	}
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			log.Error("⏰ Cursor session timed out after %s", timeout)

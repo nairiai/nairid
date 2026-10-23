@@ -38,12 +38,11 @@ func isolatedGit(t *testing.T) func(dir string, args ...string) string {
 // stoppedJobRepo sets up a clone of a bare remote the way nairid prepares one, with the job's
 // branch cut from origin/main, and a half-done file left in the job's working tree.
 type stoppedJobRepo struct {
-	git       func(dir string, args ...string) string
-	remote    string
-	repo      string
-	worktree  string
-	gitClient *clients.GitClient
-	useCase   *GitUseCase
+	git      func(dir string, args ...string) string
+	remote   string
+	repo     string
+	worktree string
+	useCase  *GitUseCase
 }
 
 func newStoppedJobRepo(t *testing.T) *stoppedJobRepo {
@@ -55,14 +54,14 @@ func newStoppedJobRepo(t *testing.T) *stoppedJobRepo {
 	git(r.repo, "remote", "add", "origin", r.remote)
 	git(r.repo, "push", "-q", "-u", "origin", "main")
 
-	r.gitClient = clients.NewGitClient()
-	r.gitClient.SetRepoPathProvider(func() string { return r.repo })
+	gitClient := clients.NewGitClient()
+	gitClient.SetRepoPathProvider(func() string { return r.repo })
 	appState := models.NewAppState("agent", filepath.Join(t.TempDir(), "state.json"))
 	appState.SetRepositoryContext(&models.RepositoryContext{IsRepoMode: true, RepoPath: r.repo})
-	r.useCase = NewGitUseCase(r.gitClient, nil, appState)
+	r.useCase = NewGitUseCase(gitClient, nil, appState)
 
 	r.worktree = filepath.Join(t.TempDir(), "job")
-	if err := r.gitClient.CreateWorktree(r.worktree, "agent-branch", "origin/main"); err != nil {
+	if err := gitClient.CreateWorktree(r.worktree, "agent-branch", "origin/main"); err != nil {
 		t.Fatalf("CreateWorktree: %v", err)
 	}
 	writeHalfDoneFile(t, r.worktree)
@@ -140,7 +139,7 @@ func TestCommitStoppedWork_LeavesAnotherCheckedOutBranchAlone(t *testing.T) {
 	}
 }
 
-func TestCommitStoppedWork_RejectedCommitStillLetsTheNextTurnPull(t *testing.T) {
+func TestCommitStoppedWork_ReportsACommitAHookRejected(t *testing.T) {
 	r := newStoppedJobRepo(t)
 	hook := filepath.Join(r.repo, ".git", "hooks", "pre-commit")
 	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
@@ -150,12 +149,8 @@ func TestCommitStoppedWork_RejectedCommitStillLetsTheNextTurnPull(t *testing.T) 
 	if err := r.useCase.CommitStoppedWork(r.worktree, "agent-branch"); err == nil {
 		t.Fatal("want the hook's rejection reported")
 	}
-
-	if err := r.gitClient.PullLatestInWorktree(r.worktree); err != nil {
-		t.Fatalf("the next turn's pull failed on the files the rejected commit left staged: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(r.worktree, "half-done.txt")); err != nil {
-		t.Errorf("the stopped work is gone after the pull: %v", err)
+	if onRemote := r.remoteHead("agent-branch"); onRemote != "" {
+		t.Errorf("nothing may be pushed after a rejected commit, remote has %q", onRemote)
 	}
 }
 

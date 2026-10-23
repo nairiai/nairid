@@ -47,8 +47,7 @@ func (mh *MessageHandler) stopTurn(jobID, requestedBy, requestedAt string) (drop
 	return dropped
 }
 
-// The backend ended the messages that were waiting when the stop was pressed; the job poll
-// brings back any sent after it.
+// The backend ended the messages that were waiting when the stop was pressed.
 func (mh *MessageHandler) dropQueuedMessages(jobID string) (droppedIDs []string) {
 	if mh.jobEvictor == nil {
 		return nil

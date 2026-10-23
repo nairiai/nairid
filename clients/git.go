@@ -1549,7 +1549,7 @@ func (g *GitClient) CleanUntrackedInWorktree(worktreePath string) error {
 func (g *GitClient) PullLatestInWorktree(worktreePath string) error {
 	log.Info("📋 Starting to pull latest changes in worktree: %s", worktreePath)
 
-	cmd := exec.Command("git", "pull", "--rebase", "--autostash")
+	cmd := exec.Command("git", "pull", "--rebase")
 	cmd.Dir = worktreePath
 	output, err := cmd.CombinedOutput()
 

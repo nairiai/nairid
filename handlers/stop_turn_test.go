@@ -153,21 +153,28 @@ func replyMessage(id string) models.BaseMessage {
 	}
 }
 
-func waitForStop(t *testing.T, box *outbox) models.TurnStoppedPayload {
+// The outbox is filled by a goroutine, so a message queued by the handler shows up a moment later.
+func waitFor(t *testing.T, box *outbox, messageType string) []models.BaseMessage {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if stops := box.ofType(models.MessageTypeTurnStopped); len(stops) > 0 {
-			payload, ok := stops[len(stops)-1].Payload.(models.TurnStoppedPayload)
-			if !ok {
-				t.Fatalf("turn stopped payload is a %T", stops[len(stops)-1].Payload)
-			}
-			return payload
+		if found := box.ofType(messageType); len(found) > 0 {
+			return found
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("no turn_stopped_v1 message was sent")
-	return models.TurnStoppedPayload{}
+	t.Fatalf("no %s message was sent", messageType)
+	return nil
+}
+
+func waitForStop(t *testing.T, box *outbox) models.TurnStoppedPayload {
+	t.Helper()
+	stops := waitFor(t, box, models.MessageTypeTurnStopped)
+	payload, ok := stops[len(stops)-1].Payload.(models.TurnStoppedPayload)
+	if !ok {
+		t.Fatalf("turn stopped payload is a %T", stops[len(stops)-1].Payload)
+	}
+	return payload
 }
 
 func TestStopTurn_EndsAFirstTurnAndKeepsItsSession(t *testing.T) {
@@ -340,7 +347,7 @@ func TestStopTurn_ReportsAFailureTheStopDidNotCause(t *testing.T) {
 	if stop.Outcome != models.TurnStopOutcomeNotRunning || stop.ProcessedMessageID != "cmsg_1" {
 		t.Errorf("turn_stopped = %+v, want not_running for cmsg_1", stop)
 	}
-	errorsSent := f.outbox.ofType(models.MessageTypeSystemMessage)
+	errorsSent := waitFor(t, f.outbox, models.MessageTypeSystemMessage)
 	if len(errorsSent) != 1 || !strings.Contains(fmt.Sprint(errorsSent[0].Payload), "git push failed") {
 		t.Errorf("the failure must still reach the user, sent %+v", errorsSent)
 	}
