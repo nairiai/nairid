@@ -1,3 +1,15 @@
+## [v0.0.123] - 2026-10-26
+
+### Features
+
+- Stop a running turn on request ([#227](https://github.com/nairiai/nairid/pull/227))
+  - New `stop_turn_v1` message (also carried by the job poll as `stop_requested` / `stop_requested_by` / `stop_requested_at`) cancels the job's running turn: the CLI's process group gets SIGINT, then SIGTERM after 10 s and SIGKILL after 20 s more, so the CLI can save its session
+  - nairid answers `turn_stopped_v1` with `outcome` (`stopped` or `not_running`), the processed message id and the session id the CLI printed, so the next reply resumes the same conversation
+  - A stopped may-change-code turn gets a plain `WIP: turn stopped` commit on the job's branch, pushed with its upstream set, instead of the usual auto-commit, PR and answer; a look-only turn commits nothing
+  - Follow-ups queued behind a stopped turn are dropped; a first turn stopped before any session id keeps the job in its mode, effort and system prompt so the next reply starts it over
+  - The same request seen on the socket and the job poll is handled once; a stop is never reported as "nairid encountered error"
+  - Backends that never send a stop are unaffected
+
 ## [v0.0.122] - 2026-10-02
 
 ### Bugfixes
