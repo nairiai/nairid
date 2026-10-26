@@ -12,10 +12,8 @@ import (
 	"time"
 )
 
-// WaitDelayAfterKill is the duration to wait for I/O to drain after killing
-// a process. This prevents cmd.Wait() from blocking forever when orphaned
-// child processes keep the stdout pipe open.
-const WaitDelayAfterKill = 10 * time.Second
+// Must outlast the whole stop signal ladder in process_unix.go; then Go kills the leader itself.
+const WaitDelayAfterCancel = 40 * time.Second
 
 // DefaultSessionTimeout is the fallback maximum duration an agent CLI session
 // can run before being killed. Prefer SessionTimeout() at runtime, which

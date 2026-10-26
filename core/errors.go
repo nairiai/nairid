@@ -67,3 +67,21 @@ func IsClaudeCLISuccessfulResponse(err error) (*ErrClaudeCLISuccessfulResponse, 
 	}
 	return nil, false
 }
+
+// ErrTurnStopped ends a turn that a stop request cut short. SessionID is what the CLI
+// had printed by then, empty when it never got that far.
+type ErrTurnStopped struct {
+	SessionID string
+}
+
+func (e *ErrTurnStopped) Error() string {
+	return "turn stopped before the agent finished"
+}
+
+func IsTurnStopped(err error) (*ErrTurnStopped, bool) {
+	var stopped *ErrTurnStopped
+	if errors.As(err, &stopped) {
+		return stopped, true
+	}
+	return nil, false
+}

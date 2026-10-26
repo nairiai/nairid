@@ -81,6 +81,8 @@ const (
 	MessageTypeCheckIdleJobs             = "check_idle_jobs_v1"
 	MessageTypeJobComplete               = "job_complete_v1"
 	MessageTypeAgentProgress             = "agent_progress_v1"
+	MessageTypeStopTurn                  = "stop_turn_v1"
+	MessageTypeTurnStopped               = "turn_stopped_v1"
 )
 
 type BaseMessage struct {
@@ -166,6 +168,27 @@ type CheckIdleJobsPayload struct {
 type JobCompletePayload struct {
 	JobID  string `json:"job_id"`
 	Reason string `json:"reason"`
+}
+
+// RequestedAt identifies the request, so its second delivery (socket, then poll) is ignored.
+type StopTurnPayload struct {
+	JobID       string `json:"job_id"`
+	RequestedBy string `json:"requested_by,omitempty"`
+	RequestedAt string `json:"requested_at,omitempty"`
+}
+
+const (
+	TurnStopOutcomeStopped    = "stopped"
+	TurnStopOutcomeNotRunning = "not_running"
+)
+
+// TurnStoppedPayload is nairid's answer to a stop request. SessionID is the CLI
+// session the conversation can be resumed with, when one is known.
+type TurnStoppedPayload struct {
+	JobID              string `json:"job_id"`
+	ProcessedMessageID string `json:"processed_message_id,omitempty"`
+	Outcome            string `json:"outcome"`
+	SessionID          string `json:"session_id,omitempty"`
 }
 
 // AgentProgressType identifies the kind of progress event

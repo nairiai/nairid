@@ -64,6 +64,7 @@ func startPayloadForUnstartedJob(reply models.UserMessagePayload, job *models.Jo
 	}
 	if job != nil {
 		start.Mode = job.Mode
+		start.SystemPrompt = job.SystemPrompt
 		start.ReasoningEffort = job.ReasoningEffort
 		start.ReasoningEffortModel = job.EffortModel
 	}

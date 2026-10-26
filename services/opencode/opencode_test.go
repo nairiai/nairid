@@ -1,6 +1,7 @@
 package opencode
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -203,7 +204,7 @@ func TestOpenCodeService_StartNewConversationWithOptions(t *testing.T) {
 			service := NewOpenCodeService(mockClient, tmpDir, tt.serviceModel)
 
 			// Execute
-			result, err := service.StartNewConversationWithOptions(tt.prompt, tt.options, nil)
+			result, err := service.StartNewConversationWithOptions(context.Background(), tt.prompt, tt.options, nil)
 
 			// Verify error expectation
 			if tt.expectError && err == nil {
@@ -487,7 +488,7 @@ func TestOpenCodeService_ContinueConversationWithOptions(t *testing.T) {
 			service := NewOpenCodeService(mockClient, tmpDir, tt.serviceModel)
 
 			// Execute
-			result, err := service.ContinueConversationWithOptions(tt.sessionID, tt.prompt, tt.options, nil)
+			result, err := service.ContinueConversationWithOptions(context.Background(), tt.sessionID, tt.prompt, tt.options, nil)
 
 			// Verify error expectation
 			if tt.expectError && err == nil {

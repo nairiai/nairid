@@ -2,11 +2,19 @@
 
 package clients
 
-import "os/exec"
+import (
+	"os/exec"
+	"strconv"
+)
 
-// configureProcessGroup is a no-op on Windows.
-// Process group isolation via Setpgid and SIGKILL are POSIX-only.
-// On Windows, cmd.Process.Kill() is used by default which terminates the process.
+// Killing only the started process would leave the CLI it launched (node, codex) running,
+// so cancelling a run ends the whole process tree.
 func configureProcessGroup(cmd *exec.Cmd) {
-	cmd.WaitDelay = WaitDelayAfterKill
+	cmd.Cancel = func() error {
+		if err := exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(cmd.Process.Pid)).Run(); err != nil {
+			return cmd.Process.Kill()
+		}
+		return nil
+	}
+	cmd.WaitDelay = WaitDelayAfterCancel
 }

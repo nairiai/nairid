@@ -40,6 +40,7 @@ type JobData struct {
 	MessageLink        string    `json:"message_link"`               // Link to the original chat message
 	Status             JobStatus `json:"status"`                     // Current status of the job: "in_progress" or "completed"
 	Mode               AgentMode `json:"mode"`                       // "execute" or "ask" - determines if agent can modify files
+	SystemPrompt       string    `json:"system_prompt,omitempty"`    // The first message's instructions, to start the job over if a stop leaves it without a session
 	ReasoningEffort    string    `json:"reasoning_effort,omitempty"` // CLI effort level the backend sent when the conversation started; empty = model default
 	EffortModel        string    `json:"effort_model,omitempty"`     // --model id the level was checked against; it applies only while the agent runs that model
 	UpdatedAt          time.Time `json:"updated_at"`

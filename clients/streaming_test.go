@@ -2,7 +2,6 @@ package clients
 
 import (
 	"context"
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -118,9 +117,7 @@ func TestRunCommandStreaming_TimeoutKillsProcessTree(t *testing.T) {
 	// Simulate the actual bug: a parent process spawns a child that hangs.
 	// Without process group kill + WaitDelay, RunCommandStreaming blocks forever
 	// because the child keeps stdout open.
-	original := os.Getenv("AGENT_EXEC_USER")
-	defer func() { _ = os.Setenv("AGENT_EXEC_USER", original) }()
-	_ = os.Unsetenv("AGENT_EXEC_USER")
+	shortStopLadder(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
@@ -139,7 +136,7 @@ func TestRunCommandStreaming_TimeoutKillsProcessTree(t *testing.T) {
 
 	// Should complete within a reasonable time (timeout + WaitDelay + margin).
 	// If process group kill is broken, this would block for 300 seconds.
-	maxExpected := 500*time.Millisecond + WaitDelayAfterKill + 5*time.Second
+	maxExpected := 500*time.Millisecond + WaitDelayAfterCancel + 5*time.Second
 	if elapsed > maxExpected {
 		t.Errorf("RunCommandStreaming took %v, expected under %v (process group kill may not be working)", elapsed, maxExpected)
 	}
