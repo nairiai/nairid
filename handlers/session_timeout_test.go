@@ -17,6 +17,7 @@ import (
 	"nairid/core"
 	"nairid/core/env"
 	"nairid/models"
+	"nairid/services"
 	"nairid/usecases"
 
 	"github.com/gammazero/workerpool"
@@ -200,7 +201,8 @@ func TestRaisingTheTimeoutAfterAFirstTurnTimeoutAppliesToTheRetry(t *testing.T) 
 }
 
 // handlerWithOutbox is startHandlerLikeAFreshProcess, keeping what the handler sends.
-func handlerWithOutbox(t *testing.T, agent *effortRecordingAgent) (*MessageHandler, *outbox) {
+// A nil gitClient is enough outside repo mode.
+func handlerWithOutbox(t *testing.T, agent services.CLIAgent, gitClient *clients.GitClient) (*MessageHandler, *outbox) {
 	t.Helper()
 	t.Setenv("NAIRI_CONFIG_DIR", t.TempDir())
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
@@ -226,7 +228,8 @@ func handlerWithOutbox(t *testing.T, agent *effortRecordingAgent) (*MessageHandl
 		}
 	}()
 	t.Cleanup(sender.Close)
-	return NewMessageHandler(agent, usecases.NewGitUseCase(nil, agent, appState), appState, envManager, sender, apiClient), box
+	gitUseCase := usecases.NewGitUseCase(gitClient, agent, appState)
+	return NewMessageHandler(agent, gitUseCase, appState, envManager, sender, apiClient), box
 }
 
 // systemMessagesAfter waits for the turn's report and gives a second post the time to show up.
@@ -248,7 +251,7 @@ func TestASessionTimeoutIsPostedOnceAndSaysWhatHappened(t *testing.T) {
 
 	t.Run("first turn", func(t *testing.T) {
 		agent := &effortRecordingAgent{model: "gpt-5.5", nextTurnErr: killedAtDeadline(2 * time.Hour)}
-		handler, box := handlerWithOutbox(t, agent)
+		handler, box := handlerWithOutbox(t, agent, nil)
 
 		handler.HandleMessage(models.BaseMessage{
 			ID:      "msg_0",
@@ -263,7 +266,7 @@ func TestASessionTimeoutIsPostedOnceAndSaysWhatHappened(t *testing.T) {
 
 	t.Run("later turn", func(t *testing.T) {
 		agent := &effortRecordingAgent{model: "gpt-5.5"}
-		handler, box := handlerWithOutbox(t, agent)
+		handler, box := handlerWithOutbox(t, agent, nil)
 		handler.HandleMessage(models.BaseMessage{
 			ID:      "msg_0",
 			Type:    models.MessageTypeStartConversation,
@@ -303,7 +306,7 @@ func TestPolledJobStartsWithItsSessionTimeout(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			agent := &effortRecordingAgent{model: "gpt-5.5"}
-			handler, box := handlerWithOutbox(t, agent)
+			handler, box := handlerWithOutbox(t, agent, nil)
 			pool := workerpool.New(1)
 			defer pool.Stop()
 			dispatcher := NewJobDispatcher(handler, pool, handler.appState)

@@ -107,19 +107,25 @@ func (mh *MessageHandler) finishStoppedTurn(
 	if err := mh.appState.UpdateJobData(jobData.JobID, jobData); err != nil {
 		return fmt.Errorf("failed to persist job state after stop: %w", err)
 	}
-	if jobData.Mode != models.AgentModeAsk {
-		if err := mh.gitUseCase.CommitStoppedWork(jobData.WorktreePath, jobData.BranchName); err != nil {
-			log.Error("❌ Failed to save the work of stopped job %s: %v", jobData.JobID, err)
-			notice := fmt.Sprintf(
-				"Stopped, but saving the work so far failed: %v",
-				clients.RedactURLCredentials(err.Error()),
-			)
-			if sendErr := mh.sendSystemMessage(notice, jobData.ProcessedMessageID, jobData.JobID); sendErr != nil {
-				log.Error("❌ Failed to report the unsaved work of job %s: %v", jobData.JobID, sendErr)
-			}
-		}
-	}
+	mh.saveUnfinishedWork(jobData, "Stopped, but saving the work so far failed")
 	return &core.ErrTurnStopped{}
+}
+
+// saveUnfinishedWork keeps what a turn cut short left behind as a WIP commit on the job's branch.
+// failurePrefix leads the notice posted when that fails.
+func (mh *MessageHandler) saveUnfinishedWork(jobData models.JobData, failurePrefix string) {
+	if jobData.Mode == models.AgentModeAsk {
+		return
+	}
+	err := mh.gitUseCase.CommitStoppedWork(jobData.WorktreePath, jobData.BranchName)
+	if err == nil {
+		return
+	}
+	log.Error("❌ Failed to save the work of job %s: %v", jobData.JobID, err)
+	notice := fmt.Sprintf("%s: %v", failurePrefix, clients.RedactURLCredentials(err.Error()))
+	if sendErr := mh.sendSystemMessage(notice, jobData.ProcessedMessageID, jobData.JobID); sendErr != nil {
+		log.Error("❌ Failed to report the unsaved work of job %s: %v", jobData.JobID, sendErr)
+	}
 }
 
 func sessionIDAfterStop(known string, result *services.CLIAgentResult, runErr error) string {

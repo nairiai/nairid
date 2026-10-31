@@ -93,9 +93,11 @@ func IsTurnStopped(err error) (*ErrTurnStopped, bool) {
 }
 
 // ErrSessionTimeout is a CLI run that nairid killed because it hit the session timeout.
+// SessionID is the session the CLI had printed, so the next turn can resume it.
 type ErrSessionTimeout struct {
-	Timeout time.Duration
-	Err     error
+	Timeout   time.Duration
+	SessionID string
+	Err       error
 }
 
 func (e *ErrSessionTimeout) Error() string {
@@ -104,6 +106,12 @@ func (e *ErrSessionTimeout) Error() string {
 
 func (e *ErrSessionTimeout) Unwrap() error {
 	return e.Err
+}
+
+func (e *ErrSessionTimeout) WithSessionID(sessionID string) *ErrSessionTimeout {
+	withID := *e
+	withID.SessionID = sessionID
+	return &withID
 }
 
 // UserMessage is what the chat thread shows. It never quotes the agent's output: a run cut

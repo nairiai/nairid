@@ -35,8 +35,13 @@ func TestOpenCodeService_ASessionTimeoutIsNotTheLastProgressNote(t *testing.T) {
 	_, continueErr := service.ContinueConversationWithProgress(context.Background(), "ses_1", "go on", "", "", "", 3*time.Hour, nil)
 
 	for _, err := range []error{startErr, continueErr} {
-		if _, ok := core.IsSessionTimeout(err); !ok {
+		timeoutErr, ok := core.IsSessionTimeout(err)
+		if !ok {
 			t.Errorf("got %v, want a session timeout", err)
+			continue
+		}
+		if timeoutErr.SessionID != "ses_1" {
+			t.Errorf("the timeout kept session %q, want ses_1 so a reply resumes it", timeoutErr.SessionID)
 		}
 		if err != nil && strings.Contains(err.Error(), note) {
 			t.Errorf("the error quotes the agent's last progress note: %v", err)

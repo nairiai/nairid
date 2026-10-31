@@ -546,7 +546,7 @@ func (c *ClaudeService) handleClaudeClientError(err error, operation string) err
 	// A run killed at its deadline has no answer: its last assistant text is a progress
 	// note, so neither recover it as a reply nor show it as the error.
 	if timeoutErr, ok := core.IsSessionTimeout(err); ok {
-		return fmt.Errorf("%s: %w", operation, timeoutErr)
+		return fmt.Errorf("%s: %w", operation, timeoutErr.WithSessionID(sessionIDFromInitOrResult(messages)))
 	}
 
 	// Check if CLI crashed mid-stream before emitting a result event.

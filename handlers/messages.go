@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -369,11 +370,11 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 		log.Info("❌ Error starting %s session: %v", mh.claudeService.AgentName(), err)
 
 		// Mark job as failed so the processor goroutine can exit and free up a worker slot
-		if updateErr := mh.appState.UpdateJobData(payload.JobID, models.JobData{
+		failedJob := models.JobData{
 			JobID:              payload.JobID,
 			BranchName:         branchName,
 			WorktreePath:       worktreePath,
-			ClaudeSessionID:    "",
+			ClaudeSessionID:    sessionLeftByTimeout(err),
 			PullRequestID:      "",
 			LastMessage:        payload.Message,
 			ProcessedMessageID: payload.ProcessedMessageID,
@@ -384,11 +385,13 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 			EffortModel:        payload.ReasoningEffortModel,
 			SessionTimeoutMs:   payload.SessionTimeoutMs,
 			UpdatedAt:          time.Now(),
-		}); updateErr != nil {
+		}
+		if updateErr := mh.appState.UpdateJobData(payload.JobID, failedJob); updateErr != nil {
 			log.Error("❌ Failed to mark job as failed: %v", updateErr)
 		} else {
 			log.Info("💾 Marked job %s as failed due to Claude session error", payload.JobID)
 		}
+		mh.saveTimedOutWork(failedJob, err)
 
 		// Evict the job from dispatcher to immediately free up the worker slot
 		if mh.jobEvictor != nil {
@@ -768,11 +771,11 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 		log.Info("❌ Error continuing %s session: %v", mh.claudeService.AgentName(), err)
 
 		// Mark job as failed so the processor goroutine can exit and free up a worker slot
-		if updateErr := mh.appState.UpdateJobData(payload.JobID, models.JobData{
+		failedJob := models.JobData{
 			JobID:              payload.JobID,
 			BranchName:         jobData.BranchName,
 			WorktreePath:       jobData.WorktreePath,
-			ClaudeSessionID:    jobData.ClaudeSessionID,
+			ClaudeSessionID:    cmp.Or(sessionLeftByTimeout(err), jobData.ClaudeSessionID),
 			PullRequestID:      jobData.PullRequestID,
 			LastMessage:        payload.Message,
 			ProcessedMessageID: payload.ProcessedMessageID,
@@ -783,11 +786,13 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 			EffortModel:        jobData.EffortModel,
 			SessionTimeoutMs:   sessionTimeoutMs,
 			UpdatedAt:          time.Now(),
-		}); updateErr != nil {
+		}
+		if updateErr := mh.appState.UpdateJobData(payload.JobID, failedJob); updateErr != nil {
 			log.Error("❌ Failed to mark job as failed: %v", updateErr)
 		} else {
 			log.Info("💾 Marked job %s as failed due to Claude session error", payload.JobID)
 		}
+		mh.saveTimedOutWork(failedJob, err)
 
 		// Evict the job from dispatcher to immediately free up the worker slot
 		if mh.jobEvictor != nil {

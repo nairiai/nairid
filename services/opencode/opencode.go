@@ -342,7 +342,7 @@ func (o *OpenCodeService) handleOpenCodeClientError(err error, operation string)
 
 	// The output of a run killed at its deadline ends mid-task, so it is not the error.
 	if timeoutErr, ok := core.IsSessionTimeout(err); ok {
-		return fmt.Errorf("%s: %w", operation, timeoutErr)
+		return fmt.Errorf("%s: %w", operation, timeoutErr.WithSessionID(o.sessionIDFromOutput(claudeErr.Output)))
 	}
 
 	// Try to parse the output as OpenCode messages using internal parsing

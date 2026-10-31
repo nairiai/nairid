@@ -27,8 +27,12 @@ func killedAtDeadline(output string) error {
 
 func assertSessionTimeout(t *testing.T, err error) {
 	t.Helper()
-	if _, ok := core.IsSessionTimeout(err); !ok {
+	timeoutErr, ok := core.IsSessionTimeout(err)
+	if !ok {
 		t.Fatalf("got %v, want a session timeout", err)
+	}
+	if timeoutErr.SessionID != "sess_1" {
+		t.Errorf("the timeout kept session %q, want sess_1 so a reply resumes it", timeoutErr.SessionID)
 	}
 	if strings.Contains(err.Error(), lastProgressNote) {
 		t.Errorf("the error quotes the agent's last progress note: %v", err)

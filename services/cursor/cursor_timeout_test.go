@@ -19,8 +19,12 @@ func TestCursorService_ASessionTimeoutIsNotTheLastProgressNote(t *testing.T) {
 
 	err := service.handleCursorClientError(killed, "failed to continue Cursor session")
 
-	if _, ok := core.IsSessionTimeout(err); !ok {
+	timeoutErr, ok := core.IsSessionTimeout(err)
+	if !ok {
 		t.Fatalf("got %v, want a session timeout", err)
+	}
+	if timeoutErr.SessionID != "s1" {
+		t.Errorf("the timeout kept session %q, want s1 so a reply resumes it", timeoutErr.SessionID)
 	}
 	if strings.Contains(err.Error(), note) {
 		t.Errorf("the error quotes the agent's last progress note: %v", err)
