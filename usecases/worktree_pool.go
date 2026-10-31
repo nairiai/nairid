@@ -110,6 +110,18 @@ func (p *WorktreePool) UnlockMainRepo() {
 	p.mainRepoMu.Unlock()
 }
 
+// LockBranches acquires the branch mutex. This must be held around any `git branch`
+// or `git worktree add -b` call to prevent concurrent writers from colliding on
+// .git/config and the branch reflog's temp file (git does not retry a lock conflict).
+func (p *WorktreePool) LockBranches() {
+	p.branchMu.Lock()
+}
+
+// UnlockBranches releases the branch mutex.
+func (p *WorktreePool) UnlockBranches() {
+	p.branchMu.Unlock()
+}
+
 // isStopping returns true if the pool has been signaled to stop.
 func (p *WorktreePool) isStopping() bool {
 	select {

@@ -2,6 +2,7 @@ package usecases
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -290,5 +291,158 @@ func TestJobsArrivingDuringFill(t *testing.T) {
 		if !gitClient.WorktreeExists(wt.Path) {
 			t.Errorf("Pool worktree %s is not a valid worktree", wt.Path)
 		}
+	}
+}
+
+// branchCreateGateScript logs every git invocation like gitSpyScript, but gates the
+// pool's own `git branch nairid/pool-ready-*` call instead of its worktree-add step.
+// That's the call branchMu protects during fill, so holding the gate open proves
+// branchMu is actually held for the duration — exercising the exact window the
+// sync fallback and stale-branch cleanup now also serialize on.
+const branchCreateGateScript = `#!/bin/sh
+printf '%s\n' "$*" >> "$GIT_SPY_LOG"
+case "$*" in
+"branch "*pool-ready*)
+	while [ -e "$GIT_SPY_GATE" ]; do sleep 0.05; done
+	;;
+esac
+exec "$GIT_SPY_REAL" "$@"
+`
+
+func installBranchCreateGate(t *testing.T) *gitSpy {
+	t.Helper()
+
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("git not found: %v", err)
+	}
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(branchCreateGateScript), 0755); err != nil {
+		t.Fatalf("Failed to write git spy: %v", err)
+	}
+
+	spy := &gitSpy{logPath: filepath.Join(dir, "calls.log"), gatePath: filepath.Join(dir, "gate")}
+	if err := os.WriteFile(spy.gatePath, nil, 0644); err != nil {
+		t.Fatalf("Failed to create gate: %v", err)
+	}
+	t.Cleanup(spy.openGate)
+
+	t.Setenv("GIT_SPY_LOG", spy.logPath)
+	t.Setenv("GIT_SPY_GATE", spy.gatePath)
+	t.Setenv("GIT_SPY_REAL", realGit)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return spy
+}
+
+// Regression for a startup burst: the pool's fill holds branchMu creating a pool-ready
+// branch while jobs hit the sync fallback (pool still empty) and a stale-branch cleanup
+// runs, all against the same repo. Before branchMu covered the fallback's `git worktree
+// add -b` and cleanup's `git branch -D`, these raced the fill's `git branch` on
+// .git/config.lock, and git does not retry — the loser's worktree setup failed outright.
+// With the lock, they queue behind the fill instead of erroring.
+func TestFallbackAndCleanupDuringPoolFill_NoLockErrors(t *testing.T) {
+	mainRepo, tempHome, cleanup := setupTestGitRepoWithRemote(t)
+	defer cleanup()
+
+	gitClient := clients.NewGitClient()
+	gitClient.SetRepoPathProvider(func() string { return mainRepo })
+
+	appState := models.NewAppState("test-agent", filepath.Join(tempHome, "state.json"))
+	appState.SetRepositoryContext(&models.RepositoryContext{
+		RepoPath:   mainRepo,
+		IsRepoMode: true,
+	})
+	gitUseCase := NewGitUseCase(gitClient, nil, appState)
+	t.Setenv("AGENT_EXEC_USER", "")
+	t.Setenv("HOME", tempHome)
+	worktreeBase, err := gitUseCase.GetWorktreeBasePath()
+	if err != nil {
+		t.Fatalf("Failed to get worktree base path: %v", err)
+	}
+
+	pool := NewWorktreePool(gitClient, worktreeBase, 1)
+	gitUseCase.SetWorktreePool(pool)
+
+	// A stale nairid/ branch, untracked and not a pool branch, for CleanupStaleBranches
+	// to pick up concurrently with the fill and the fallback.
+	staleBranch := "nairid/stale-leftover"
+	gitOutput(t, mainRepo, "branch", staleBranch)
+
+	spy := installBranchCreateGate(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	pool.Start(ctx)
+	stopPool := sync.OnceFunc(pool.Stop)
+	defer stopPool()
+	defer spy.openGate() // a gated git call would otherwise block Stop on failure
+
+	// Give the fill a moment to reach the gate, holding branchMu, before the fallback
+	// and cleanup try to take it too.
+	deadline := time.Now().Add(5 * time.Second)
+	for spy.count(t, "branch nairid/pool-ready") == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("Fill never reached the gated branch-create call")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	jobIDs := []string{"job_a", "job_b", "job_c"}
+	jobPaths := make([]string, len(jobIDs))
+	var wg sync.WaitGroup
+	errs := make(chan error, len(jobIDs)+1)
+
+	for i, jobID := range jobIDs {
+		wg.Add(1)
+		go func(i int, jobID string) {
+			defer wg.Done()
+			_, path, err := gitUseCase.PrepareForNewConversationWithWorktree(jobID, "hello")
+			if err != nil {
+				errs <- fmt.Errorf("job %s: %w", jobID, err)
+				return
+			}
+			jobPaths[i] = path
+		}(i, jobID)
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := gitUseCase.CleanupStaleBranches(); err != nil {
+			errs <- fmt.Errorf("cleanup: %w", err)
+		}
+	}()
+
+	// While the fill's branch-create sits at the gate, branchMu must still be held: the
+	// fallback worktrees and the stale-branch delete should NOT have gone through yet.
+	// Before branchMu covered them, they raced ahead of the fill instead of queuing
+	// behind it, so this window would already show their result.
+	time.Sleep(300 * time.Millisecond)
+	for _, jobID := range jobIDs {
+		if gitClient.WorktreeExists(filepath.Join(worktreeBase, jobID)) {
+			t.Errorf("Job %s's worktree exists before the gated fill released branchMu — it did not wait for the lock", jobID)
+		}
+	}
+	if branches := gitOutput(t, mainRepo, "branch", "--list", staleBranch); branches == "" {
+		t.Errorf("Stale branch %s was deleted before the gated fill released branchMu — cleanup did not wait for the lock", staleBranch)
+	}
+
+	spy.openGate()
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+
+	for i, jobID := range jobIDs {
+		if jobPaths[i] == "" {
+			continue // already reported above via errs
+		}
+		if !gitClient.WorktreeExists(jobPaths[i]) {
+			t.Errorf("Job %s: worktree %s was not created", jobID, jobPaths[i])
+		}
+	}
+	if branches := gitOutput(t, mainRepo, "branch", "--list", staleBranch); branches != "" {
+		t.Errorf("Expected stale branch %s to be deleted, still present: %q", staleBranch, branches)
 	}
 }

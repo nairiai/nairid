@@ -940,7 +940,12 @@ func (g *GitUseCase) CleanupStaleBranches() error {
 
 	log.Info("🧹 Found %d stale nairid/eksecd branches to delete", len(branchesToDelete))
 
-	// Delete each stale branch
+	// Delete each stale branch. `git branch -D` writes .git/config and the branch
+	// reflog, so it holds branchMu to avoid colliding with the pool's own branch
+	// create/rename/delete (git does not retry a lock conflict).
+	if g.worktreePool != nil {
+		g.worktreePool.LockBranches()
+	}
 	deletedCount := 0
 	for _, branch := range branchesToDelete {
 		if err := g.gitClient.DeleteLocalBranch(branch); err != nil {
@@ -950,6 +955,9 @@ func (g *GitUseCase) CleanupStaleBranches() error {
 		}
 		deletedCount++
 		log.Info("🗑️ Deleted stale branch: %s", branch)
+	}
+	if g.worktreePool != nil {
+		g.worktreePool.UnlockBranches()
 	}
 
 	log.Info("✅ Successfully deleted %d out of %d stale nairid branches", deletedCount, len(branchesToDelete))
@@ -1320,9 +1328,19 @@ func (g *GitUseCase) PrepareForNewConversationWithWorktree(jobID, conversationHi
 
 	worktreePath := filepath.Join(worktreeBasePath, jobID)
 
-	// Create worktree with new branch based on origin/<default-branch>
+	// Create worktree with new branch based on origin/<default-branch>. `git worktree
+	// add -b` writes .git/config and the branch reflog, which collides with the pool's
+	// own branch create/rename/delete if run unlocked — hence the same branchMu the
+	// pool uses for those.
 	baseRef := fmt.Sprintf("origin/%s", defaultBranch)
-	if err := g.gitClient.CreateWorktree(worktreePath, branchName, baseRef); err != nil {
+	if g.worktreePool != nil {
+		g.worktreePool.LockBranches()
+	}
+	err = g.gitClient.CreateWorktree(worktreePath, branchName, baseRef)
+	if g.worktreePool != nil {
+		g.worktreePool.UnlockBranches()
+	}
+	if err != nil {
 		log.Error("❌ Failed to create worktree: %v", err)
 		return "", "", fmt.Errorf("failed to create worktree: %w", err)
 	}
