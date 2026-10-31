@@ -156,6 +156,30 @@ func TestCodexCostUSD_PlatformDottedMinorVersionIds(t *testing.T) {
 	}
 }
 
+// The GPT-6 and GPT-5.6 tiers are keyed verbatim, so they must not fall through to
+// the dotted-minor normalisation (which would price gpt-5.6-sol at the gpt-5 rate).
+func TestCodexCostUSD_TieredModelsUseOwnRates(t *testing.T) {
+	tests := map[string]float64{
+		"gpt-6.1-sol":   2.00,
+		"gpt-6.1-terra": 1.00,
+		"gpt-6-astra":   10.00,
+		"gpt-6-sol":     2.00,
+		"gpt-6-luna":    0.10,
+		"gpt-5.6-sol":   4.00,
+		"gpt-5.6-terra": 2.00,
+		"gpt-5.6-luna":  0.20,
+	}
+	for model, wantInput := range tests {
+		got, ok := CodexCostUSD(model, 1_000_000, 0, 0)
+		if !ok {
+			t.Fatalf("expected ok=true for %q", model)
+		}
+		if math.Abs(got-wantInput) > 1e-9 {
+			t.Fatalf("CodexCostUSD(%q) = %v, want %v", model, got, wantInput)
+		}
+	}
+}
+
 // Negative case: a model that does not match either canonical, snapshot, or
 // platform-dotted naming is still rejected so callers leave cost NULL.
 func TestCodexCostUSD_PlatformDottedMinorVersionStillRejectsGarbage(t *testing.T) {

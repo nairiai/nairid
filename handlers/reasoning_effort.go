@@ -11,6 +11,7 @@ var validReasoningEfforts = map[string]bool{
 	"high":   true,
 	"xhigh":  true,
 	"max":    true,
+	"ultra":  true,
 }
 
 // resolveReasoningEffort decides which effort level a conversation runs at.
