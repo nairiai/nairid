@@ -112,7 +112,7 @@ type StartConversationPayload struct {
 	Attachments        []MessageAttachment `json:"attachments,omitempty"`
 	PreviousMessages   []PreviousMessage   `json:"previous_messages,omitempty"`
 	SenderMetadata     *UserMetadata       `json:"sender_metadata,omitempty"`
-	// ReasoningEffort is one of low/medium/high/xhigh/max, or empty for the model default.
+	// ReasoningEffort is one of low/medium/high/xhigh/max/ultra, or empty for the model default.
 	// ReasoningEffortModel is the --model id the backend checked the level against; the
 	// level is only applied when it matches this container's model.
 	ReasoningEffort      string `json:"reasoning_effort,omitempty"`

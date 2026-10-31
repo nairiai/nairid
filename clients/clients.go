@@ -26,7 +26,7 @@ type CodexOptions struct {
 	Model     string // GPT-5 or other model
 	Sandbox   string // "workspace-write", "danger-full-access", "read-only"
 	WebSearch bool   // Enable --search flag
-	Effort    string // model_reasoning_effort (low/medium/high/xhigh/max); empty omits the override
+	Effort    string // model_reasoning_effort (low/medium/high/xhigh/max/ultra); empty omits the override
 }
 
 // ClaudeClient defines the interface for Claude CLI interactions

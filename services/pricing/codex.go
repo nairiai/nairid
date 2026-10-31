@@ -13,13 +13,26 @@ type codexModelPricing struct {
 	OutputUSDPerMillion      float64
 }
 
-// Public OpenAI pricing as of 2026-05. Values may drift; treat this as a
+// Public OpenAI pricing as of 2026-10. Values may drift; treat this as a
 // best-effort estimate. Pricing updates are a nairid release.
 //
 // Sources:
 //   - https://openai.com/api/pricing (gpt-5, gpt-5-codex families)
 //   - https://platform.openai.com/docs/models
+//   - https://models.dev (gpt-6 and gpt-5.6 families)
 var codexPricingByModel = map[string]codexModelPricing{
+	// GPT-6 family, keyed verbatim: each tier and point release has its own rate.
+	"gpt-6-astra":   {InputUSDPerMillion: 10.00, CachedInputUSDPerMillion: 1.00, OutputUSDPerMillion: 50.00},
+	"gpt-6-sol":     {InputUSDPerMillion: 2.00, CachedInputUSDPerMillion: 0.20, OutputUSDPerMillion: 10.00},
+	"gpt-6-luna":    {InputUSDPerMillion: 0.10, CachedInputUSDPerMillion: 0.01, OutputUSDPerMillion: 0.50},
+	"gpt-6.1-sol":   {InputUSDPerMillion: 2.00, CachedInputUSDPerMillion: 0.10, OutputUSDPerMillion: 10.00},
+	"gpt-6.1-terra": {InputUSDPerMillion: 1.00, CachedInputUSDPerMillion: 0.05, OutputUSDPerMillion: 5.00},
+
+	// GPT-5.6 family. Without these, "gpt-5.6-sol" would collapse to the gpt-5 rate.
+	"gpt-5.6-sol":   {InputUSDPerMillion: 4.00, CachedInputUSDPerMillion: 0.40, OutputUSDPerMillion: 20.00},
+	"gpt-5.6-terra": {InputUSDPerMillion: 2.00, CachedInputUSDPerMillion: 0.20, OutputUSDPerMillion: 12.00},
+	"gpt-5.6-luna":  {InputUSDPerMillion: 0.20, CachedInputUSDPerMillion: 0.02, OutputUSDPerMillion: 1.20},
+
 	// GPT-5 family
 	"gpt-5":      {InputUSDPerMillion: 1.25, CachedInputUSDPerMillion: 0.125, OutputUSDPerMillion: 10.00},
 	"gpt-5-mini": {InputUSDPerMillion: 0.25, CachedInputUSDPerMillion: 0.025, OutputUSDPerMillion: 2.00},

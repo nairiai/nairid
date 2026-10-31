@@ -91,12 +91,12 @@ func validateModelForAgent(agentType, model string) error {
 			return fmt.Errorf("--model '%s' is not valid for cursor agent (valid options: gpt-5, sonnet-4, sonnet-4-thinking)", model)
 		}
 	case "codex":
-		// Codex accepts any model string (default: gpt-5.5)
+		// Codex accepts any model string (default: gpt-6.1-sol)
 		// No specific validation needed as it's flexible
 	case "opencode":
-		// OpenCode expects provider/model format (default: opencode/claude-sonnet-4-6)
+		// OpenCode expects provider/model format (default: opencode/claude-sonnet-5-5)
 		if !strings.Contains(model, "/") {
-			return fmt.Errorf("--model '%s' is not valid for opencode agent (expected format: provider/model, e.g., opencode/claude-sonnet-4-6)", model)
+			return fmt.Errorf("--model '%s' is not valid for opencode agent (expected format: provider/model, e.g., opencode/claude-sonnet-5-5)", model)
 		}
 	default:
 		return fmt.Errorf("unknown agent type: %s", agentType)
@@ -717,9 +717,9 @@ func createCLIAgent(
 	if model == "" {
 		switch agentType {
 		case "codex":
-			model = "gpt-5.5"
+			model = "gpt-6.1-sol"
 		case "opencode":
-			model = "opencode/claude-sonnet-4-6"
+			model = "opencode/claude-sonnet-5-5"
 			// cursor and claude don't need defaults (cursor and claude use empty string for their defaults)
 		}
 	}

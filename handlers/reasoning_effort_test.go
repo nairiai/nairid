@@ -18,6 +18,7 @@ func TestResolveReasoningEffort(t *testing.T) {
 		{"default keyword is model default", "default", "claude-opus-4-8", "claude-opus-4-8", ""},
 		{"matching model applies level", "high", "gpt-5.5", "gpt-5.5", "high"},
 		{"max applies", "max", "opencode/claude-opus-5-5", "opencode/claude-opus-5-5", "max"},
+		{"ultra applies", "ultra", "gpt-6.1-sol", "gpt-6.1-sol", "ultra"},
 		{"unknown level dropped", "turbo", "gpt-5.5", "gpt-5.5", ""},
 		{"wrong case dropped", "High", "gpt-5.5", "gpt-5.5", ""},
 		{"model mismatch dropped", "max", "claude-opus-4-8", "gpt-5.5", ""},
