@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -11,19 +12,24 @@ import (
 	"nairid/models"
 )
 
+func systemMessages(box *outbox) []string {
+	var msgs []string
+	for _, msg := range box.ofType(models.MessageTypeSystemMessage) {
+		payload, _ := msg.Payload.(models.SystemMessagePayload)
+		msgs = append(msgs, payload.Message)
+	}
+	return msgs
+}
+
 // waitForSystemMessage returns the first system message containing want, failing after 5s.
 func waitForSystemMessage(t *testing.T, box *outbox, want string) string {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	var seen []string
 	for time.Now().Before(deadline) {
-		seen = seen[:0]
-		for _, msg := range box.ofType(models.MessageTypeSystemMessage) {
-			payload, _ := msg.Payload.(models.SystemMessagePayload)
-			seen = append(seen, payload.Message)
-			if strings.Contains(payload.Message, want) {
-				return payload.Message
-			}
+		seen = systemMessages(box)
+		if i := slices.IndexFunc(seen, func(m string) bool { return strings.Contains(m, want) }); i >= 0 {
+			return seen[i]
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
