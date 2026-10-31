@@ -1,3 +1,24 @@
+## [v0.0.125] - 2026-10-31
+
+### Features
+
+- Per-agent session timeout ([#231](https://github.com/nairiai/nairid/pull/231))
+  - Optional `session_timeout_ms` on `start_conversation`, `user_message` and each job in `GET /jobs`; per turn it wins over `NAIRI_MAX_SESSION_MS` (default 1h), clamped to 10m-24h
+  - A timed-out run reports a plain timeout error instead of the agent's last progress text, keeps its session and commits its work as `WIP: turn stopped`, so a reply resumes it
+  - A failed turn's error is posted once instead of twice
+  - Backward compatible: no field keeps today's behaviour
+
+### Performance
+
+- Connect to the backend without waiting for the whole worktree pool ([#229](https://github.com/nairiai/nairid/pull/229))
+  - Startup hold for a pool of 3 drops from ~6-7s to ~1s: startup is released after the first worktree is ready, and reset/fetch run once per fill cycle
+  - Pool branch mutations are serialized and the GitHub token is applied before pool initialization
+
+### Bugfixes
+
+- Name the agent CLI that failed instead of Claude ([#230](https://github.com/nairiai/nairid/pull/230))
+  - A failing Codex turn now reads `error starting codex session: ... Codex command failed` instead of blaming Claude
+
 ## [v0.0.124] - 2026-10-31
 
 ### Features
