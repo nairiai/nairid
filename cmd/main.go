@@ -665,6 +665,10 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 		// Create context for pool lifecycle
 		cr.poolCtx, cr.poolCancel = context.WithCancel(context.Background())
 
+		// Apply the latest GitHub token before the pool talks to the remote, so it doesn't use a
+		// stale token from the remote URL or rewrite .git/config while worktrees are being added.
+		gitUseCase.GithubTokenUpdateHook()
+
 		// Clean up stale job worktrees with broken git references
 		// This can happen when containers are recreated - old job worktrees remain
 		// but their git links point to non-existent directories
@@ -686,10 +690,9 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 	envManager.RegisterReloadHook(gitUseCase.GithubTokenUpdateHook)
 	log.Info("📎 Registered GitHub token update hook")
 
-	// Wait for the worktree pool initial fill to complete before recovering jobs.
-	// This prevents a race condition where the pool's resetMainRepoToDefaultBranch()
-	// (git reset --hard) runs concurrently with job recovery's SwitchToJobBranch()
-	// (also git reset --hard), both competing for .git/index.lock on the same repo.
+	// Wait for the pool's first worktree before recovering jobs. This prevents the pool's
+	// resetMainRepoToDefaultBranch() (git reset --hard) from racing job recovery's
+	// SwitchToJobBranch() for .git/index.lock; the rest of the fill only runs git worktree add.
 	if worktreePool != nil {
 		worktreePool.WaitForInitialFill()
 	}

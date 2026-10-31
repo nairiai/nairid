@@ -294,7 +294,7 @@ func (g *GitUseCase) PrepareForNewConversation(conversationHint string) (string,
 	log.Info("🌿 Generated branch name: %s", branchName)
 
 	// Use the common branch switching logic to get to main and pull latest
-	if err := g.resetAndPullDefaultBranch(); err != nil {
+	if _, err := g.resetAndPullDefaultBranch(); err != nil {
 		log.Error("❌ Failed to reset and pull main: %v", err)
 		return "", fmt.Errorf("failed to reset and pull main: %w", err)
 	}
@@ -310,26 +310,27 @@ func (g *GitUseCase) PrepareForNewConversation(conversationHint string) (string,
 	return branchName, nil
 }
 
-// resetAndPullDefaultBranch is a helper that resets current branch, goes to main, and pulls latest
-func (g *GitUseCase) resetAndPullDefaultBranch() error {
+// resetAndPullDefaultBranch is a helper that resets current branch, goes to main, and pulls latest.
+// It returns the default branch name so callers don't have to look it up again.
+func (g *GitUseCase) resetAndPullDefaultBranch() (string, error) {
 	log.Info("📋 Starting to reset and pull default branch")
 
 	// Step 1: Clean untracked files
 	if err := g.gitClient.CleanUntracked(); err != nil {
 		log.Error("❌ Failed to clean untracked files: %v", err)
-		return fmt.Errorf("failed to clean untracked files: %w", err)
+		return "", fmt.Errorf("failed to clean untracked files: %w", err)
 	}
 
 	// Step 2: Get default branch and checkout to it
 	defaultBranch, err := g.gitClient.GetDefaultBranch()
 	if err != nil {
 		log.Error("❌ Failed to get default branch: %v", err)
-		return fmt.Errorf("failed to get default branch: %w", err)
+		return "", fmt.Errorf("failed to get default branch: %w", err)
 	}
 
 	if err := g.gitClient.CheckoutBranch(defaultBranch); err != nil {
 		log.Error("❌ Failed to checkout default branch %s: %v", defaultBranch, err)
-		return fmt.Errorf("failed to checkout default branch %s: %w", defaultBranch, err)
+		return "", fmt.Errorf("failed to checkout default branch %s: %w", defaultBranch, err)
 	}
 
 	// Step 3: Fetch latest from origin and hard-reset to origin/<default-branch>.
@@ -337,18 +338,18 @@ func (g *GitUseCase) resetAndPullDefaultBranch() error {
 	// and remote branches diverge (e.g. after force-pushes or failed rebases).
 	if err := g.gitClient.FetchOrigin(); err != nil {
 		log.Error("❌ Failed to fetch from origin: %v", err)
-		return fmt.Errorf("failed to fetch from origin: %w", err)
+		return "", fmt.Errorf("failed to fetch from origin: %w", err)
 	}
 
 	originRef := fmt.Sprintf("origin/%s", defaultBranch)
 	if err := g.gitClient.ResetHardToRef(originRef); err != nil {
 		log.Error("❌ Failed to reset to %s: %v", originRef, err)
-		return fmt.Errorf("failed to reset to %s: %w", originRef, err)
+		return "", fmt.Errorf("failed to reset to %s: %w", originRef, err)
 	}
 
 	log.Info("✅ Successfully reset and pulled main")
 	log.Info("📋 Completed successfully - reset and pulled main")
-	return nil
+	return defaultBranch, nil
 }
 
 func (g *GitUseCase) AutoCommitChangesIfNeeded(threadLink, sessionID string) (*AutoCommitResult, error) {
@@ -939,7 +940,12 @@ func (g *GitUseCase) CleanupStaleBranches() error {
 
 	log.Info("🧹 Found %d stale nairid/eksecd branches to delete", len(branchesToDelete))
 
-	// Delete each stale branch
+	// Delete each stale branch. `git branch -D` writes .git/config and the branch
+	// reflog, so it holds branchMu to avoid colliding with the pool's own branch
+	// create/rename/delete (git does not retry a lock conflict).
+	if g.worktreePool != nil {
+		g.worktreePool.LockBranches()
+	}
 	deletedCount := 0
 	for _, branch := range branchesToDelete {
 		if err := g.gitClient.DeleteLocalBranch(branch); err != nil {
@@ -949,6 +955,9 @@ func (g *GitUseCase) CleanupStaleBranches() error {
 		}
 		deletedCount++
 		log.Info("🗑️ Deleted stale branch: %s", branch)
+	}
+	if g.worktreePool != nil {
+		g.worktreePool.UnlockBranches()
 	}
 
 	log.Info("✅ Successfully deleted %d out of %d stale nairid branches", deletedCount, len(branchesToDelete))
@@ -1139,7 +1148,7 @@ func (g *GitUseCase) AbandonJobAndCleanup(jobID, branchName string) error {
 	}
 
 	// Switch to default branch to clean up state
-	if err := g.resetAndPullDefaultBranch(); err != nil {
+	if _, err := g.resetAndPullDefaultBranch(); err != nil {
 		log.Error("❌ Failed to reset and pull default branch: %v", err)
 		return fmt.Errorf("failed to reset to default branch: %w", err)
 	}
@@ -1300,26 +1309,14 @@ func (g *GitUseCase) PrepareForNewConversationWithWorktree(jobID, conversationHi
 	if g.worktreePool != nil {
 		g.worktreePool.LockMainRepo()
 	}
-	resetErr := g.resetAndPullDefaultBranch()
+	// The reset already fetched origin, so the worktree below uses that fresh origin/<default-branch>.
+	defaultBranch, resetErr := g.resetAndPullDefaultBranch()
 	if g.worktreePool != nil {
 		g.worktreePool.UnlockMainRepo()
 	}
 	if resetErr != nil {
 		log.Error("❌ Failed to reset main repo to default branch before worktree creation: %v", resetErr)
 		return "", "", fmt.Errorf("failed to reset main repo before worktree creation: %w", resetErr)
-	}
-
-	// Fetch latest from origin (safe for concurrent calls - does not use index.lock)
-	if err := g.gitClient.FetchOrigin(); err != nil {
-		log.Error("❌ Failed to fetch from origin: %v", err)
-		return "", "", fmt.Errorf("failed to fetch from origin: %w", err)
-	}
-
-	// Get default branch name
-	defaultBranch, err := g.gitClient.GetDefaultBranch()
-	if err != nil {
-		log.Error("❌ Failed to get default branch: %v", err)
-		return "", "", fmt.Errorf("failed to get default branch: %w", err)
 	}
 
 	// Create base directory if it doesn't exist
@@ -1331,9 +1328,16 @@ func (g *GitUseCase) PrepareForNewConversationWithWorktree(jobID, conversationHi
 
 	worktreePath := filepath.Join(worktreeBasePath, jobID)
 
-	// Create worktree with new branch based on origin/<default-branch>
+	// Serialize branch creation with the pool to avoid shared config and reflog lock conflicts.
 	baseRef := fmt.Sprintf("origin/%s", defaultBranch)
-	if err := g.gitClient.CreateWorktree(worktreePath, branchName, baseRef); err != nil {
+	if g.worktreePool != nil {
+		g.worktreePool.LockBranches()
+	}
+	err = g.gitClient.CreateWorktree(worktreePath, branchName, baseRef)
+	if g.worktreePool != nil {
+		g.worktreePool.UnlockBranches()
+	}
+	if err != nil {
 		log.Error("❌ Failed to create worktree: %v", err)
 		return "", "", fmt.Errorf("failed to create worktree: %w", err)
 	}

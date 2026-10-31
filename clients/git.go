@@ -1375,6 +1375,42 @@ func (g *GitClient) CreateWorktree(worktreePath, branchName, baseRef string) err
 	return nil
 }
 
+// CreateBranch creates a local branch at baseRef without checking it out.
+// Like git worktree add -b, this may write tracking config to .git/config.
+func (g *GitClient) CreateBranch(branchName, baseRef string) error {
+	log.Info("📋 Starting to create branch %s at %s", branchName, baseRef)
+
+	cmd := exec.Command("git", "branch", branchName, baseRef)
+	g.setWorkDir(cmd)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		log.Error("❌ Failed to create branch %s: %v\nOutput: %s", branchName, err, string(output))
+		return fmt.Errorf("failed to create branch %s: %w\nOutput: %s", branchName, err, string(output))
+	}
+
+	log.Info("✅ Successfully created branch %s at %s", branchName, baseRef)
+	return nil
+}
+
+// AddWorktreeForBranch creates a worktree at the specified path that checks out an existing branch.
+// It creates no branch, so unlike CreateWorktree it never writes .git/config.
+func (g *GitClient) AddWorktreeForBranch(worktreePath, branchName string) error {
+	log.Info("📋 Starting to create worktree at %s for existing branch %s", worktreePath, branchName)
+
+	cmd := exec.Command("git", "worktree", "add", worktreePath, branchName)
+	g.setWorkDir(cmd)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		log.Error("❌ Failed to create worktree: %v\nOutput: %s", err, string(output))
+		return fmt.Errorf("failed to create worktree: %w\nOutput: %s", err, string(output))
+	}
+
+	log.Info("✅ Successfully created worktree at %s for branch %s", worktreePath, branchName)
+	return nil
+}
+
 // RemoveWorktree removes a worktree at the specified path.
 // The --force flag is used to remove even if there are uncommitted changes.
 func (g *GitClient) RemoveWorktree(worktreePath string) error {
