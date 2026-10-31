@@ -108,10 +108,11 @@ func (c *CodexService) deriveCodexOptions(options *clients.CodexOptions) *client
 		} else {
 			// Create a copy to avoid modifying the original
 			finalOptions = &clients.CodexOptions{
-				Model:     c.model, // Service model takes precedence
-				Sandbox:   finalOptions.Sandbox,
-				WebSearch: finalOptions.WebSearch,
-				Effort:    finalOptions.Effort,
+				Model:          c.model, // Service model takes precedence
+				Sandbox:        finalOptions.Sandbox,
+				WebSearch:      finalOptions.WebSearch,
+				Effort:         finalOptions.Effort,
+				SessionTimeout: finalOptions.SessionTimeout,
 			}
 		}
 	}
@@ -328,6 +329,11 @@ func (c *CodexService) handleCodexClientError(err error, operation string) error
 		return fmt.Errorf("%s: %w", operation, err)
 	}
 
+	// The output of a run killed at its deadline ends mid-task, so it is not the error.
+	if timeoutErr, ok := core.IsSessionTimeout(err); ok {
+		return fmt.Errorf("%s: %w", operation, timeoutErr)
+	}
+
 	// Try to parse the output as Codex messages using internal parsing
 	messages, parseErr := MapCodexOutputToMessages(claudeErr.Output)
 	if parseErr != nil {
@@ -352,6 +358,7 @@ func (c *CodexService) handleCodexClientError(err error, operation string) error
 func (c *CodexService) StartNewConversationWithProgress(
 	ctx context.Context,
 	prompt, systemPrompt, workDir, effort string,
+	sessionTimeout time.Duration,
 	emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
 	finalPrompt := prompt
@@ -361,24 +368,25 @@ func (c *CodexService) StartNewConversationWithProgress(
 			"# USER MESSAGE\n" +
 			prompt
 	}
-	return c.StartNewConversationWithOptions(ctx, finalPrompt, codexOptionsForEffort(effort), emitter)
+	return c.StartNewConversationWithOptions(ctx, finalPrompt, codexOptionsFor(effort, sessionTimeout), emitter)
 }
 
 // ContinueConversationWithProgress continues a conversation with progress streaming.
 func (c *CodexService) ContinueConversationWithProgress(
 	ctx context.Context,
 	sessionID, prompt, systemPrompt, workDir, effort string,
+	sessionTimeout time.Duration,
 	emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
 	// Codex: system prompt persists from turn 1, workDir not supported on continue
-	return c.ContinueConversationWithOptions(ctx, sessionID, prompt, codexOptionsForEffort(effort), emitter)
+	return c.ContinueConversationWithOptions(ctx, sessionID, prompt, codexOptionsFor(effort, sessionTimeout), emitter)
 }
 
-func codexOptionsForEffort(effort string) *clients.CodexOptions {
-	if effort == "" {
+func codexOptionsFor(effort string, sessionTimeout time.Duration) *clients.CodexOptions {
+	if effort == "" && sessionTimeout == 0 {
 		return nil
 	}
-	return &clients.CodexOptions{Effort: effort}
+	return &clients.CodexOptions{Effort: effort, SessionTimeout: sessionTimeout}
 }
 
 func (c *CodexService) Model() string {

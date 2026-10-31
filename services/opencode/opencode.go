@@ -116,8 +116,9 @@ func (o *OpenCodeService) deriveOpenCodeOptions(options *clients.OpenCodeOptions
 
 	// Create a copy to avoid modifying the original, preserving WorkDir and Effort
 	finalOptions := &clients.OpenCodeOptions{
-		WorkDir: options.WorkDir,
-		Effort:  options.Effort,
+		WorkDir:        options.WorkDir,
+		Effort:         options.Effort,
+		SessionTimeout: options.SessionTimeout,
 	}
 
 	// Apply service model if set, otherwise use options model
@@ -339,6 +340,11 @@ func (o *OpenCodeService) handleOpenCodeClientError(err error, operation string)
 		return fmt.Errorf("%s: %w", operation, err)
 	}
 
+	// The output of a run killed at its deadline ends mid-task, so it is not the error.
+	if timeoutErr, ok := core.IsSessionTimeout(err); ok {
+		return fmt.Errorf("%s: %w", operation, timeoutErr)
+	}
+
 	// Try to parse the output as OpenCode messages using internal parsing
 	messages, parseErr := MapOpenCodeOutputToMessages(claudeErr.Output)
 	if parseErr != nil {
@@ -363,6 +369,7 @@ func (o *OpenCodeService) handleOpenCodeClientError(err error, operation string)
 func (o *OpenCodeService) StartNewConversationWithProgress(
 	ctx context.Context,
 	prompt, systemPrompt, workDir, effort string,
+	sessionTimeout time.Duration,
 	emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
 	finalPrompt := prompt
@@ -372,24 +379,25 @@ func (o *OpenCodeService) StartNewConversationWithProgress(
 			"# USER MESSAGE\n" +
 			prompt
 	}
-	return o.StartNewConversationWithOptions(ctx, finalPrompt, openCodeOptionsFor(workDir, effort), emitter)
+	return o.StartNewConversationWithOptions(ctx, finalPrompt, openCodeOptionsFor(workDir, effort, sessionTimeout), emitter)
 }
 
 // ContinueConversationWithProgress continues a conversation with progress streaming.
 func (o *OpenCodeService) ContinueConversationWithProgress(
 	ctx context.Context,
 	sessionID, prompt, systemPrompt, workDir, effort string,
+	sessionTimeout time.Duration,
 	emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
 	// OpenCode: system prompt persists from turn 1
-	return o.ContinueConversationWithOptions(ctx, sessionID, prompt, openCodeOptionsFor(workDir, effort), emitter)
+	return o.ContinueConversationWithOptions(ctx, sessionID, prompt, openCodeOptionsFor(workDir, effort, sessionTimeout), emitter)
 }
 
-func openCodeOptionsFor(workDir, effort string) *clients.OpenCodeOptions {
-	if workDir == "" && effort == "" {
+func openCodeOptionsFor(workDir, effort string, sessionTimeout time.Duration) *clients.OpenCodeOptions {
+	if workDir == "" && effort == "" && sessionTimeout == 0 {
 		return nil
 	}
-	return &clients.OpenCodeOptions{WorkDir: workDir, Effort: effort}
+	return &clients.OpenCodeOptions{WorkDir: workDir, Effort: effort, SessionTimeout: sessionTimeout}
 }
 
 func (o *OpenCodeService) Model() string {

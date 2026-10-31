@@ -163,6 +163,7 @@ func (mp *MessagePoller) pollAndDispatch() {
 					SystemPrompt:         job.SystemPrompt,
 					ReasoningEffort:      job.ReasoningEffort,
 					ReasoningEffortModel: job.ReasoningEffortModel,
+					SessionTimeoutMs:     latestSessionTimeoutMs(userPayload.SessionTimeoutMs, job.SessionTimeoutMs),
 				}
 
 				enrichedPayload, err := json.Marshal(startPayload)

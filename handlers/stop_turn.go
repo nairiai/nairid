@@ -158,6 +158,7 @@ func jobDataForStart(start models.StartConversationPayload) models.JobData {
 		SystemPrompt:       start.SystemPrompt,
 		ReasoningEffort:    start.ReasoningEffort,
 		EffortModel:        start.ReasoningEffortModel,
+		SessionTimeoutMs:   start.SessionTimeoutMs,
 	}
 }
 

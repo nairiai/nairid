@@ -293,9 +293,10 @@ type AgentJob struct {
 	CreatedAt    time.Time         `json:"created_at"`
 	Messages     []AgentJobMessage `json:"messages"`
 	SystemPrompt string            `json:"system_prompt,omitempty"`
-	// See StartConversationPayload for the meaning of these two.
+	// See StartConversationPayload for the meaning of these.
 	ReasoningEffort      string `json:"reasoning_effort,omitempty"`
 	ReasoningEffortModel string `json:"reasoning_effort_model,omitempty"`
+	SessionTimeoutMs     int64  `json:"session_timeout_ms,omitempty"`
 	// A stop the backend asked for and has not heard back about; see StopTurnPayload.
 	StopRequested   bool   `json:"stop_requested,omitempty"`
 	StopRequestedBy string `json:"stop_requested_by,omitempty"`

@@ -2,7 +2,6 @@ package cursor
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"nairid/clients"
@@ -46,7 +45,7 @@ func (c *CursorClient) StartNewSession(ctx context.Context, prompt string, optio
 	log.Info("Starting new Cursor session with prompt: %s", finalPrompt)
 	log.Info("Command arguments: %v", args)
 
-	timeout := clients.SessionTimeout()
+	timeout := options.RunTimeout()
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -59,7 +58,7 @@ func (c *CursorClient) StartNewSession(ctx context.Context, prompt string, optio
 			log.Error("⏰ Cursor session timed out after %s", timeout)
 			return "", &core.ErrClaudeCommandErr{
 				Agent:  "Cursor",
-				Err:    fmt.Errorf("session timed out after %s: %w", timeout, err),
+				Err:    &core.ErrSessionTimeout{Timeout: timeout, Err: err},
 				Output: string(output),
 			}
 		}
@@ -94,7 +93,7 @@ func (c *CursorClient) ContinueSession(ctx context.Context, sessionID, prompt st
 	log.Info("Executing Cursor command with sessionID: %s, prompt: %s", sessionID, prompt)
 	log.Info("Command arguments: %v", args)
 
-	timeout := clients.SessionTimeout()
+	timeout := options.RunTimeout()
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -107,7 +106,7 @@ func (c *CursorClient) ContinueSession(ctx context.Context, sessionID, prompt st
 			log.Error("⏰ Cursor session timed out after %s", timeout)
 			return "", &core.ErrClaudeCommandErr{
 				Agent:  "Cursor",
-				Err:    fmt.Errorf("session timed out after %s: %w", timeout, err),
+				Err:    &core.ErrSessionTimeout{Timeout: timeout, Err: err},
 				Output: string(output),
 			}
 		}

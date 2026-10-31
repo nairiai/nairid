@@ -43,7 +43,9 @@ type JobData struct {
 	SystemPrompt       string    `json:"system_prompt,omitempty"`    // The first message's instructions, to start the job over if a stop leaves it without a session
 	ReasoningEffort    string    `json:"reasoning_effort,omitempty"` // CLI effort level the backend sent when the conversation started; empty = model default
 	EffortModel        string    `json:"effort_model,omitempty"`     // --model id the level was checked against; it applies only while the agent runs that model
-	UpdatedAt          time.Time `json:"updated_at"`
+	// Latest per-agent cap on one CLI run the backend sent; 0 means NAIRI_MAX_SESSION_MS or 1h.
+	SessionTimeoutMs int64     `json:"session_timeout_ms,omitempty"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 // QueuedMessage represents a message that has been queued for processing but not yet started

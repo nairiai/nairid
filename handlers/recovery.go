@@ -113,6 +113,7 @@ func RecoverJobs(
 					Mode:                 jobData.Mode,
 					ReasoningEffort:      jobData.ReasoningEffort,
 					ReasoningEffortModel: jobData.EffortModel,
+					SessionTimeoutMs:     jobData.SessionTimeoutMs,
 				},
 			}
 		} else {

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"nairid/clients"
 	"nairid/core/env"
@@ -17,19 +18,22 @@ import (
 	"nairid/usecases"
 )
 
-// effortRecordingAgent stands in for a CLI: it records the effort each turn was run with.
+// effortRecordingAgent stands in for a CLI: it records the effort and timeout each turn was run with.
 type effortRecordingAgent struct {
 	services.CLIAgent
 	model          string
 	turns          []string
+	timeouts       []time.Duration
 	failsNextStart bool
+	nextTurnErr    error
 	duringTurn     func()
 }
 
 func (a *effortRecordingAgent) StartNewConversationWithProgress(
-	_ context.Context, prompt, systemPrompt, workDir, effort string, emitter services.ProgressEmitter,
+	_ context.Context, prompt, systemPrompt, workDir, effort string, sessionTimeout time.Duration, emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
 	a.turns = append(a.turns, "start:"+effort)
+	a.timeouts = append(a.timeouts, sessionTimeout)
 	if a.duringTurn != nil {
 		a.duringTurn()
 	}
@@ -37,17 +41,30 @@ func (a *effortRecordingAgent) StartNewConversationWithProgress(
 		a.failsNextStart = false
 		return nil, errors.New("the CLI could not start a session")
 	}
+	if err := a.takeTurnErr(); err != nil {
+		return nil, err
+	}
 	return &services.CLIAgentResult{Output: "done", SessionID: "session-1"}, nil
 }
 
 func (a *effortRecordingAgent) ContinueConversationWithProgress(
-	_ context.Context, sessionID, prompt, systemPrompt, workDir, effort string, emitter services.ProgressEmitter,
+	_ context.Context, sessionID, prompt, systemPrompt, workDir, effort string, sessionTimeout time.Duration, emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
 	a.turns = append(a.turns, "continue:"+effort)
+	a.timeouts = append(a.timeouts, sessionTimeout)
 	if a.duringTurn != nil {
 		a.duringTurn()
 	}
+	if err := a.takeTurnErr(); err != nil {
+		return nil, err
+	}
 	return &services.CLIAgentResult{Output: "done", SessionID: sessionID}, nil
+}
+
+func (a *effortRecordingAgent) takeTurnErr() error {
+	err := a.nextTurnErr
+	a.nextTurnErr = nil
+	return err
 }
 
 func (a *effortRecordingAgent) Model() string     { return a.model }

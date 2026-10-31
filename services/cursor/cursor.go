@@ -108,8 +108,9 @@ func (c *CursorService) deriveCursorOptions(options *clients.CursorOptions) *cli
 		} else {
 			// Create a copy to avoid modifying the original
 			finalOptions = &clients.CursorOptions{
-				SystemPrompt: finalOptions.SystemPrompt,
-				Model:        c.model, // Service model takes precedence
+				SystemPrompt:   finalOptions.SystemPrompt,
+				Model:          c.model, // Service model takes precedence
+				SessionTimeout: finalOptions.SessionTimeout,
 			}
 		}
 	}
@@ -287,6 +288,11 @@ func (c *CursorService) handleCursorClientError(err error, operation string) err
 		return fmt.Errorf("%s: %w", operation, err)
 	}
 
+	// The output of a run killed at its deadline ends mid-task, so it is not the error.
+	if timeoutErr, ok := core.IsSessionTimeout(err); ok {
+		return fmt.Errorf("%s: %w", operation, timeoutErr)
+	}
+
 	// Try to parse the output as Cursor messages using internal parsing
 	messages, parseErr := MapCursorOutputToMessages(claudeErr.Output)
 	if parseErr != nil {
@@ -316,9 +322,13 @@ func (c *CursorService) handleCursorClientError(err error, operation string) err
 func (c *CursorService) StartNewConversationWithProgress(
 	ctx context.Context,
 	prompt, systemPrompt, workDir, effort string,
+	sessionTimeout time.Duration,
 	emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
-	return c.StartNewConversationWithOptions(ctx, prompt, &clients.CursorOptions{SystemPrompt: systemPrompt})
+	return c.StartNewConversationWithOptions(ctx, prompt, &clients.CursorOptions{
+		SystemPrompt:   systemPrompt,
+		SessionTimeout: sessionTimeout,
+	})
 }
 
 // ContinueConversationWithProgress continues a conversation with progress streaming.
@@ -326,9 +336,10 @@ func (c *CursorService) StartNewConversationWithProgress(
 func (c *CursorService) ContinueConversationWithProgress(
 	ctx context.Context,
 	sessionID, prompt, systemPrompt, workDir, effort string,
+	sessionTimeout time.Duration,
 	emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
-	return c.ContinueConversationWithOptions(ctx, sessionID, prompt, nil)
+	return c.ContinueConversationWithOptions(ctx, sessionID, prompt, &clients.CursorOptions{SessionTimeout: sessionTimeout})
 }
 
 func (c *CursorService) Model() string {

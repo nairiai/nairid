@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"time"
 )
 
 // ClaudeParseError represents a failure to parse Claude output with error log file path
@@ -89,4 +90,51 @@ func IsTurnStopped(err error) (*ErrTurnStopped, bool) {
 		return stopped, true
 	}
 	return nil, false
+}
+
+// ErrSessionTimeout is a CLI run that nairid killed because it hit the session timeout.
+type ErrSessionTimeout struct {
+	Timeout time.Duration
+	Err     error
+}
+
+func (e *ErrSessionTimeout) Error() string {
+	return fmt.Sprintf("session timed out after %s: %v", e.Timeout, e.Err)
+}
+
+func (e *ErrSessionTimeout) Unwrap() error {
+	return e.Err
+}
+
+// UserMessage is what the chat thread shows. It never quotes the agent's output: a run cut
+// off mid-stream would otherwise show its last progress sentence as the error.
+func (e *ErrSessionTimeout) UserMessage() string {
+	return fmt.Sprintf(
+		"nairid stopped this run after it hit the %s session timeout. Raise it in the agent's Advanced settings.",
+		FormatTimeout(e.Timeout),
+	)
+}
+
+func IsSessionTimeout(err error) (*ErrSessionTimeout, bool) {
+	var timeoutErr *ErrSessionTimeout
+	if errors.As(err, &timeoutErr) {
+		return timeoutErr, true
+	}
+	return nil, false
+}
+
+// FormatTimeout renders 1h as "1h" and 90m as "1h30m", rather than time.Duration's "1h0m0s".
+func FormatTimeout(d time.Duration) string {
+	if d%time.Minute != 0 {
+		return d.Round(time.Second).String()
+	}
+	hours := d / time.Hour
+	minutes := (d % time.Hour) / time.Minute
+	if hours == 0 {
+		return fmt.Sprintf("%dm", minutes)
+	}
+	if minutes == 0 {
+		return fmt.Sprintf("%dh", hours)
+	}
+	return fmt.Sprintf("%dh%dm", hours, minutes)
 }
