@@ -42,14 +42,16 @@ type PooledWorktree struct {
 type WorktreePool struct {
 	ready           []PooledWorktree
 	mutex           sync.Mutex
-	mainRepoMu      sync.Mutex     // serializes git operations on the main repository (checkout, reset, clean)
+	mainRepoMu      sync.Mutex // serializes git operations on the main repository (checkout, reset, clean)
+	branchMu        sync.Mutex // serializes pool branch create/rename/delete (shared .git/config and reflog temp file)
 	gitClient       *clients.GitClient
 	basePath        string        // ~/.eksec_worktrees/
 	targetSize      int           // from WORKTREE_POOL_SIZE env
 	replenishChan   chan struct{} // signals replenisher
 	stopChan        chan struct{} // for shutdown
 	wg              sync.WaitGroup
-	initialFillDone chan struct{} // closed when the initial fill completes
+	initialFillDone chan struct{} // closed once the first worktree is ready or the initial fill ends
+	initialFillOnce sync.Once
 }
 
 // NewWorktreePool creates a new worktree pool.
@@ -76,11 +78,16 @@ func (p *WorktreePool) Start(ctx context.Context) {
 	go p.replenisherLoop(ctx)
 }
 
-// WaitForInitialFill blocks until the initial pool fill is complete.
-// This should be called before any operations that perform git commands on the
-// main repository (e.g., job recovery) to prevent concurrent git index.lock conflicts.
+// WaitForInitialFill blocks until the initial fill has a worktree ready (or gave up).
+// The fill touches the main repository's index only in its up-front reset, so once this
+// returns the rest of the fill (git worktree add) cannot race job recovery for index.lock.
 func (p *WorktreePool) WaitForInitialFill() {
 	<-p.initialFillDone
+}
+
+// markInitialFillDone unblocks WaitForInitialFill. Safe to call more than once.
+func (p *WorktreePool) markInitialFillDone() {
+	p.initialFillOnce.Do(func() { close(p.initialFillDone) })
 }
 
 // Stop gracefully shuts down the pool and waits for the background goroutine to finish.
@@ -154,12 +161,12 @@ func (p *WorktreePool) Acquire(jobID, branchName string) (string, error) {
 	}
 
 	// Check staleness and refresh if needed
-	currentCommit, err := p.getCurrentOriginCommit()
+	defaultBranch, currentCommit, err := p.getCurrentOriginCommit()
 	if err != nil {
 		log.Warn("⚠️ Failed to get current origin commit for staleness check: %v", err)
 	} else if pooledWT.BaseCommit != currentCommit {
 		log.Info("🔄 Worktree %s is stale, refreshing...", pooledWT.Path)
-		if err := p.refreshWorktreeAfterFetch(pooledWT.Path); err != nil {
+		if err := p.refreshWorktreeAfterFetch(pooledWT.Path, defaultBranch); err != nil {
 			log.Warn("⚠️ Failed to refresh stale worktree: %v", err)
 			// Continue anyway - it might still work
 		}
@@ -217,11 +224,12 @@ func (p *WorktreePool) GetTargetSize() int {
 func (p *WorktreePool) replenisherLoop(ctx context.Context) {
 	defer p.wg.Done()
 
-	// Initial fill on startup
+	// Initial fill on startup. WaitForInitialFill is released as soon as the first
+	// worktree is ready; the remaining worktrees keep filling in the background.
 	log.Info("🔄 Worktree pool: starting initial fill (target size: %d)", p.targetSize)
 	p.fillToTarget(ctx)
+	p.markInitialFillDone()
 	log.Info("✅ Worktree pool: initial fill complete (pool size: %d)", p.GetPoolSize())
-	close(p.initialFillDone)
 
 	for {
 		select {
@@ -243,29 +251,74 @@ func (p *WorktreePool) replenisherLoop(ctx context.Context) {
 }
 
 // fillToTarget creates worktrees until the pool reaches target size.
-// It checks for context cancellation between each replenish attempt.
+// The main repo reset, fetch and default branch lookup run once per cycle; every
+// missing worktree is then created from the same origin/<default-branch> ref.
 func (p *WorktreePool) fillToTarget(ctx context.Context) {
+	if p.GetPoolSize() >= p.targetSize || p.fillInterrupted(ctx) {
+		return
+	}
+
+	defaultBranch, err := p.prepareFillCycle()
+	if err != nil {
+		log.Error("❌ Worktree pool: failed to replenish: %v", err)
+		return
+	}
+
 	for p.GetPoolSize() < p.targetSize {
 		// Check for cancellation before each replenish
-		select {
-		case <-ctx.Done():
-			log.Info("🛑 Worktree pool: fill interrupted by context cancellation")
+		if p.fillInterrupted(ctx) {
 			return
-		case <-p.stopChan:
-			log.Info("🛑 Worktree pool: fill interrupted by stop signal")
-			return
-		default:
 		}
 
-		if err := p.replenish(); err != nil {
+		if err := p.createPooledWorktree(defaultBranch); err != nil {
 			log.Error("❌ Worktree pool: failed to replenish: %v", err)
 			return // back off on errors
 		}
+		p.markInitialFillDone()
 	}
 }
 
-// replenish creates one worktree and adds it to the pool.
-func (p *WorktreePool) replenish() error {
+// fillInterrupted reports whether the fill should stop due to cancellation or shutdown.
+func (p *WorktreePool) fillInterrupted(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		log.Info("🛑 Worktree pool: fill interrupted by context cancellation")
+		return true
+	case <-p.stopChan:
+		log.Info("🛑 Worktree pool: fill interrupted by stop signal")
+		return true
+	default:
+		return false
+	}
+}
+
+// prepareFillCycle resets the main repo to the freshly fetched default branch and
+// returns the default branch name for the worktrees created in this cycle.
+func (p *WorktreePool) prepareFillCycle() (string, error) {
+	if p.isStopping() {
+		return "", ErrPoolStopping
+	}
+
+	// Ensure base directory exists
+	if err := os.MkdirAll(p.basePath, 0755); err != nil {
+		return "", fmt.Errorf("failed to create base directory: %w", err)
+	}
+
+	// Serialize the reset with synchronous worktree creation to avoid index.lock conflicts.
+	// Finish it before releasing startup so recovery can use the main repo safely.
+	p.mainRepoMu.Lock()
+	defaultBranch, err := p.resetMainRepoToDefaultBranch()
+	p.mainRepoMu.Unlock()
+	if err != nil {
+		return "", fmt.Errorf("failed to reset main repo before worktree creation: %w", err)
+	}
+
+	return defaultBranch, nil
+}
+
+// createPooledWorktree creates one worktree from origin/<defaultBranch> and adds it to the pool.
+// It does not touch the main repository's index or working tree.
+func (p *WorktreePool) createPooledWorktree(defaultBranch string) error {
 	// Check for stop signal before starting
 	if p.isStopping() {
 		return ErrPoolStopping
@@ -276,54 +329,23 @@ func (p *WorktreePool) replenish() error {
 	wtPath := filepath.Join(p.basePath, fmt.Sprintf("pool-%s", id))
 	branchName := fmt.Sprintf("nairid/pool-ready-%s", id)
 
-	// Ensure base directory exists
-	if err := os.MkdirAll(p.basePath, 0755); err != nil {
-		return fmt.Errorf("failed to create base directory: %w", err)
-	}
-
-	// Reset main repo to default branch before creating worktree to prevent
-	// cross-pollination of changes between worktrees. This ensures the main
-	// repository is in a clean, known state when spawning new worktrees.
-	// The lock prevents concurrent git operations on the main repo (e.g., a
-	// synchronous worktree creation fallback racing with the pool replenisher)
-	// which would cause .git/index.lock conflicts.
-	p.mainRepoMu.Lock()
-	err := p.resetMainRepoToDefaultBranch()
-	p.mainRepoMu.Unlock()
-	if err != nil {
-		return fmt.Errorf("failed to reset main repo before worktree creation: %w", err)
-	}
-
-	// Fetch latest from origin (safe for concurrent calls - does not use index.lock)
-	if err := p.gitClient.FetchOrigin(); err != nil {
-		return fmt.Errorf("failed to fetch from origin: %w", err)
-	}
-
-	// Check for stop signal after slow network operation
-	if p.isStopping() {
-		return ErrPoolStopping
-	}
-
-	// Get current origin commit for staleness tracking
-	baseCommit, err := p.getCurrentOriginCommit()
+	// Get current origin commit for staleness tracking (local ref lookup, no network)
+	baseCommit, err := p.gitClient.GetOriginCommit(defaultBranch)
 	if err != nil {
 		return fmt.Errorf("failed to get origin commit: %w", err)
 	}
 
-	// Get default branch
-	defaultBranch, err := p.gitClient.GetDefaultBranch()
-	if err != nil {
-		return fmt.Errorf("failed to get default branch: %w", err)
-	}
-
-	// Check for stop signal before creating worktree
-	if p.isStopping() {
-		return ErrPoolStopping
-	}
-
-	// Create worktree with new branch based on origin/<default-branch>
+	// Create the branch from origin/<default-branch> (what git worktree add -b does first) under
+	// branchMu, since it writes .git/config like Acquire's renames. The slow checkout runs unlocked.
 	baseRef := fmt.Sprintf("origin/%s", defaultBranch)
-	if err := p.gitClient.CreateWorktree(wtPath, branchName, baseRef); err != nil {
+	p.branchMu.Lock()
+	err = p.gitClient.CreateBranch(branchName, baseRef)
+	p.branchMu.Unlock()
+	if err != nil {
+		return fmt.Errorf("failed to create worktree branch: %w", err)
+	}
+	if err := p.gitClient.AddWorktreeForBranch(wtPath, branchName); err != nil {
+		p.deleteBranch(branchName)
 		return fmt.Errorf("failed to create worktree: %w", err)
 	}
 
@@ -344,15 +366,9 @@ func (p *WorktreePool) replenish() error {
 	return nil
 }
 
-// refreshWorktreeAfterFetch resets a worktree to the latest origin/main.
+// refreshWorktreeAfterFetch resets a worktree to the latest origin/<defaultBranch>.
 // Use this when the caller has already fetched from origin.
-func (p *WorktreePool) refreshWorktreeAfterFetch(wtPath string) error {
-	// Get default branch
-	defaultBranch, err := p.gitClient.GetDefaultBranch()
-	if err != nil {
-		return fmt.Errorf("failed to get default branch: %w", err)
-	}
-
+func (p *WorktreePool) refreshWorktreeAfterFetch(wtPath, defaultBranch string) error {
 	// Reset hard to origin/main
 	if err := p.gitClient.ResetHardInWorktreeToRef(wtPath, fmt.Sprintf("origin/%s", defaultBranch)); err != nil {
 		return fmt.Errorf("reset failed: %w", err)
@@ -369,7 +385,7 @@ func (p *WorktreePool) refreshStaleWorktrees() {
 		return
 	}
 
-	currentCommit, err := p.getCurrentOriginCommit()
+	defaultBranch, currentCommit, err := p.getCurrentOriginCommit()
 	if err != nil {
 		log.Warn("⚠️ Failed to get current origin commit for staleness check: %v", err)
 		return
@@ -382,7 +398,7 @@ func (p *WorktreePool) refreshStaleWorktrees() {
 	for i := range p.ready {
 		if p.ready[i].BaseCommit != currentCommit {
 			log.Debug("🔄 Refreshing stale worktree: %s", p.ready[i].Path)
-			if err := p.refreshWorktreeAfterFetch(p.ready[i].Path); err != nil {
+			if err := p.refreshWorktreeAfterFetch(p.ready[i].Path, defaultBranch); err != nil {
 				log.Warn("⚠️ Failed to refresh worktree %s: %v", p.ready[i].Path, err)
 				continue
 			}
@@ -396,54 +412,72 @@ func (p *WorktreePool) refreshStaleWorktrees() {
 	}
 }
 
-// renameBranch renames a branch in a worktree.
+// renameBranch renames a branch in a worktree. Concurrent renames clobber each other's
+// logs/refs/.tmp-renamed-log and all of them rewrite .git/config, so they hold branchMu.
 func (p *WorktreePool) renameBranch(wtPath, oldBranch, newBranch string) error {
+	p.branchMu.Lock()
+	defer p.branchMu.Unlock()
 	return p.gitClient.RenameBranchInWorktree(wtPath, oldBranch, newBranch)
 }
 
-// getCurrentOriginCommit gets the current commit hash of origin/main.
-func (p *WorktreePool) getCurrentOriginCommit() (string, error) {
-	// Get default branch
-	defaultBranch, err := p.gitClient.GetDefaultBranch()
-	if err != nil {
-		return "", err
+// deleteBranch deletes a pool branch, logging failures. It holds branchMu because
+// git branch -D rewrites .git/config.
+func (p *WorktreePool) deleteBranch(branchName string) {
+	p.branchMu.Lock()
+	defer p.branchMu.Unlock()
+	if err := p.gitClient.DeleteLocalBranch(branchName); err != nil {
+		log.Warn("⚠️ Failed to delete branch %s: %v", branchName, err)
 	}
-
-	return p.gitClient.GetOriginCommit(defaultBranch)
 }
 
-// resetMainRepoToDefaultBranch resets the main repository to the default branch.
-// This prevents cross-pollination of changes when creating new worktrees.
-func (p *WorktreePool) resetMainRepoToDefaultBranch() error {
+// getCurrentOriginCommit returns the default branch and the commit hash of origin/<default-branch>.
+func (p *WorktreePool) getCurrentOriginCommit() (string, string, error) {
+	// Get default branch
+	defaultBranch, err := p.gitClient.GetDefaultBranch()
+	if err != nil {
+		return "", "", err
+	}
+
+	commit, err := p.gitClient.GetOriginCommit(defaultBranch)
+	if err != nil {
+		return "", "", err
+	}
+	return defaultBranch, commit, nil
+}
+
+// resetMainRepoToDefaultBranch resets the main repository to the freshly fetched
+// default branch and returns its name. This prevents cross-pollination of changes
+// when creating new worktrees.
+func (p *WorktreePool) resetMainRepoToDefaultBranch() (string, error) {
 	// Clean untracked files
 	if err := p.gitClient.CleanUntracked(); err != nil {
-		return fmt.Errorf("failed to clean untracked: %w", err)
+		return "", fmt.Errorf("failed to clean untracked: %w", err)
 	}
 
 	// Get default branch
 	defaultBranch, err := p.gitClient.GetDefaultBranch()
 	if err != nil {
-		return fmt.Errorf("failed to get default branch: %w", err)
+		return "", fmt.Errorf("failed to get default branch: %w", err)
 	}
 
 	// Checkout default branch
 	if err := p.gitClient.CheckoutBranch(defaultBranch); err != nil {
-		return fmt.Errorf("failed to checkout default branch: %w", err)
+		return "", fmt.Errorf("failed to checkout default branch: %w", err)
 	}
 
 	// Fetch latest from origin and hard-reset to origin/<default-branch>.
 	// This replaces the previous pull --rebase approach which could fail when local
 	// and remote branches diverge (e.g. after force-pushes or failed rebases).
 	if err := p.gitClient.FetchOrigin(); err != nil {
-		return fmt.Errorf("failed to fetch from origin: %w", err)
+		return "", fmt.Errorf("failed to fetch from origin: %w", err)
 	}
 
 	originRef := fmt.Sprintf("origin/%s", defaultBranch)
 	if err := p.gitClient.ResetHardToRef(originRef); err != nil {
-		return fmt.Errorf("failed to reset to %s: %w", originRef, err)
+		return "", fmt.Errorf("failed to reset to %s: %w", originRef, err)
 	}
 
-	return nil
+	return defaultBranch, nil
 }
 
 // cleanupFailedWorktree attempts to clean up a worktree that failed during acquisition.
@@ -460,9 +494,7 @@ func (p *WorktreePool) cleanupFailedWorktree(wtPath, branchName string) {
 	}
 
 	// Try to delete the branch
-	if err := p.gitClient.DeleteLocalBranch(branchName); err != nil {
-		log.Warn("⚠️ Failed to delete branch %s: %v", branchName, err)
-	}
+	p.deleteBranch(branchName)
 }
 
 // CleanupPool removes all pool worktrees. This should be called during shutdown
@@ -602,7 +634,7 @@ func (p *WorktreePool) ReclaimOrphanedPoolWorktrees() error {
 	}
 
 	// Get current commit for staleness tracking
-	currentCommit, _ := p.getCurrentOriginCommit()
+	_, currentCommit, _ := p.getCurrentOriginCommit()
 
 	reclaimedCount := 0
 	removedCount := 0

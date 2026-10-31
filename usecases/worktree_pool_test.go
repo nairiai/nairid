@@ -114,6 +114,15 @@ func setupTestGitRepoWithRemote(t *testing.T) (mainRepo string, worktreeBase str
 		}
 	}
 
+	// Point the bare remote's HEAD at main so `git remote show origin` reports a default branch
+	cmd = exec.Command("git", "symbolic-ref", "HEAD", "refs/heads/main")
+	cmd.Dir = remoteDir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		_ = os.RemoveAll(remoteDir)
+		_ = os.RemoveAll(mainRepoDir)
+		t.Fatalf("Failed to set remote HEAD: %v\nOutput: %s", err, string(output))
+	}
+
 	// Create worktree base directory
 	worktreeBaseDir, err := os.MkdirTemp("", "worktree-base-*")
 	if err != nil {
@@ -226,7 +235,7 @@ func TestAcquire_FromPool(t *testing.T) {
 
 	// Wait for pool to fill (up to 30 seconds)
 	for i := 0; i < 30; i++ {
-		if pool.GetPoolSize() >= 1 {
+		if pool.GetPoolSize() >= 3 {
 			break
 		}
 		time.Sleep(time.Second)
@@ -235,6 +244,9 @@ func TestAcquire_FromPool(t *testing.T) {
 	if pool.GetPoolSize() == 0 {
 		t.Fatal("Pool failed to fill within timeout")
 	}
+
+	// Stop the replenisher so it can't refill the slot before the size check below
+	pool.Stop()
 
 	initialSize := pool.GetPoolSize()
 	t.Logf("Pool filled with %d worktrees", initialSize)
@@ -274,9 +286,6 @@ func TestAcquire_FromPool(t *testing.T) {
 	if newSize >= initialSize {
 		t.Errorf("Expected pool size to decrease after acquire, was %d, now %d", initialSize, newSize)
 	}
-
-	// Stop pool
-	pool.Stop()
 }
 
 func TestAcquire_InvalidWorktree(t *testing.T) {
@@ -655,11 +664,12 @@ func TestCleanupStaleJobWorktrees_AcceptsJobPrefix(t *testing.T) {
 }
 
 func TestStartAndStop(t *testing.T) {
-	gitClient := clients.NewGitClient()
-	// Without a repo path the pool's fill resets the checkout running the tests to origin/main.
+	// Point git at an empty temp dir: without a repo path the fill's git clean/checkout/reset
+	// would run in the package directory, i.e. inside the developer's own checkout.
 	notARepo := t.TempDir()
+	gitClient := clients.NewGitClient()
 	gitClient.SetRepoPathProvider(func() string { return notARepo })
-	pool := NewWorktreePool(gitClient, "/tmp/nonexistent", 1)
+	pool := NewWorktreePool(gitClient, filepath.Join(notARepo, "worktrees"), 1)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -738,9 +748,13 @@ func TestResetMainRepoToDefaultBranch(t *testing.T) {
 	}
 
 	// Call resetMainRepoToDefaultBranch
-	err = pool.resetMainRepoToDefaultBranch()
+	resetBranch, err := pool.resetMainRepoToDefaultBranch()
 	if err != nil {
 		t.Fatalf("resetMainRepoToDefaultBranch failed: %v", err)
+	}
+
+	if resetBranch != defaultBranch {
+		t.Errorf("Expected reset to report default branch %s, got %s", defaultBranch, resetBranch)
 	}
 
 	// Verify we're back on the default branch
