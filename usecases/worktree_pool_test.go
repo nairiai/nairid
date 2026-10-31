@@ -656,6 +656,9 @@ func TestCleanupStaleJobWorktrees_AcceptsJobPrefix(t *testing.T) {
 
 func TestStartAndStop(t *testing.T) {
 	gitClient := clients.NewGitClient()
+	// Without a repo path the pool's fill resets the checkout running the tests to origin/main.
+	notARepo := t.TempDir()
+	gitClient.SetRepoPathProvider(func() string { return notARepo })
 	pool := NewWorktreePool(gitClient, "/tmp/nonexistent", 1)
 
 	ctx, cancel := context.WithCancel(context.Background())
