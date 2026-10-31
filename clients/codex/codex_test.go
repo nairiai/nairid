@@ -1,10 +1,15 @@
 package codex
 
 import (
+	"context"
+	"errors"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	"nairid/clients"
+	"nairid/core"
 )
 
 func TestBuildBaseArgs_Effort(t *testing.T) {
@@ -28,5 +33,19 @@ func TestBuildBaseArgs_Effort(t *testing.T) {
 				t.Fatalf("got %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestHandleCommandError_NamesCodex(t *testing.T) {
+	runErr := &clients.CommandError{Err: errors.New("exit status 1"), Output: "model not supported"}
+
+	got := handleCommandError(context.Background(), runErr, "Codex", time.Minute)
+
+	cmdErr, ok := core.IsClaudeCommandErr(got)
+	if !ok || cmdErr.Agent != "Codex" {
+		t.Fatalf("got %#v, want a command error for Codex", got)
+	}
+	if !strings.HasPrefix(got.Error(), "Codex command failed: exit status 1") {
+		t.Errorf("error reads %q", got.Error())
 	}
 }

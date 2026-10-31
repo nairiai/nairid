@@ -987,11 +987,12 @@ func TestClaudeService_handleClaudeClientError(t *testing.T) {
 		{
 			name: "claude command error with invalid output",
 			inputError: &core.ErrClaudeCommandErr{
+				Agent:  "Claude",
 				Output: "invalid json output",
 				Err:    fmt.Errorf("command failed"),
 			},
 			operation:       "test operation",
-			expectedContain: "test operation: claude command failed: command failed",
+			expectedContain: "test operation: Claude command failed: command failed",
 		},
 	}
 

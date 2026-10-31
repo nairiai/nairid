@@ -58,11 +58,13 @@ func (c *CursorClient) StartNewSession(ctx context.Context, prompt string, optio
 		if ctx.Err() == context.DeadlineExceeded {
 			log.Error("⏰ Cursor session timed out after %s", timeout)
 			return "", &core.ErrClaudeCommandErr{
+				Agent:  "Cursor",
 				Err:    fmt.Errorf("session timed out after %s: %w", timeout, err),
 				Output: string(output),
 			}
 		}
 		return "", &core.ErrClaudeCommandErr{
+			Agent:  "Cursor",
 			Err:    err,
 			Output: string(output),
 		}
@@ -104,11 +106,13 @@ func (c *CursorClient) ContinueSession(ctx context.Context, sessionID, prompt st
 		if ctx.Err() == context.DeadlineExceeded {
 			log.Error("⏰ Cursor session timed out after %s", timeout)
 			return "", &core.ErrClaudeCommandErr{
+				Agent:  "Cursor",
 				Err:    fmt.Errorf("session timed out after %s: %w", timeout, err),
 				Output: string(output),
 			}
 		}
 		return "", &core.ErrClaudeCommandErr{
+			Agent:  "Cursor",
 			Err:    err,
 			Output: string(output),
 		}

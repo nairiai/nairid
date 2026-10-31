@@ -22,14 +22,19 @@ func IsClaudeParseError(err error) (*ClaudeParseError, bool) {
 	return parseErr, ok
 }
 
-// ErrClaudeCommandErr represents an error from the Claude command that includes the command output
+// ErrClaudeCommandErr represents an error from an agent CLI command that includes the command output
 type ErrClaudeCommandErr struct {
+	Agent  string // CLI that failed, e.g. "Codex"; names the right tool in the user-facing error
 	Err    error  // The original command error
-	Output string // The Claude command output (may contain JSON response)
+	Output string // The CLI output (may contain JSON response)
 }
 
 func (e *ErrClaudeCommandErr) Error() string {
-	return fmt.Sprintf("claude command failed: %v\nOutput: %s", e.Err, e.Output)
+	agent := e.Agent
+	if agent == "" {
+		agent = "agent"
+	}
+	return fmt.Sprintf("%s command failed: %v\nOutput: %s", agent, e.Err, e.Output)
 }
 
 func (e *ErrClaudeCommandErr) Unwrap() error {
