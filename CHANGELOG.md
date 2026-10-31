@@ -1,3 +1,12 @@
+## [v0.0.124] - 2026-10-31
+
+### Features
+
+- Support the codex ultra effort and the GPT-6 model line ([#228](https://github.com/nairiai/nairid/pull/228))
+  - `ultra` is accepted as a reasoning effort level; Codex lists it for the GPT-6 Sol/Astra/Terra and GPT-5.6 Sol/Terra models, and the backend only sends it for models that have it
+  - GPT-6 and GPT-5.6 tiers are priced explicitly; GPT-6 turns used to leave cost NULL and `gpt-5.6-sol` was billed at the gpt-5 rate
+  - Default models when `--model` is omitted: codex `gpt-6.1-sol`, opencode `opencode/claude-sonnet-5-5`
+
 ## [v0.0.123] - 2026-10-26
 
 ### Features
