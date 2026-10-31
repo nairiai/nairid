@@ -33,13 +33,19 @@ type stoppableAgent struct {
 	sessionWhenStopped string
 	started            chan struct{}
 	startSystemPrompts []string
+	name               string
+	failWith           error
 }
 
 func (a *stoppableAgent) run(ctx context.Context, sessionID string) (*services.CLIAgentResult, error) {
 	a.mu.Lock()
 	block := a.blockNext
 	a.blockNext = false
+	failWith := a.failWith
 	a.mu.Unlock()
+	if failWith != nil {
+		return nil, failWith
+	}
 	if !block {
 		return &services.CLIAgentResult{Output: "done", SessionID: sessionID}, nil
 	}
@@ -63,8 +69,14 @@ func (a *stoppableAgent) ContinueConversationWithProgress(
 	return a.run(ctx, sessionID)
 }
 
-func (a *stoppableAgent) Model() string     { return "" }
-func (a *stoppableAgent) AgentName() string { return "claude" }
+func (a *stoppableAgent) Model() string { return "" }
+
+func (a *stoppableAgent) AgentName() string {
+	if a.name != "" {
+		return a.name
+	}
+	return "claude"
+}
 
 type outbox struct {
 	mu       sync.Mutex

@@ -92,11 +92,13 @@ func handleCommandError(ctx context.Context, err error, agentName string, timeou
 		if ctx.Err() == context.DeadlineExceeded {
 			log.Error("⏰ %s session timed out after %s", agentName, timeout)
 			return &core.ErrClaudeCommandErr{
+				Agent:  agentName,
 				Err:    fmt.Errorf("session timed out after %s: %w", timeout, cmdErr.Err),
 				Output: cmdErr.Output,
 			}
 		}
 		return &core.ErrClaudeCommandErr{
+			Agent:  agentName,
 			Err:    cmdErr.Err,
 			Output: cmdErr.Output,
 		}

@@ -363,7 +363,7 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 	}
 
 	if err != nil {
-		log.Info("❌ Error starting Claude session: %v", err)
+		log.Info("❌ Error starting %s session: %v", mh.claudeService.AgentName(), err)
 		systemErr := mh.sendSystemMessage(
 			fmt.Sprintf("nairid encountered error: %v", err),
 			payload.ProcessedMessageID,
@@ -399,7 +399,7 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 			mh.jobEvictor.EvictJob(payload.JobID)
 		}
 
-		return fmt.Errorf("error starting Claude session: %w", err)
+		return fmt.Errorf("error starting %s session: %w", mh.claudeService.AgentName(), err)
 	}
 
 	// Auto-commit changes if needed (skip in ask mode)
@@ -761,7 +761,7 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 		return mh.finishStoppedTurn(stoppedJob, claudeResult, err)
 	}
 	if err != nil {
-		log.Info("❌ Error continuing Claude session: %v", err)
+		log.Info("❌ Error continuing %s session: %v", mh.claudeService.AgentName(), err)
 		systemErr := mh.sendSystemMessage(
 			fmt.Sprintf("nairid encountered error: %v", err),
 			payload.ProcessedMessageID,
@@ -797,7 +797,7 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 			mh.jobEvictor.EvictJob(payload.JobID)
 		}
 
-		return fmt.Errorf("error continuing Claude session: %w", err)
+		return fmt.Errorf("error continuing %s session: %w", mh.claudeService.AgentName(), err)
 	}
 
 	// Auto-commit changes if needed (skip in ask mode)
