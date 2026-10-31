@@ -117,6 +117,8 @@ type StartConversationPayload struct {
 	// level is only applied when it matches this container's model.
 	ReasoningEffort      string `json:"reasoning_effort,omitempty"`
 	ReasoningEffortModel string `json:"reasoning_effort_model,omitempty"`
+	// SessionTimeoutMs is the agent's own cap on one CLI run; 0 means use NAIRI_MAX_SESSION_MS or 1h.
+	SessionTimeoutMs int64 `json:"session_timeout_ms,omitempty"`
 }
 
 type StartConversationResponsePayload struct {
@@ -132,6 +134,8 @@ type UserMessagePayload struct {
 	Attachments        []MessageAttachment `json:"attachments,omitempty"`
 	PreviousMessages   []PreviousMessage   `json:"previous_messages,omitempty"`
 	SenderMetadata     *UserMetadata       `json:"sender_metadata,omitempty"`
+	// SessionTimeoutMs, when > 0, replaces the job's stored value from this turn on.
+	SessionTimeoutMs int64 `json:"session_timeout_ms,omitempty"`
 }
 
 type AssistantMessagePayload struct {

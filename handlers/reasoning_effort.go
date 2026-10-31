@@ -62,12 +62,14 @@ func startPayloadForUnstartedJob(reply models.UserMessagePayload, job *models.Jo
 		Attachments:        reply.Attachments,
 		PreviousMessages:   reply.PreviousMessages,
 		SenderMetadata:     reply.SenderMetadata,
+		SessionTimeoutMs:   reply.SessionTimeoutMs,
 	}
 	if job != nil {
 		start.Mode = job.Mode
 		start.SystemPrompt = job.SystemPrompt
 		start.ReasoningEffort = job.ReasoningEffort
 		start.ReasoningEffortModel = job.EffortModel
+		start.SessionTimeoutMs = latestSessionTimeoutMs(reply.SessionTimeoutMs, job.SessionTimeoutMs)
 	}
 	return start
 }

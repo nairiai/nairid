@@ -20,6 +20,13 @@ const WaitDelayAfterCancel = 40 * time.Second
 // honours the NAIRI_MAX_SESSION_MS env var override.
 const DefaultSessionTimeout = 1 * time.Hour
 
+// Bounds for a per-agent timeout sent by the backend. The env var is not clamped:
+// it is the operator's own setting.
+const (
+	MinAgentSessionTimeout = 10 * time.Minute
+	MaxAgentSessionTimeout = 24 * time.Hour
+)
+
 // BlockedEnvVars lists environment variables that should never be passed to agent processes.
 // These contain sensitive credentials or nairid-internal config that agents should not see.
 var BlockedEnvVars = map[string]bool{
@@ -65,6 +72,30 @@ func SessionTimeout() time.Duration {
 	}
 
 	return time.Duration(ms) * time.Millisecond
+}
+
+// ResolveSessionTimeout is the timeout for one run: the agent's own value when the
+// backend sent one (> 0), clamped to [MinAgentSessionTimeout, MaxAgentSessionTimeout],
+// otherwise SessionTimeout().
+func ResolveSessionTimeout(agentTimeoutMs int64) time.Duration {
+	if agentTimeoutMs <= 0 {
+		return SessionTimeout()
+	}
+	if agentTimeoutMs > MaxAgentSessionTimeout.Milliseconds() {
+		return MaxAgentSessionTimeout
+	}
+	if agentTimeoutMs < MinAgentSessionTimeout.Milliseconds() {
+		return MinAgentSessionTimeout
+	}
+	return time.Duration(agentTimeoutMs) * time.Millisecond
+}
+
+// SessionTimeoutOr returns perCall when set, otherwise SessionTimeout().
+func SessionTimeoutOr(perCall time.Duration) time.Duration {
+	if perCall > 0 {
+		return perCall
+	}
+	return SessionTimeout()
 }
 
 // AgentExecUser returns the configured user for running agent processes.

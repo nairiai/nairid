@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -258,6 +259,7 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 
 	// The conversation keeps the level it was started with; every turn resolves it again from JobData.
 	reasoningEffort := effortForTurn(payload.JobID, payload.ReasoningEffort, payload.ReasoningEffortModel, mh.claudeService.Model())
+	sessionTimeout := timeoutForTurn(payload.JobID, payload.SessionTimeoutMs)
 
 	// Persist job state with message BEFORE calling Claude
 	// This enables crash recovery and future reprocessing
@@ -274,6 +276,7 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 		Mode:               payload.Mode,
 		ReasoningEffort:    payload.ReasoningEffort,
 		EffortModel:        payload.ReasoningEffortModel,
+		SessionTimeoutMs:   payload.SessionTimeoutMs,
 		UpdatedAt:          time.Now(),
 	}); err != nil {
 		log.Error("❌ Failed to persist job state before Claude call: %v", err)
@@ -354,7 +357,7 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 	if worktreePath != "" {
 		log.Info("🌳 Starting Claude session in worktree: %s", worktreePath)
 	}
-	claudeResult, err = mh.claudeService.StartNewConversationWithProgress(turnCtx, finalPrompt, systemPrompt, worktreePath, reasoningEffort, progressEmitter)
+	claudeResult, err = mh.claudeService.StartNewConversationWithProgress(turnCtx, finalPrompt, systemPrompt, worktreePath, reasoningEffort, sessionTimeout, progressEmitter)
 	if turnCtx.Err() != nil {
 		stoppedJob := jobDataForStart(payload)
 		stoppedJob.BranchName = branchName
@@ -363,22 +366,15 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 	}
 
 	if err != nil {
+		// runTurn posts the returned error to the thread; posting it here too showed it twice.
 		log.Info("❌ Error starting %s session: %v", mh.claudeService.AgentName(), err)
-		systemErr := mh.sendSystemMessage(
-			fmt.Sprintf("nairid encountered error: %v", err),
-			payload.ProcessedMessageID,
-			payload.JobID,
-		)
-		if systemErr != nil {
-			log.Error("❌ Failed to send system message for Claude error: %v", systemErr)
-		}
 
 		// Mark job as failed so the processor goroutine can exit and free up a worker slot
-		if updateErr := mh.appState.UpdateJobData(payload.JobID, models.JobData{
+		failedJob := models.JobData{
 			JobID:              payload.JobID,
 			BranchName:         branchName,
 			WorktreePath:       worktreePath,
-			ClaudeSessionID:    "",
+			ClaudeSessionID:    sessionLeftByTimeout(err),
 			PullRequestID:      "",
 			LastMessage:        payload.Message,
 			ProcessedMessageID: payload.ProcessedMessageID,
@@ -387,12 +383,15 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 			Mode:               payload.Mode,
 			ReasoningEffort:    payload.ReasoningEffort,
 			EffortModel:        payload.ReasoningEffortModel,
+			SessionTimeoutMs:   payload.SessionTimeoutMs,
 			UpdatedAt:          time.Now(),
-		}); updateErr != nil {
+		}
+		if updateErr := mh.appState.UpdateJobData(payload.JobID, failedJob); updateErr != nil {
 			log.Error("❌ Failed to mark job as failed: %v", updateErr)
 		} else {
 			log.Info("💾 Marked job %s as failed due to Claude session error", payload.JobID)
 		}
+		mh.saveTimedOutWork(failedJob, err)
 
 		// Evict the job from dispatcher to immediately free up the worker slot
 		if mh.jobEvictor != nil {
@@ -483,6 +482,7 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 		Mode:               payload.Mode,
 		ReasoningEffort:    payload.ReasoningEffort,
 		EffortModel:        payload.ReasoningEffortModel,
+		SessionTimeoutMs:   payload.SessionTimeoutMs,
 		UpdatedAt:          time.Now(),
 	}); err != nil {
 		log.Error("❌ Failed to persist final job state: %v", err)
@@ -670,6 +670,9 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 	}
 	log.Info("🔄 Refreshed environment variables before continuing conversation")
 
+	// A value on the message is the agent's current setting; it replaces the stored one.
+	sessionTimeoutMs := latestSessionTimeoutMs(payload.SessionTimeoutMs, jobData.SessionTimeoutMs)
+
 	// Persist updated message BEFORE calling Claude
 	// This enables crash recovery and future reprocessing
 	if err := mh.appState.UpdateJobData(payload.JobID, models.JobData{
@@ -685,6 +688,7 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 		Mode:               jobData.Mode,
 		ReasoningEffort:    jobData.ReasoningEffort,
 		EffortModel:        jobData.EffortModel,
+		SessionTimeoutMs:   sessionTimeoutMs,
 		UpdatedAt:          time.Now(),
 	}); err != nil {
 		log.Error("❌ Failed to persist job state before Claude call: %v", err)
@@ -752,31 +756,26 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 		log.Info("🌳 Continuing Claude session in worktree: %s", jobData.WorktreePath)
 	}
 	reasoningEffort := effortForTurn(payload.JobID, jobData.ReasoningEffort, jobData.EffortModel, mh.claudeService.Model())
-	claudeResult, err = mh.claudeService.ContinueConversationWithProgress(turnCtx, sessionID, finalPrompt, outboundSystemPrompt, jobData.WorktreePath, reasoningEffort, progressEmitter)
+	sessionTimeout := timeoutForTurn(payload.JobID, sessionTimeoutMs)
+	claudeResult, err = mh.claudeService.ContinueConversationWithProgress(turnCtx, sessionID, finalPrompt, outboundSystemPrompt, jobData.WorktreePath, reasoningEffort, sessionTimeout, progressEmitter)
 	if turnCtx.Err() != nil {
 		stoppedJob := *jobData
+		stoppedJob.SessionTimeoutMs = sessionTimeoutMs
 		stoppedJob.LastMessage = payload.Message
 		stoppedJob.ProcessedMessageID = payload.ProcessedMessageID
 		stoppedJob.MessageLink = payload.MessageLink
 		return mh.finishStoppedTurn(stoppedJob, claudeResult, err)
 	}
 	if err != nil {
+		// runTurn posts the returned error to the thread; posting it here too showed it twice.
 		log.Info("❌ Error continuing %s session: %v", mh.claudeService.AgentName(), err)
-		systemErr := mh.sendSystemMessage(
-			fmt.Sprintf("nairid encountered error: %v", err),
-			payload.ProcessedMessageID,
-			payload.JobID,
-		)
-		if systemErr != nil {
-			log.Error("❌ Failed to send system message for Claude error: %v", systemErr)
-		}
 
 		// Mark job as failed so the processor goroutine can exit and free up a worker slot
-		if updateErr := mh.appState.UpdateJobData(payload.JobID, models.JobData{
+		failedJob := models.JobData{
 			JobID:              payload.JobID,
 			BranchName:         jobData.BranchName,
 			WorktreePath:       jobData.WorktreePath,
-			ClaudeSessionID:    jobData.ClaudeSessionID,
+			ClaudeSessionID:    cmp.Or(sessionLeftByTimeout(err), jobData.ClaudeSessionID),
 			PullRequestID:      jobData.PullRequestID,
 			LastMessage:        payload.Message,
 			ProcessedMessageID: payload.ProcessedMessageID,
@@ -785,12 +784,15 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 			Mode:               jobData.Mode,
 			ReasoningEffort:    jobData.ReasoningEffort,
 			EffortModel:        jobData.EffortModel,
+			SessionTimeoutMs:   sessionTimeoutMs,
 			UpdatedAt:          time.Now(),
-		}); updateErr != nil {
+		}
+		if updateErr := mh.appState.UpdateJobData(payload.JobID, failedJob); updateErr != nil {
 			log.Error("❌ Failed to mark job as failed: %v", updateErr)
 		} else {
 			log.Info("💾 Marked job %s as failed due to Claude session error", payload.JobID)
 		}
+		mh.saveTimedOutWork(failedJob, err)
 
 		// Evict the job from dispatcher to immediately free up the worker slot
 		if mh.jobEvictor != nil {
@@ -875,6 +877,7 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 		Mode:               jobData.Mode,
 		ReasoningEffort:    jobData.ReasoningEffort,
 		EffortModel:        jobData.EffortModel,
+		SessionTimeoutMs:   sessionTimeoutMs,
 		ClaudeSessionID:    claudeResult.SessionID,
 		PullRequestID:      prID,
 		LastMessage:        payload.Message,
@@ -1128,8 +1131,16 @@ func (mh *MessageHandler) sendSystemMessage(message, slackMessageID, jobID strin
 // sendErrorMessage sends an error as a system message. The Claude service handles
 // all error processing internally, so we just need to format and send the error.
 func (mh *MessageHandler) sendErrorMessage(err error, slackMessageID, jobID string) error {
-	messageToSend := fmt.Sprintf("nairid encountered error: %v", clients.RedactURLCredentials(err.Error()))
-	return mh.sendSystemMessage(messageToSend, slackMessageID, jobID)
+	return mh.sendSystemMessage(errorMessageText(err), slackMessageID, jobID)
+}
+
+// errorMessageText keeps the "nairid encountered error: " prefix: the backend's Slack and
+// Discord helpers match on it.
+func errorMessageText(err error) string {
+	if timeoutErr, ok := core.IsSessionTimeout(err); ok {
+		return "nairid encountered error: " + timeoutErr.UserMessage()
+	}
+	return fmt.Sprintf("nairid encountered error: %v", clients.RedactURLCredentials(err.Error()))
 }
 
 func (mh *MessageHandler) sendProcessingMessage(processedMessageID, jobID string) error {

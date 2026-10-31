@@ -3,7 +3,6 @@ package claude
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os/exec"
 	"strings"
 	"time"
@@ -39,7 +38,7 @@ func (c *ClaudeClient) StartNewSession(ctx context.Context, prompt string, optio
 	log.Info("Starting new Claude session with prompt: %s", prompt)
 	log.Info("Command arguments: %v", args)
 
-	timeout := clients.SessionTimeout()
+	timeout := options.RunTimeout()
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -96,7 +95,7 @@ func (c *ClaudeClient) ContinueSession(ctx context.Context, sessionID, prompt st
 	log.Info("Executing Claude command with sessionID: %s, prompt: %s", sessionID, prompt)
 	log.Info("Command arguments: %v", args)
 
-	timeout := clients.SessionTimeout()
+	timeout := options.RunTimeout()
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -136,7 +135,7 @@ func handleCommandError(ctx context.Context, err error, agentName string, timeou
 			log.Error("⏰ %s session timed out after %s", agentName, timeout)
 			return &core.ErrClaudeCommandErr{
 				Agent:  agentName,
-				Err:    fmt.Errorf("session timed out after %s: %w", timeout, cmdErr.Err),
+				Err:    &core.ErrSessionTimeout{Timeout: timeout, Err: cmdErr.Err},
 				Output: cmdErr.Output,
 			}
 		}

@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"time"
 
 	"nairid/core"
 	"nairid/models"
@@ -64,16 +65,14 @@ type CLIAgent interface {
 	// ContinueConversationWithSystemPromptInDir continues an existing conversation with a system prompt in a specific directory
 	ContinueConversationWithSystemPromptInDir(sessionID, prompt, systemPrompt, workDir string) (*CLIAgentResult, error)
 
-	// StartNewConversationWithProgress starts a new conversation with progress streaming.
-	// Empty systemPrompt, workDir or effort are ignored. Effort is a CLI reasoning
-	// level (low/medium/high/xhigh/max/ultra) and must be passed on every call: no CLI keeps
-	// it across a resume. Cancelling ctx ends the CLI run; the call then returns
-	// *core.ErrTurnStopped carrying the session id the CLI had printed so far.
-	StartNewConversationWithProgress(ctx context.Context, prompt, systemPrompt, workDir, effort string, emitter ProgressEmitter) (*CLIAgentResult, error)
+	// StartNewConversationWithProgress runs a turn. Pass effort on every call; a zero sessionTimeout uses the
+	// machine default. Cancellation returns ErrTurnStopped and a session deadline ErrSessionTimeout, each with
+	// the session ID the CLI had printed.
+	StartNewConversationWithProgress(ctx context.Context, prompt, systemPrompt, workDir, effort string, sessionTimeout time.Duration, emitter ProgressEmitter) (*CLIAgentResult, error)
 
 	// ContinueConversationWithProgress continues a conversation with progress streaming.
-	// Empty systemPrompt, workDir or effort are ignored.
-	ContinueConversationWithProgress(ctx context.Context, sessionID, prompt, systemPrompt, workDir, effort string, emitter ProgressEmitter) (*CLIAgentResult, error)
+	// Empty systemPrompt, workDir or effort, and a zero sessionTimeout, are ignored.
+	ContinueConversationWithProgress(ctx context.Context, sessionID, prompt, systemPrompt, workDir, effort string, sessionTimeout time.Duration, emitter ProgressEmitter) (*CLIAgentResult, error)
 
 	// Model returns the model this agent was started with, after agent defaults
 	// are applied. Empty when the CLI picks its own default.

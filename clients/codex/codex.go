@@ -3,7 +3,6 @@ package codex
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"nairid/clients"
@@ -32,7 +31,7 @@ func (c *CodexClient) StartNewSession(ctx context.Context, prompt string, option
 	log.Info("Starting new Codex session with prompt: %s", prompt)
 	log.Info("Command arguments: %v", args)
 
-	timeout := clients.SessionTimeout()
+	timeout := options.RunTimeout()
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -64,7 +63,7 @@ func (c *CodexClient) ContinueSession(ctx context.Context, threadID, prompt stri
 	log.Info("Executing Codex command with threadID: %s, prompt: %s", threadID, prompt)
 	log.Info("Command arguments: %v", args)
 
-	timeout := clients.SessionTimeout()
+	timeout := options.RunTimeout()
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -93,7 +92,7 @@ func handleCommandError(ctx context.Context, err error, agentName string, timeou
 			log.Error("⏰ %s session timed out after %s", agentName, timeout)
 			return &core.ErrClaudeCommandErr{
 				Agent:  agentName,
-				Err:    fmt.Errorf("session timed out after %s: %w", timeout, cmdErr.Err),
+				Err:    &core.ErrSessionTimeout{Timeout: timeout, Err: cmdErr.Err},
 				Output: cmdErr.Output,
 			}
 		}

@@ -24,6 +24,7 @@ func TestJobDataIsReadBackWithEveryField(t *testing.T) {
 		SystemPrompt:       "Org rule: never push to main.",
 		ReasoningEffort:    "xhigh",
 		EffortModel:        "claude-opus-4-8",
+		SessionTimeoutMs:   7200000,
 		UpdatedAt:          time.Date(2026, 10, 2, 10, 0, 0, 0, time.UTC),
 	}
 	fields := reflect.ValueOf(want)

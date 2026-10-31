@@ -55,7 +55,7 @@ func (a *stoppableAgent) run(ctx context.Context, sessionID string) (*services.C
 }
 
 func (a *stoppableAgent) StartNewConversationWithProgress(
-	ctx context.Context, prompt, systemPrompt, workDir, effort string, emitter services.ProgressEmitter,
+	ctx context.Context, prompt, systemPrompt, workDir, effort string, _ time.Duration, emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
 	a.mu.Lock()
 	a.startSystemPrompts = append(a.startSystemPrompts, systemPrompt)
@@ -64,7 +64,7 @@ func (a *stoppableAgent) StartNewConversationWithProgress(
 }
 
 func (a *stoppableAgent) ContinueConversationWithProgress(
-	ctx context.Context, sessionID, prompt, systemPrompt, workDir, effort string, emitter services.ProgressEmitter,
+	ctx context.Context, sessionID, prompt, systemPrompt, workDir, effort string, _ time.Duration, emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
 	return a.run(ctx, sessionID)
 }

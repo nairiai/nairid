@@ -543,6 +543,12 @@ func (c *ClaudeService) handleClaudeClientError(err error, operation string) err
 		}
 	}
 
+	// A run killed at its deadline has no answer: its last assistant text is a progress
+	// note, so neither recover it as a reply nor show it as the error.
+	if timeoutErr, ok := core.IsSessionTimeout(err); ok {
+		return fmt.Errorf("%s: %w", operation, timeoutErr.WithSessionID(sessionIDFromInitOrResult(messages)))
+	}
+
 	// Check if CLI crashed mid-stream before emitting a result event.
 	// The CLI may have produced valid assistant messages but crashed/died
 	// before writing the final {"type":"result",...} JSON event.
@@ -619,12 +625,14 @@ func (c *ClaudeService) handleClaudeClientError(err error, operation string) err
 func (c *ClaudeService) StartNewConversationWithProgress(
 	ctx context.Context,
 	prompt, systemPrompt, workDir, effort string,
+	sessionTimeout time.Duration,
 	emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
 	return c.StartNewConversationWithOptions(ctx, prompt, &clients.ClaudeOptions{
-		SystemPrompt: systemPrompt,
-		WorkDir:      workDir,
-		Effort:       effort,
+		SystemPrompt:   systemPrompt,
+		WorkDir:        workDir,
+		Effort:         effort,
+		SessionTimeout: sessionTimeout,
 	}, emitter)
 }
 
@@ -632,12 +640,14 @@ func (c *ClaudeService) StartNewConversationWithProgress(
 func (c *ClaudeService) ContinueConversationWithProgress(
 	ctx context.Context,
 	sessionID, prompt, systemPrompt, workDir, effort string,
+	sessionTimeout time.Duration,
 	emitter services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
 	return c.ContinueConversationWithOptions(ctx, sessionID, prompt, &clients.ClaudeOptions{
-		SystemPrompt: systemPrompt,
-		WorkDir:      workDir,
-		Effort:       effort,
+		SystemPrompt:   systemPrompt,
+		WorkDir:        workDir,
+		Effort:         effort,
+		SessionTimeout: sessionTimeout,
 	}, emitter)
 }
 
