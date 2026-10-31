@@ -294,11 +294,7 @@ func TestJobsArrivingDuringFill(t *testing.T) {
 	}
 }
 
-// branchCreateGateScript logs every git invocation like gitSpyScript, but gates the
-// pool's own `git branch nairid/pool-ready-*` call instead of its worktree-add step.
-// That's the call branchMu protects during fill, so holding the gate open proves
-// branchMu is actually held for the duration — exercising the exact window the
-// sync fallback and stale-branch cleanup now also serialize on.
+// Hold pool branch creation while it owns branchMu so concurrent callers must wait.
 const branchCreateGateScript = `#!/bin/sh
 printf '%s\n' "$*" >> "$GIT_SPY_LOG"
 case "$*" in
@@ -335,12 +331,7 @@ func installBranchCreateGate(t *testing.T) *gitSpy {
 	return spy
 }
 
-// Regression for a startup burst: the pool's fill holds branchMu creating a pool-ready
-// branch while jobs hit the sync fallback (pool still empty) and a stale-branch cleanup
-// runs, all against the same repo. Before branchMu covered the fallback's `git worktree
-// add -b` and cleanup's `git branch -D`, these raced the fill's `git branch` on
-// .git/config.lock, and git does not retry — the loser's worktree setup failed outright.
-// With the lock, they queue behind the fill instead of erroring.
+// Fallback jobs and stale-branch cleanup must wait for the pool's branch mutation lock.
 func TestFallbackAndCleanupDuringPoolFill_NoLockErrors(t *testing.T) {
 	mainRepo, tempHome, cleanup := setupTestGitRepoWithRemote(t)
 	defer cleanup()
@@ -413,10 +404,7 @@ func TestFallbackAndCleanupDuringPoolFill_NoLockErrors(t *testing.T) {
 		}
 	}()
 
-	// While the fill's branch-create sits at the gate, branchMu must still be held: the
-	// fallback worktrees and the stale-branch delete should NOT have gone through yet.
-	// Before branchMu covered them, they raced ahead of the fill instead of queuing
-	// behind it, so this window would already show their result.
+	// The gated branch creation must block fallback worktrees and stale-branch deletion.
 	time.Sleep(300 * time.Millisecond)
 	for _, jobID := range jobIDs {
 		if gitClient.WorktreeExists(filepath.Join(worktreeBase, jobID)) {

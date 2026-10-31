@@ -1328,10 +1328,7 @@ func (g *GitUseCase) PrepareForNewConversationWithWorktree(jobID, conversationHi
 
 	worktreePath := filepath.Join(worktreeBasePath, jobID)
 
-	// Create worktree with new branch based on origin/<default-branch>. `git worktree
-	// add -b` writes .git/config and the branch reflog, which collides with the pool's
-	// own branch create/rename/delete if run unlocked — hence the same branchMu the
-	// pool uses for those.
+	// Serialize branch creation with the pool to avoid shared config and reflog lock conflicts.
 	baseRef := fmt.Sprintf("origin/%s", defaultBranch)
 	if g.worktreePool != nil {
 		g.worktreePool.LockBranches()
