@@ -498,11 +498,7 @@ func TestRefreshStaleWorktrees_UpdatesStaleEntries(t *testing.T) {
 	}
 }
 
-// Regression: a refresh due during an active fill used to skip its fetch whenever the
-// pool was already drained empty — the exact state continuous demand leaves it in on
-// every check — so createPooledWorktree kept reading the same stale local origin ref
-// forever. mustFetch=true must fetch regardless; mustFetch=false (the idle ticker path)
-// still skips it, since there's nothing in p.ready to refresh anyway.
+// Active fills must fetch origin even when no entries remain.
 func TestRefreshStaleWorktrees_MustFetchUpdatesOriginEvenWhenPoolIsDrainedEmpty(t *testing.T) {
 	mainRepo, worktreeBase, cleanup := setupTestGitRepoWithRemote(t)
 	defer cleanup()

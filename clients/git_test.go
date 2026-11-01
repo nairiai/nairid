@@ -906,10 +906,7 @@ exec "` + realGit + `" "$@"
 	}
 }
 
-// A descendant that outlives the killed fetch process and keeps the output pipes open
-// (e.g. a stuck git-remote-https) must not hang Wait() forever: process-group cancellation
-// should reach ordinary descendants, and WaitDelay must bound the ones that detach (setsid)
-// out of the group entirely.
+// WaitDelay must bound a detached child holding the fetch's output pipes open.
 func TestFetchOrigin_TimesOutDespiteDetachedDescendantHoldingPipesOpen(t *testing.T) {
 	if _, err := exec.LookPath("setsid"); err != nil {
 		t.Skip("setsid not available")

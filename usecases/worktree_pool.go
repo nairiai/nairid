@@ -403,10 +403,8 @@ func (p *WorktreePool) refreshDue() bool {
 	return time.Since(p.lastStaleRefresh) >= p.staleRefreshInterval
 }
 
-// refreshStaleWorktrees removes stale entries from p.ready, resets them unlocked, and
-// only puts back the ones that succeed — so Acquire never hands one out mid-reset.
-// mustFetch forces the origin fetch even on an empty pool, for refreshes triggered from
-// inside an active fill, where later creations still need the newly fetched local ref.
+// refreshStaleWorktrees resets stale entries outside the lock, returning only successful resets.
+// mustFetch refreshes origin even when active jobs have drained the pool.
 func (p *WorktreePool) refreshStaleWorktrees(mustFetch bool) {
 	p.mutex.Lock()
 	p.lastStaleRefresh = time.Now()
