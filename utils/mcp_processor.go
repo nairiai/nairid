@@ -456,6 +456,16 @@ func (p *OpenCodeMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 	return nil
 }
 
+// codexShellEnvironmentPolicy passes the agent's whole environment to Codex shell commands, as
+// Claude Code does: the proxy and CA variables route a shell curl through the secret proxy, and
+// vault placeholders (often named *_KEY or *_TOKEN) reach the shell for the proxy to fill.
+func codexShellEnvironmentPolicy() map[string]interface{} {
+	return map[string]interface{}{
+		"inherit":                 "all",
+		"ignore_default_excludes": true,
+	}
+}
+
 // CodexMCPProcessor handles MCP config processing for Codex
 type CodexMCPProcessor struct{}
 
@@ -464,12 +474,8 @@ func NewCodexMCPProcessor() *CodexMCPProcessor {
 	return &CodexMCPProcessor{}
 }
 
-// ProcessMCPConfigs implements MCPProcessor for Codex
-// It reads all MCP configs, merges them, transforms them to Codex TOML format,
-// and updates ~/.codex/config.toml. Always sets shell_environment_policy to
-// not filter env vars regardless of name patterns.
-// targetHomeDir specifies the home directory to deploy configs to.
-// If empty, uses the current user's home directory.
+// ProcessMCPConfigs merges the MCP configs into ~/.codex/config.toml under targetHomeDir
+// (the current user's home if empty) and always sets shell_environment_policy.
 func (p *CodexMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 	log.Info("🔌 Processing MCP configs for Codex agent")
 
@@ -509,11 +515,7 @@ func (p *CodexMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 		return fmt.Errorf("failed to read existing config.toml: %w", err)
 	}
 
-	// Always set shell_environment_policy to not filter env vars
-	existingConfig["shell_environment_policy"] = map[string]interface{}{
-		"inherit":                 "core",
-		"ignore_default_excludes": true,
-	}
+	existingConfig["shell_environment_policy"] = codexShellEnvironmentPolicy()
 
 	if len(mcpServers) == 0 {
 		log.Info("🔌 No MCP configs found, writing config with shell_environment_policy only")
@@ -631,11 +633,7 @@ func (p *CodexProxiedMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error
 		return fmt.Errorf("failed to read existing config.toml: %w", err)
 	}
 
-	// Always set shell_environment_policy to not filter env vars
-	existingConfig["shell_environment_policy"] = map[string]interface{}{
-		"inherit":                 "core",
-		"ignore_default_excludes": true,
-	}
+	existingConfig["shell_environment_policy"] = codexShellEnvironmentPolicy()
 
 	if len(servers) == 0 {
 		log.Info("🔌 No MCP servers available from proxy, writing config with shell_environment_policy only")

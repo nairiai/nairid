@@ -58,6 +58,26 @@ func TestFilterEnvForAgent(t *testing.T) {
 	}
 }
 
+func TestFilterEnvForAgent_MixedCaseOnWindows(t *testing.T) {
+	env := []string{
+		"nairi_api_key=secret_api_key",
+		"Eksec_Api_Key=legacy_secret",
+		"NOTION_API_KEY=CCASECRET_NOTION_API_KEY",
+		"Path=C:\\Windows",
+	}
+
+	filtered := filterEnvForAgent(env, true)
+	expected := []string{"NOTION_API_KEY=CCASECRET_NOTION_API_KEY", "Path=C:\\Windows"}
+	if !slices.Equal(filtered, expected) {
+		t.Errorf("Expected %v, got %v", expected, filtered)
+	}
+
+	// Unix env names are case-sensitive, so only exact names are blocked there.
+	if got := filterEnvForAgent(env, false); len(got) != len(env) {
+		t.Errorf("Expected all %d vars kept with case-sensitive names, got %v", len(env), got)
+	}
+}
+
 func TestFilterEnvForAgent_LegacyEksecVars(t *testing.T) {
 	env := []string{
 		"PATH=/usr/bin",

@@ -1633,12 +1633,20 @@ func TestCodexMCPProcessor_NoConfigs(t *testing.T) {
 		t.Fatal("Expected shell_environment_policy to exist")
 	}
 
-	if policy["inherit"] != "core" {
-		t.Errorf("Expected inherit to be 'core', got: %v", policy["inherit"])
-	}
+	assertCodexShellInheritsAll(t, policy)
+}
 
+// With inherit "core" a Codex shell command loses HTTPS_PROXY and skips the secret proxy.
+func assertCodexShellInheritsAll(t *testing.T, policy map[string]interface{}) {
+	t.Helper()
+	if policy["inherit"] != "all" {
+		t.Errorf("Expected inherit to be 'all', got: %v", policy["inherit"])
+	}
 	if policy["ignore_default_excludes"] != true {
 		t.Errorf("Expected ignore_default_excludes to be true, got: %v", policy["ignore_default_excludes"])
+	}
+	if _, ok := policy["include_only"]; ok {
+		t.Errorf("Expected no include_only filter, got: %v", policy["include_only"])
 	}
 }
 
@@ -1875,15 +1883,11 @@ func TestCodexProxiedMCPProcessor_Success(t *testing.T) {
 		t.Errorf("Expected URL %s, got %s", expectedURL, githubServer["url"])
 	}
 
-	// Verify shell_environment_policy
 	policy, ok := config["shell_environment_policy"].(map[string]interface{})
 	if !ok {
 		t.Fatal("Expected shell_environment_policy to exist")
 	}
-
-	if policy["ignore_default_excludes"] != true {
-		t.Errorf("Expected ignore_default_excludes to be true")
-	}
+	assertCodexShellInheritsAll(t, policy)
 }
 
 func TestCodexProxiedMCPProcessor_EmptyServers(t *testing.T) {
