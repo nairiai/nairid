@@ -2,6 +2,7 @@ package utils
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1633,12 +1634,31 @@ func TestCodexMCPProcessor_NoConfigs(t *testing.T) {
 		t.Fatal("Expected shell_environment_policy to exist")
 	}
 
-	if policy["inherit"] != "core" {
-		t.Errorf("Expected inherit to be 'core', got: %v", policy["inherit"])
-	}
+	assertCodexShellKeepsProxyEnv(t, policy)
+}
 
+// Codex keeps only include_only's variables, so the proxy and CA ones must be listed or a shell
+// command skips the secret proxy.
+func assertCodexShellKeepsProxyEnv(t *testing.T, policy map[string]interface{}) {
+	t.Helper()
+	if policy["inherit"] != "all" {
+		t.Errorf("Expected inherit to be 'all', got: %v", policy["inherit"])
+	}
 	if policy["ignore_default_excludes"] != true {
 		t.Errorf("Expected ignore_default_excludes to be true, got: %v", policy["ignore_default_excludes"])
+	}
+	rawVars, ok := policy["include_only"].([]interface{})
+	if !ok {
+		t.Fatalf("Expected include_only to be a list, got: %T", policy["include_only"])
+	}
+	kept := map[string]bool{}
+	for _, v := range rawVars {
+		kept[fmt.Sprint(v)] = true
+	}
+	for _, name := range []string{"PATH", "HOME", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE"} {
+		if !kept[name] {
+			t.Errorf("Expected include_only to keep %s, got: %v", name, rawVars)
+		}
 	}
 }
 
@@ -1875,15 +1895,11 @@ func TestCodexProxiedMCPProcessor_Success(t *testing.T) {
 		t.Errorf("Expected URL %s, got %s", expectedURL, githubServer["url"])
 	}
 
-	// Verify shell_environment_policy
 	policy, ok := config["shell_environment_policy"].(map[string]interface{})
 	if !ok {
 		t.Fatal("Expected shell_environment_policy to exist")
 	}
-
-	if policy["ignore_default_excludes"] != true {
-		t.Errorf("Expected ignore_default_excludes to be true")
-	}
+	assertCodexShellKeepsProxyEnv(t, policy)
 }
 
 func TestCodexProxiedMCPProcessor_EmptyServers(t *testing.T) {
