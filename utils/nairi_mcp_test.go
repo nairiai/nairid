@@ -282,8 +282,8 @@ func TestStdioOnlyMCPProcessor_GatewayDropsRemoteServers(t *testing.T) {
 	}
 }
 
-// A managed agent keeps a customer's own mcp-remote wrapper, which the gateway doesn't serve, and
-// drops anything that may be Composio's wrapper with the platform key.
+// A managed agent, on the gateway or failing closed, keeps a customer's own mcp-remote wrapper,
+// which the gateway doesn't serve, and drops anything that may be Composio's wrapper.
 func TestAgentMCPServers_StdioOnlyKeepsCustomerWrappers(t *testing.T) {
 	wrapper := func(url string, extra ...string) string {
 		args, _ := json.Marshal(append([]string{"-y", "mcp-remote@0.1.29", url}, extra...))
@@ -298,7 +298,8 @@ func TestAgentMCPServers_StdioOnlyKeepsCustomerWrappers(t *testing.T) {
 		{name: "customer wrapper run directly", server: `{"command":"/usr/local/bin/mcp-remote","args":["https://mcp.example.com/sse"]}`, kept: true},
 		{name: "plain stdio server", server: `{"command":"npx","args":["-y","server-fs"],"env":{"ROOT":"/tmp"}}`, kept: true},
 		{name: "url server", server: `{"type":"http","url":"https://mcp.example.com/mcp"}`},
-		{name: "composio", server: wrapper("https://backend.composio.dev/v3/mcp/srv_1/mcp", "--header", "x-api-key:test_platform_key")},
+		{name: "legacy composio wrapper with the platform key", server: `{"command":"npx","args":["-y","mcp-remote",` +
+			`"https://backend.composio.dev/v3/mcp/srv_1/mcp?user_id=u_789","--header","x-api-key:test_platform_key"]}`},
 		{name: "composio subdomain", server: wrapper("https://mcp.apollo.composio.dev/v3/mcp/srv_1")},
 		{name: "composio upper case with userinfo", server: wrapper("https://mcp.example.com@Backend.Composio.DEV/x")},
 		{name: "lookalike host", server: wrapper("https://composio.dev.evil/mcp")},
@@ -309,30 +310,39 @@ func TestAgentMCPServers_StdioOnlyKeepsCustomerWrappers(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			home := t.TempDir()
-			t.Setenv("HOME", home)
-			mcpDir := filepath.Join(home, ".config", "eksecd", "mcp")
-			if err := os.MkdirAll(mcpDir, 0755); err != nil {
-				t.Fatal(err)
-			}
-			cfg := `{"mcpServers":{"server":` + tt.server + `}}`
-			if err := os.WriteFile(filepath.Join(mcpDir, "servers.json"), []byte(cfg), 0644); err != nil {
-				t.Fatal(err)
-			}
+			onGateway := stdioOnlyServers(t, tt.server, testNairiMCP())
+			failingClosed := stdioOnlyServers(t, tt.server, nil)
 
-			servers, err := agentMCPServers(testNairiMCP(), true)
-			if err != nil {
-				t.Fatal(err)
+			_, keptOnGateway := onGateway["server"]
+			_, keptFailingClosed := failingClosed["server"]
+			if keptOnGateway != tt.kept || keptFailingClosed != tt.kept {
+				t.Errorf("server kept on the gateway = %v, failing closed = %v; want %v", keptOnGateway, keptFailingClosed, tt.kept)
 			}
-
-			if _, kept := servers["server"]; kept != tt.kept {
-				t.Errorf("server kept = %v, want %v", kept, tt.kept)
-			}
-			if _, ok := servers[NairiMCPServerName]; !ok {
+			if _, ok := onGateway[NairiMCPServerName]; !ok {
 				t.Error("the gateway entry is missing")
 			}
 		})
 	}
+}
+
+// stdioOnlyServers merges a downloaded config holding server as a managed agent does.
+func stdioOnlyServers(t *testing.T, server string, nairi *NairiMCP) map[string]interface{} {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	mcpDir := filepath.Join(home, ".config", "eksecd", "mcp")
+	if err := os.MkdirAll(mcpDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := `{"mcpServers":{"server":` + server + `}}`
+	if err := os.WriteFile(filepath.Join(mcpDir, "servers.json"), []byte(cfg), 0644); err != nil {
+		t.Fatal(err)
+	}
+	servers, err := agentMCPServers(nairi, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return servers
 }
 
 func TestHasNairiMCPEntry(t *testing.T) {

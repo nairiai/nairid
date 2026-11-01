@@ -30,7 +30,7 @@ const (
 	urlServer = `"private":{"type":"http","url":"https://mcp.example.com/mcp",` +
 		`"headers":{"Authorization":"Bearer test_remote_token"}}`
 	composioServer = `"composio":{"command":"npx",` +
-		`"args":["mcp-remote","https://backend.composio.dev/v3/mcp/srv_1/mcp","--header","x-api-key:test_platform_key"]}`
+		`"args":["-y","mcp-remote","https://backend.composio.dev/v3/mcp/srv_1/mcp?user_id=u_789","--header","x-api-key:test_platform_key"]}`
 	// What the backend serves a nairid that does not send its version.
 	legacyMCPConfig = `{"mcpServers":{` + composioServer + `,` + stdioServer + `,` + urlServer + `}}`
 	// What it serves one that does: Composio and gateway-served servers left out.
