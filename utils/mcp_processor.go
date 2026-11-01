@@ -457,10 +457,13 @@ func (p *OpenCodeMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 }
 
 // codexShellEnvironmentVars are the variables Codex passes to its shell commands: Codex's
-// "core" set plus the proxy and CA variables, so a shell curl goes through the secret proxy
-// like the agent CLI's own traffic. Codex matches them case-insensitively.
+// Unix and Windows "core" sets plus the proxy and CA variables, so a shell curl goes through
+// the secret proxy like the agent CLI's own traffic. Codex matches them case-insensitively.
 var codexShellEnvironmentVars = []string{
 	"PATH", "SHELL", "TMPDIR", "TEMP", "TMP", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "LOGNAME", "USER",
+	"PATHEXT", "COMSPEC", "SYSTEMROOT", "WINDIR", "SYSTEMDRIVE", "USERNAME", "USERDOMAIN", "USERPROFILE",
+	"HOMEDRIVE", "HOMEPATH", "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432", "PROGRAMDATA",
+	"LOCALAPPDATA", "APPDATA", "POWERSHELL", "PWSH",
 	"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
 	"NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "SSL_CERT_DIR", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO",
 }
@@ -481,12 +484,8 @@ func NewCodexMCPProcessor() *CodexMCPProcessor {
 	return &CodexMCPProcessor{}
 }
 
-// ProcessMCPConfigs implements MCPProcessor for Codex
-// It reads all MCP configs, merges them, transforms them to Codex TOML format,
-// and updates ~/.codex/config.toml. Always sets shell_environment_policy (see
-// codexShellEnvironmentPolicy).
-// targetHomeDir specifies the home directory to deploy configs to.
-// If empty, uses the current user's home directory.
+// ProcessMCPConfigs merges the MCP configs into ~/.codex/config.toml under targetHomeDir
+// (the current user's home if empty) and always sets shell_environment_policy.
 func (p *CodexMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 	log.Info("🔌 Processing MCP configs for Codex agent")
 

@@ -1655,7 +1655,7 @@ func assertCodexShellKeepsProxyEnv(t *testing.T, policy map[string]interface{}) 
 	for _, v := range rawVars {
 		kept[fmt.Sprint(v)] = true
 	}
-	for _, name := range []string{"PATH", "HOME", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE"} {
+	for _, name := range []string{"PATH", "HOME", "SYSTEMROOT", "COMSPEC", "USERPROFILE", "APPDATA", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE"} {
 		if !kept[name] {
 			t.Errorf("Expected include_only to keep %s, got: %v", name, rawVars)
 		}
