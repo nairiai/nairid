@@ -19,13 +19,8 @@ import (
 // MCP gateway, so MCP configs come without them.
 const NairidVersionHeader = "X-Nairid-Version"
 
-const (
-	// NairiMCPGatewayPath is the backend's MCP gateway endpoint.
-	NairiMCPGatewayPath = "/api/agents/mcp"
-	// NairiMCPKeySecret is the placeholder the secret proxy fills with a managed agent's MCP key
-	// on the gateway path, so the key never sits in the agent's config.
-	NairiMCPKeySecret = "CCASECRET_NAIRI_MCP_KEY"
-)
+// NairiMCPGatewayPath is the backend's MCP gateway endpoint.
+const NairiMCPGatewayPath = "/api/agents/mcp"
 
 // AttachmentResponse represents the API response for fetching an attachment
 type AttachmentResponse struct {
@@ -91,8 +86,9 @@ type MCPKeyResponse struct {
 	Key string `json:"key"`
 }
 
-// FetchMCPKey fetches a self-hosted agent's key for the Nairi MCP gateway. Backends without
-// the gateway answer 404 (older) or 501 (turned off).
+// FetchMCPKey fetches the agent's key for the Nairi MCP gateway: the key itself for a self-hosted
+// agent, a placeholder its secret proxy fills for a managed one. Backends without the gateway
+// answer 404 (older), 501 (turned off) or 400 (managed agents not yet supported).
 func (c *AgentsApiClient) FetchMCPKey() (string, error) {
 	req, err := http.NewRequest("GET", c.baseURL+"/api/agents/mcp-key", nil)
 	if err != nil {

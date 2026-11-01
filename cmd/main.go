@@ -217,20 +217,15 @@ func fetchAndStoreArtifacts(agentsApiClient *clients.AgentsApiClient) error {
 // MCP servers in the agent's own config as before. Only once it returns an entry does the API
 // client ask for MCP configs without the servers the gateway serves.
 func setupNairiMCP(agentsApiClient *clients.AgentsApiClient, apiBaseURL, agentID string) *utils.NairiMCP {
-	var key string
-	switch {
-	case agentsApiClient.IsSelfHosted():
-		fetched, err := agentsApiClient.FetchMCPKey()
-		if err != nil {
-			log.Info("🔌 Nairi MCP gateway unavailable, keeping remote MCP servers local: %v", err)
-			return nil
-		}
-		key = fetched
-	case clients.AgentHTTPProxy() != "":
-		// The secret proxy swaps the placeholder for the key, on the gateway path only.
-		key = clients.NairiMCPKeySecret
-	default:
+	if !agentsApiClient.IsSelfHosted() && clients.AgentHTTPProxy() == "" {
 		log.Info("🔌 No secret proxy to fill the MCP key, keeping remote MCP servers local")
+		return nil
+	}
+	// Only a backend with the gateway turned on returns a key, so this also checks it is safe
+	// to stop running remote servers locally.
+	key, err := agentsApiClient.FetchMCPKey()
+	if err != nil {
+		log.Info("🔌 Nairi MCP gateway unavailable, keeping remote MCP servers local: %v", err)
 		return nil
 	}
 
