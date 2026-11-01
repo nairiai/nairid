@@ -434,3 +434,377 @@ func TestFallbackAndCleanupDuringPoolFill_NoLockErrors(t *testing.T) {
 		t.Errorf("Expected stale branch %s to be deleted, still present: %q", staleBranch, branches)
 	}
 }
+
+// Regression: Acquire used to fetch origin and check staleness inline, putting a network
+// round trip on every job's hot path. That moved to the background replenisher's periodic
+// refreshStaleWorktrees — Acquire itself must not touch the network at all.
+func TestAcquire_DoesNotFetchOrigin(t *testing.T) {
+	mainRepo, worktreeBase, cleanup := setupTestGitRepoWithRemote(t)
+	defer cleanup()
+
+	gitClient := clients.NewGitClient()
+	gitClient.SetRepoPathProvider(func() string { return mainRepo })
+
+	pool := NewWorktreePool(gitClient, worktreeBase, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	pool.Start(ctx)
+	waitForPoolSize(t, pool, 1)
+	pool.Stop()
+
+	// Only start the spy now, so the fill's own fetches above don't count.
+	spy := installGitSpy(t, false)
+
+	if _, err := pool.Acquire("job-no-fetch", "nairid/no-fetch"); err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+
+	if n := spy.count(t, "fetch "); n != 0 {
+		t.Errorf("Expected Acquire to do no fetch, got %d fetch call(s)", n)
+	}
+}
+
+// refreshStaleWorktrees (the background replenisher's periodic check, not the job's hot
+// path) is what's actually responsible for catching up a pool worktree whose BaseCommit
+// has fallen behind origin.
+func TestRefreshStaleWorktrees_UpdatesStaleEntries(t *testing.T) {
+	mainRepo, worktreeBase, cleanup := setupTestGitRepoWithRemote(t)
+	defer cleanup()
+
+	gitClient := clients.NewGitClient()
+	gitClient.SetRepoPathProvider(func() string { return mainRepo })
+
+	pool := NewWorktreePool(gitClient, worktreeBase, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	pool.Start(ctx)
+	waitForPoolSize(t, pool, 1)
+	pool.Stop()
+
+	staleCommit := pool.ready[0].BaseCommit
+
+	newCommit := pushNewCommit(t, mainRepo)
+
+	pool.refreshStaleWorktrees(false)
+
+	if pool.ready[0].BaseCommit == staleCommit {
+		t.Error("Expected refreshStaleWorktrees to update the stale BaseCommit")
+	}
+	if pool.ready[0].BaseCommit != newCommit {
+		t.Errorf("Expected refreshed BaseCommit %s to match origin %s", pool.ready[0].BaseCommit, newCommit)
+	}
+	if head := gitOutput(t, pool.ready[0].Path, "rev-parse", "HEAD"); head != newCommit {
+		t.Errorf("Expected worktree HEAD to be reset to the new commit %s, got %s", newCommit, head)
+	}
+}
+
+// Active fills must fetch origin even when no entries remain.
+func TestRefreshStaleWorktrees_MustFetchUpdatesOriginEvenWhenPoolIsDrainedEmpty(t *testing.T) {
+	mainRepo, worktreeBase, cleanup := setupTestGitRepoWithRemote(t)
+	defer cleanup()
+
+	gitClient := clients.NewGitClient()
+	gitClient.SetRepoPathProvider(func() string { return mainRepo })
+
+	drainToEmpty := func() *WorktreePool {
+		pool := NewWorktreePool(gitClient, worktreeBase, 1)
+		pool.fillToTarget(context.Background())
+		waitForPoolSize(t, pool, 1)
+		id := fmt.Sprintf("job-drain-%d", time.Now().UnixNano())
+		if _, err := pool.Acquire(id, "nairid/"+id); err != nil {
+			t.Fatalf("Acquire failed: %v", err)
+		}
+		if pool.GetPoolSize() != 0 {
+			t.Fatalf("Expected an empty pool after draining, got %d", pool.GetPoolSize())
+		}
+		return pool
+	}
+
+	// Both pools' own fillToTarget already fetched once while draining; push only after
+	// both are set up, so each refreshStaleWorktrees call below sees a stale local ref.
+	idlePool := drainToEmpty()
+	fillPool := drainToEmpty()
+	newCommit := pushNewCommit(t, mainRepo)
+
+	spy := installGitSpy(t, false)
+	idlePool.refreshStaleWorktrees(false)
+	if n := spy.count(t, "fetch "); n != 0 {
+		t.Errorf("Expected the idle ticker path (mustFetch=false) to skip the fetch on an empty pool, got %d fetch(es)", n)
+	}
+	if origin := gitOutput(t, mainRepo, "rev-parse", "origin/main"); origin == newCommit {
+		t.Fatal("test setup error: local origin ref is already fresh before the mustFetch=true call")
+	}
+
+	fillPool.refreshStaleWorktrees(true)
+	if origin := gitOutput(t, mainRepo, "rev-parse", "origin/main"); origin != newCommit {
+		t.Errorf("Expected mustFetch=true to update the local origin ref to %s even on an empty pool, got %s", newCommit, origin)
+	}
+}
+
+// slowWorktreeAddScript logs every git invocation and sleeps briefly on every pool
+// worktree creation, so a fill spans several staleRefreshInterval windows without ever
+// blocking indefinitely the way installGitSpy's gate does.
+const slowWorktreeAddScript = `#!/bin/sh
+printf '%s\n' "$*" >> "$GIT_SPY_LOG"
+case "$*" in
+"worktree add "*pool-ready*)
+	sleep "$GIT_SPY_DELAY"
+	;;
+esac
+exec "$GIT_SPY_REAL" "$@"
+`
+
+func installSlowWorktreeAddSpy(t *testing.T, delay time.Duration) *gitSpy {
+	t.Helper()
+
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("git not found: %v", err)
+	}
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(slowWorktreeAddScript), 0755); err != nil {
+		t.Fatalf("Failed to write git spy: %v", err)
+	}
+
+	spy := &gitSpy{logPath: filepath.Join(dir, "calls.log")}
+	t.Setenv("GIT_SPY_LOG", spy.logPath)
+	t.Setenv("GIT_SPY_DELAY", fmt.Sprintf("%.3f", delay.Seconds()))
+	t.Setenv("GIT_SPY_REAL", realGit)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return spy
+}
+
+// pushNewCommit clones mainRepo's actual remote (mainRepo itself refuses a push to its
+// checked-out branch), commits a new file, and pushes it, returning the new commit hash.
+func pushNewCommit(t *testing.T, mainRepo string) string {
+	t.Helper()
+	remoteURL := gitOutput(t, mainRepo, "remote", "get-url", "origin")
+	workDir := t.TempDir()
+	gitOutput(t, workDir, "clone", remoteURL, ".")
+	gitOutput(t, workDir, "config", "user.email", "test@example.com")
+	gitOutput(t, workDir, "config", "user.name", "Test User")
+	fileName := fmt.Sprintf("new-file-%d.txt", time.Now().UnixNano())
+	if err := os.WriteFile(workDir+"/"+fileName, []byte("new commit"), 0644); err != nil {
+		t.Fatalf("Failed to write new file: %v", err)
+	}
+	gitOutput(t, workDir, "add", fileName)
+	gitOutput(t, workDir, "commit", "-m", "advance main")
+	gitOutput(t, workDir, "push", "origin", "HEAD")
+	return gitOutput(t, workDir, "rev-parse", "HEAD")
+}
+
+// Regression for reviewer1's starvation finding: time.After re-armed inside select on
+// every loop iteration never fires if another case (the replenish signal) keeps winning
+// first. A ticker must fire on its own schedule regardless of how often jobs arrive.
+func TestReplenisherLoop_PeriodicRefreshSurvivesContinuousReplenishSignals(t *testing.T) {
+	mainRepo, worktreeBase, cleanup := setupTestGitRepoWithRemote(t)
+	defer cleanup()
+
+	gitClient := clients.NewGitClient()
+	gitClient.SetRepoPathProvider(func() string { return mainRepo })
+
+	pool := NewWorktreePool(gitClient, worktreeBase, 2)
+	pool.staleRefreshInterval = 100 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	pool.Start(ctx)
+	defer pool.Stop()
+	waitForPoolSize(t, pool, 2)
+
+	newCommit := pushNewCommit(t, mainRepo)
+
+	// Flood signals faster than staleRefreshInterval, far longer than the interval.
+	// Check freshness while replenish signals are still arriving.
+	flood, stopFlood := context.WithTimeout(context.Background(), 2*time.Second)
+	defer stopFlood()
+	floodDone := make(chan struct{})
+	go func() {
+		defer close(floodDone)
+		for flood.Err() == nil {
+			select {
+			case pool.replenishChan <- struct{}{}:
+			default:
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+	defer func() { <-floodDone }()
+
+	// Must catch up within a handful of intervals, well before the flood (2s) ends.
+	deadline := time.Now().Add(5 * pool.staleRefreshInterval)
+	for {
+		pool.mutex.Lock()
+		allFresh := len(pool.ready) > 0
+		for _, wt := range pool.ready {
+			if wt.BaseCommit != newCommit {
+				allFresh = false
+			}
+		}
+		pool.mutex.Unlock()
+		if allFresh {
+			stopFlood()
+			break
+		}
+		if time.Now().After(deadline) {
+			stopFlood()
+			t.Fatal("Periodic staleness refresh never caught up despite continuous replenish signals")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// Regression for reviewer1's startup finding: a fully reclaimed pool skips fillToTarget's
+// fetch entirely. Reclaimed entries must refresh before WaitForInitialFill releases jobs.
+func TestReplenisherLoop_RefreshesReclaimedWorktreesBeforeInitialFillReleases(t *testing.T) {
+	mainRepo, worktreeBase, cleanup := setupTestGitRepoWithRemote(t)
+	defer cleanup()
+
+	gitClient := clients.NewGitClient()
+	gitClient.SetRepoPathProvider(func() string { return mainRepo })
+
+	// Simulate a prior run that left one pool-ready worktree on disk, then advance the
+	// remote to simulate time passing while nairid was offline.
+	seedPool := NewWorktreePool(gitClient, worktreeBase, 1)
+	seedPool.fillToTarget(context.Background())
+	waitForPoolSize(t, seedPool, 1)
+	staleCommit := seedPool.ready[0].BaseCommit
+
+	newCommit := pushNewCommit(t, mainRepo)
+
+	pool := NewWorktreePool(gitClient, worktreeBase, 1)
+	if err := pool.ReclaimOrphanedPoolWorktrees(); err != nil {
+		t.Fatalf("ReclaimOrphanedPoolWorktrees failed: %v", err)
+	}
+	if pool.GetPoolSize() != 1 {
+		t.Fatalf("Expected the seeded worktree to be reclaimed, pool size is %d", pool.GetPoolSize())
+	}
+	if pool.ready[0].BaseCommit != staleCommit {
+		t.Fatalf("Expected reclaim to record the worktree's actual (stale) HEAD, got %s", pool.ready[0].BaseCommit)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	pool.Start(ctx)
+	defer pool.Stop()
+	waitForInitialFill(t, pool)
+
+	if pool.ready[0].BaseCommit != newCommit {
+		t.Errorf("Expected the reclaimed worktree to be refreshed to %s before the initial fill released, got %s", newCommit, pool.ready[0].BaseCommit)
+	}
+	if head := gitOutput(t, pool.ready[0].Path, "rev-parse", "HEAD"); head != newCommit {
+		t.Errorf("Expected the reclaimed worktree's HEAD to be reset to %s, got %s", newCommit, head)
+	}
+}
+
+// Same as above but with a partially reclaimed pool (one old entry, targetSize=2):
+// fillToTarget's own markInitialFillDone (fired after it creates the one entry needed
+// to reach target) must not release jobs onto the still-stale reclaimed entry.
+func TestReplenisherLoop_PartiallyReclaimedPool_AcquireNeverGetsTheStaleEntry(t *testing.T) {
+	mainRepo, worktreeBase, cleanup := setupTestGitRepoWithRemote(t)
+	defer cleanup()
+
+	gitClient := clients.NewGitClient()
+	gitClient.SetRepoPathProvider(func() string { return mainRepo })
+
+	seedPool := NewWorktreePool(gitClient, worktreeBase, 1)
+	seedPool.fillToTarget(context.Background())
+	waitForPoolSize(t, seedPool, 1)
+
+	newCommit := pushNewCommit(t, mainRepo)
+
+	pool := NewWorktreePool(gitClient, worktreeBase, 2)
+	if err := pool.ReclaimOrphanedPoolWorktrees(); err != nil {
+		t.Fatalf("ReclaimOrphanedPoolWorktrees failed: %v", err)
+	}
+	if pool.GetPoolSize() != 1 {
+		t.Fatalf("Expected exactly the one seeded worktree to be reclaimed, pool size is %d", pool.GetPoolSize())
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	pool.Start(ctx)
+	defer pool.Stop()
+	waitForInitialFill(t, pool)
+
+	// Acquire immediately, the way a job would the instant the wait releases. Check
+	// every entry fillToTarget could have handed out, not just the first.
+	for i := 0; i < 2; i++ {
+		jobID := fmt.Sprintf("job-partial-reclaim-%d", i)
+		path, err := pool.Acquire(jobID, "nairid/"+jobID)
+		if err != nil {
+			t.Fatalf("Acquire %d failed: %v", i, err)
+		}
+		if head := gitOutput(t, path, "rev-parse", "HEAD"); head != newCommit {
+			t.Errorf("Acquire %d returned a worktree at %s, expected the refreshed commit %s", i, head, newCommit)
+		}
+	}
+}
+
+// Regression for reviewer1's A1 finding: a long fill ran to completion with no turn for
+// the periodic staleness check. Real acquisitions mid-fill must land on a commit pushed
+// partway through, not whatever was current when the fill started.
+func TestFillToTarget_RefreshesStaleWorktreesDuringLongFillWithRealAcquisitions(t *testing.T) {
+	mainRepo, worktreeBase, cleanup := setupTestGitRepoWithRemote(t)
+	defer cleanup()
+
+	gitClient := clients.NewGitClient()
+	gitClient.SetRepoPathProvider(func() string { return mainRepo })
+
+	const targetSize = 6
+	pool := NewWorktreePool(gitClient, worktreeBase, targetSize)
+	pool.staleRefreshInterval = 30 * time.Millisecond
+
+	spy := installSlowWorktreeAddSpy(t, 25*time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	pool.Start(ctx)
+	defer pool.Stop()
+
+	// Initial fill releases after the first worktree; the other five are still being
+	// created by the same fillToTarget call below, each taking 25ms.
+	waitForInitialFill(t, pool)
+	newCommit := pushNewCommit(t, mainRepo)
+
+	// Acquire as fast as entries appear, the way real job traffic would, for long enough
+	// to span the rest of the fill. Each Acquire keeps the pool below target, extending
+	// the same fillToTarget call rather than starting a new one.
+	var acquiredPaths []string
+	drainDeadline := time.Now().Add(400 * time.Millisecond)
+	for time.Now().Before(drainDeadline) {
+		path, err := pool.Acquire(fmt.Sprintf("job-%d", len(acquiredPaths)), fmt.Sprintf("nairid/job-%d", len(acquiredPaths)))
+		if err == nil {
+			acquiredPaths = append(acquiredPaths, path)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(acquiredPaths) == 0 {
+		t.Fatal("Expected at least one real acquisition during the long fill")
+	}
+
+	waitForPoolSize(t, pool, targetSize)
+
+	if n := spy.count(t, "fetch "); n < 2 {
+		t.Errorf("Expected the periodic refresh to interleave at least once during the long fill, got %d fetch(es)", n)
+	}
+
+	staleAcquisitions := 0
+	for _, path := range acquiredPaths {
+		if head := gitOutput(t, path, "rev-parse", "HEAD"); head != newCommit {
+			staleAcquisitions++
+		}
+	}
+	if staleAcquisitions == len(acquiredPaths) {
+		t.Errorf("All %d acquisitions during the fill got the pre-push commit, expected at least one to catch up to %s", len(acquiredPaths), newCommit)
+	}
+
+	pool.mutex.Lock()
+	for _, wt := range pool.ready {
+		if wt.BaseCommit != newCommit {
+			t.Errorf("Pool worktree %s recorded base %s, expected the mid-fill commit %s", wt.Path, wt.BaseCommit, newCommit)
+		}
+	}
+	pool.mutex.Unlock()
+}

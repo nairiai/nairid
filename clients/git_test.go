@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // setupTestGitRepo creates a temporary git repository for testing
@@ -854,6 +855,102 @@ func TestFetchOrigin_PrunesStaleRefsOnDFConflict(t *testing.T) {
 
 	if out, err := exec.Command("git", "-C", clonePath, "rev-parse", "refs/remotes/origin/mark-flaky/customer-book-and-repeat").CombinedOutput(); err != nil {
 		t.Fatalf("Expected nested ref to be fetched, got error: %v\n%s", err, string(out))
+	}
+}
+
+// A hung `git fetch` must time out instead of blocking its caller (the worktree pool's
+// replenisher, or the sync fallback) forever.
+func TestFetchOrigin_TimesOutInsteadOfHangingForever(t *testing.T) {
+	clonePath, _, cleanup := setupTestGitRepoWithBareOrigin(t)
+	defer cleanup()
+
+	// A git wrapper that hangs on fetch and passes everything else through, so SetUp's
+	// own git calls above still worked before this point.
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("git not found: %v", err)
+	}
+	dir := t.TempDir()
+	script := `#!/bin/sh
+case "$1" in
+fetch)
+	exec sleep 300
+	;;
+esac
+exec "` + realGit + `" "$@"
+`
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0755); err != nil {
+		t.Fatalf("Failed to write git wrapper: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	original := FetchOriginTimeout
+	FetchOriginTimeout = 200 * time.Millisecond
+	defer func() { FetchOriginTimeout = original }()
+
+	client := NewGitClient()
+	client.SetRepoPathProvider(func() string { return clonePath })
+
+	start := time.Now()
+	err = client.FetchOrigin()
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("Expected FetchOrigin to return an error for a hung fetch")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("Expected a timeout error, got: %v", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("Expected FetchOrigin to return promptly after the timeout, took %s", elapsed)
+	}
+}
+
+// WaitDelay must bound a detached child holding the fetch's output pipes open.
+func TestFetchOrigin_TimesOutDespiteDetachedDescendantHoldingPipesOpen(t *testing.T) {
+	if _, err := exec.LookPath("setsid"); err != nil {
+		t.Skip("setsid not available")
+	}
+
+	clonePath, _, cleanup := setupTestGitRepoWithBareOrigin(t)
+	defer cleanup()
+
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("git not found: %v", err)
+	}
+	dir := t.TempDir()
+	script := `#!/bin/sh
+case "$1" in
+fetch)
+	setsid sh -c 'sleep 30' &
+	exec sleep 30
+	;;
+esac
+exec "` + realGit + `" "$@"
+`
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0755); err != nil {
+		t.Fatalf("Failed to write git wrapper: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	originalTimeout, originalWaitDelay := FetchOriginTimeout, FetchOriginWaitDelay
+	FetchOriginTimeout = 200 * time.Millisecond
+	FetchOriginWaitDelay = 300 * time.Millisecond
+	defer func() { FetchOriginTimeout, FetchOriginWaitDelay = originalTimeout, originalWaitDelay }()
+
+	client := NewGitClient()
+	client.SetRepoPathProvider(func() string { return clonePath })
+
+	start := time.Now()
+	err = client.FetchOrigin()
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("Expected FetchOrigin to return an error for a hung fetch")
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("Expected FetchOrigin to return promptly despite the detached descendant, took %s", elapsed)
 	}
 }
 
