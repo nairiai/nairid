@@ -1,3 +1,17 @@
+## [v0.0.126] - 2026-11-01
+
+### Performance
+
+- Move the worktree staleness fetch off the job's hot path ([#240](https://github.com/nairiai/nairid/pull/240))
+  - `Acquire()` no longer runs a synchronous `git fetch` + staleness check per job, saving ~1.1-1.4s on every turn
+  - The background replenisher now refreshes stale pool worktrees every 20s (was 5 minutes), so handed-out worktrees stay close to origin
+
+### Bugfixes
+
+- Disable claude.ai connectors on every claude invocation ([#239](https://github.com/nairiai/nairid/pull/239))
+  - Every `claude` process gets `ENABLE_CLAUDEAI_MCP_SERVERS=false`, so agents no longer inherit the account's personal claude.ai connectors (Gmail, Drive, Calendar, Slack)
+  - Trims ~0.5-0.7s of startup per invocation; codex, cursor-agent and opencode are unaffected
+
 ## [v0.0.125] - 2026-10-31
 
 ### Features
