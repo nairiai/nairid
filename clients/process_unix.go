@@ -48,3 +48,13 @@ func stopProcessGroup(pid int) error {
 func groupAlive(pid int) bool {
 	return syscall.Kill(-pid, 0) == nil
 }
+
+// A hung fetch has no state to save, so cancel kills its whole group immediately. WaitDelay
+// bounds how long a descendant can hold the output pipes open before Go closes them itself.
+func configureFetchProcessGroup(cmd *exec.Cmd, waitDelay time.Duration) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	cmd.WaitDelay = waitDelay
+}

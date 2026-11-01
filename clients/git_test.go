@@ -906,6 +906,57 @@ exec "` + realGit + `" "$@"
 	}
 }
 
+// A descendant that outlives the killed fetch process and keeps the output pipes open
+// (e.g. a stuck git-remote-https) must not hang Wait() forever: process-group cancellation
+// should reach ordinary descendants, and WaitDelay must bound the ones that detach (setsid)
+// out of the group entirely.
+func TestFetchOrigin_TimesOutDespiteDetachedDescendantHoldingPipesOpen(t *testing.T) {
+	if _, err := exec.LookPath("setsid"); err != nil {
+		t.Skip("setsid not available")
+	}
+
+	clonePath, _, cleanup := setupTestGitRepoWithBareOrigin(t)
+	defer cleanup()
+
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("git not found: %v", err)
+	}
+	dir := t.TempDir()
+	script := `#!/bin/sh
+case "$1" in
+fetch)
+	setsid sh -c 'sleep 30' &
+	exec sleep 30
+	;;
+esac
+exec "` + realGit + `" "$@"
+`
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0755); err != nil {
+		t.Fatalf("Failed to write git wrapper: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	originalTimeout, originalWaitDelay := FetchOriginTimeout, FetchOriginWaitDelay
+	FetchOriginTimeout = 200 * time.Millisecond
+	FetchOriginWaitDelay = 300 * time.Millisecond
+	defer func() { FetchOriginTimeout, FetchOriginWaitDelay = originalTimeout, originalWaitDelay }()
+
+	client := NewGitClient()
+	client.SetRepoPathProvider(func() string { return clonePath })
+
+	start := time.Now()
+	err = client.FetchOrigin()
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("Expected FetchOrigin to return an error for a hung fetch")
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("Expected FetchOrigin to return promptly despite the detached descendant, took %s", elapsed)
+	}
+}
+
 func TestParsePRMergedBy(t *testing.T) {
 	tests := []struct {
 		name     string

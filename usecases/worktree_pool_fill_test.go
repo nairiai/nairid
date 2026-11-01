@@ -485,7 +485,7 @@ func TestRefreshStaleWorktrees_UpdatesStaleEntries(t *testing.T) {
 
 	newCommit := pushNewCommit(t, mainRepo)
 
-	pool.refreshStaleWorktrees()
+	pool.refreshStaleWorktrees(false)
 
 	if pool.ready[0].BaseCommit == staleCommit {
 		t.Error("Expected refreshStaleWorktrees to update the stale BaseCommit")
@@ -495,6 +495,53 @@ func TestRefreshStaleWorktrees_UpdatesStaleEntries(t *testing.T) {
 	}
 	if head := gitOutput(t, pool.ready[0].Path, "rev-parse", "HEAD"); head != newCommit {
 		t.Errorf("Expected worktree HEAD to be reset to the new commit %s, got %s", newCommit, head)
+	}
+}
+
+// Regression: a refresh due during an active fill used to skip its fetch whenever the
+// pool was already drained empty — the exact state continuous demand leaves it in on
+// every check — so createPooledWorktree kept reading the same stale local origin ref
+// forever. mustFetch=true must fetch regardless; mustFetch=false (the idle ticker path)
+// still skips it, since there's nothing in p.ready to refresh anyway.
+func TestRefreshStaleWorktrees_MustFetchUpdatesOriginEvenWhenPoolIsDrainedEmpty(t *testing.T) {
+	mainRepo, worktreeBase, cleanup := setupTestGitRepoWithRemote(t)
+	defer cleanup()
+
+	gitClient := clients.NewGitClient()
+	gitClient.SetRepoPathProvider(func() string { return mainRepo })
+
+	drainToEmpty := func() *WorktreePool {
+		pool := NewWorktreePool(gitClient, worktreeBase, 1)
+		pool.fillToTarget(context.Background())
+		waitForPoolSize(t, pool, 1)
+		id := fmt.Sprintf("job-drain-%d", time.Now().UnixNano())
+		if _, err := pool.Acquire(id, "nairid/"+id); err != nil {
+			t.Fatalf("Acquire failed: %v", err)
+		}
+		if pool.GetPoolSize() != 0 {
+			t.Fatalf("Expected an empty pool after draining, got %d", pool.GetPoolSize())
+		}
+		return pool
+	}
+
+	// Both pools' own fillToTarget already fetched once while draining; push only after
+	// both are set up, so each refreshStaleWorktrees call below sees a stale local ref.
+	idlePool := drainToEmpty()
+	fillPool := drainToEmpty()
+	newCommit := pushNewCommit(t, mainRepo)
+
+	spy := installGitSpy(t, false)
+	idlePool.refreshStaleWorktrees(false)
+	if n := spy.count(t, "fetch "); n != 0 {
+		t.Errorf("Expected the idle ticker path (mustFetch=false) to skip the fetch on an empty pool, got %d fetch(es)", n)
+	}
+	if origin := gitOutput(t, mainRepo, "rev-parse", "origin/main"); origin == newCommit {
+		t.Fatal("test setup error: local origin ref is already fresh before the mustFetch=true call")
+	}
+
+	fillPool.refreshStaleWorktrees(true)
+	if origin := gitOutput(t, mainRepo, "rev-parse", "origin/main"); origin != newCommit {
+		t.Errorf("Expected mustFetch=true to update the local origin ref to %s even on an empty pool, got %s", newCommit, origin)
 	}
 }
 

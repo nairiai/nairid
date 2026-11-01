@@ -1296,25 +1296,22 @@ func (g *GitClient) UpdateRemoteURLWithToken(token string) error {
 	return nil
 }
 
-// FetchOrigin fetches updates from the origin remote.
-// This is safe for concurrent calls as it only updates remote tracking refs.
-//
-// --prune is required: without it, a stale local remote-tracking ref for an
-// upstream branch that has since been deleted (e.g. "foo") will block any
-// future fetch of a new nested branch under the same name ("foo/bar"). Git
-// cannot have a file and a directory at the same path under refs/remotes/origin,
-// and the fetch fails with "unable to update local ref". Pruning removes the
-// stale parent ref before writing the nested one.
-// FetchOriginTimeout bounds every git fetch so a hung remote can't freeze the caller
-// indefinitely. A var, not a const, so tests can use a short timeout.
+// FetchOriginTimeout bounds every git fetch. A var, not a const, so tests can shorten it.
 var FetchOriginTimeout = 5 * time.Minute
 
+// FetchOriginWaitDelay bounds how long a killed fetch's descendants (e.g. a stuck
+// git-remote-https) can hold the output pipes open. A var so tests can shorten it.
+var FetchOriginWaitDelay = 5 * time.Second
+
+// FetchOrigin prunes deleted origin refs so a reused nested branch name doesn't conflict
+// with a stale parent ref. Safe for concurrent calls; it only updates tracking refs.
 func (g *GitClient) FetchOrigin() error {
 	log.Info("📋 Starting to fetch from origin")
 	ctx, cancel := context.WithTimeout(context.Background(), FetchOriginTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", "fetch", "--prune", "origin")
 	g.setWorkDir(cmd)
+	configureFetchProcessGroup(cmd, FetchOriginWaitDelay)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {

@@ -73,6 +73,7 @@ func NewWorktreePool(gitClient *clients.GitClient, basePath string, targetSize i
 		stopChan:             make(chan struct{}),
 		initialFillDone:      make(chan struct{}),
 		staleRefreshInterval: defaultStaleRefreshInterval,
+		lastStaleRefresh:     time.Now(),
 	}
 }
 
@@ -230,7 +231,7 @@ func (p *WorktreePool) replenisherLoop(ctx context.Context) {
 	// WaitForInitialFill as soon as it adds one entry, before a partially reclaimed
 	// pool reaches target size, so anything already in p.ready must be fresh first.
 	log.Info("🔄 Worktree pool: starting initial fill (target size: %d)", p.targetSize)
-	p.refreshStaleWorktrees()
+	p.refreshStaleWorktrees(false)
 	p.fillToTarget(ctx)
 	p.markInitialFillDone()
 	log.Info("✅ Worktree pool: initial fill complete (pool size: %d)", p.GetPoolSize())
@@ -255,7 +256,7 @@ func (p *WorktreePool) replenisherLoop(ctx context.Context) {
 		case <-staleTicker.C:
 			// Periodic staleness check; see staleRefreshInterval.
 			log.Debug("🔄 Worktree pool: periodic staleness check")
-			p.refreshStaleWorktrees()
+			p.refreshStaleWorktrees(false)
 		}
 	}
 }
@@ -284,7 +285,7 @@ func (p *WorktreePool) fillToTarget(ctx context.Context) {
 		// this creates them) would otherwise monopolize the replenisher goroutine and
 		// starve the periodic staleness check; give it a turn between creations.
 		if p.refreshDue() {
-			p.refreshStaleWorktrees()
+			p.refreshStaleWorktrees(true)
 		}
 
 		if err := p.createPooledWorktree(defaultBranch); err != nil {
@@ -404,17 +405,22 @@ func (p *WorktreePool) refreshDue() bool {
 
 // refreshStaleWorktrees removes stale entries from p.ready, resets them unlocked, and
 // only puts back the ones that succeed — so Acquire never hands one out mid-reset.
-func (p *WorktreePool) refreshStaleWorktrees() {
+// mustFetch forces the origin fetch even on an empty pool, for refreshes triggered from
+// inside an active fill, where later creations still need the newly fetched local ref.
+func (p *WorktreePool) refreshStaleWorktrees(mustFetch bool) {
 	p.mutex.Lock()
 	p.lastStaleRefresh = time.Now()
 	empty := len(p.ready) == 0
 	p.mutex.Unlock()
-	if empty {
+	if empty && !mustFetch {
 		return
 	}
 
 	if err := p.gitClient.FetchOrigin(); err != nil {
 		log.Warn("⚠️ Failed to fetch from origin for periodic staleness check: %v", err)
+		return
+	}
+	if empty {
 		return
 	}
 
