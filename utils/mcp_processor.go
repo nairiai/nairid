@@ -572,6 +572,9 @@ func (p *CodexMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 			}
 
 			codexServerConfig["enabled"] = true
+			if p.nairi != nil && serverName == NairiMCPServerName {
+				codexServerConfig["startup_timeout_sec"] = codexNairiStartupTimeoutSec
+			}
 			codexMCPServers[serverName] = codexServerConfig
 		}
 

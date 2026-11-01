@@ -13,6 +13,9 @@ const (
 	// LocalMCPsHeader lists the remote MCP servers a self-hosted agent kept in its own config,
 	// so the gateway does not serve them a second time.
 	LocalMCPsHeader = "X-Nairi-Local-MCPs"
+	// codexNairiStartupTimeoutSec replaces Codex's 10s default, which also covers the first
+	// tools/list: the gateway may take up to 10s to initialize upstreams and 10s to list them.
+	codexNairiStartupTimeoutSec = 30
 )
 
 // NairiMCP is the Nairi agent MCP gateway entry nairid adds to the agent CLI's MCP config. The

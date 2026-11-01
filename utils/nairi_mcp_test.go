@@ -171,6 +171,12 @@ func TestCodexMCPProcessor_WritesNairiEntry(t *testing.T) {
 		t.Fatalf("unexpected nairi entry %v", entry)
 	}
 	assertGatewayHeaders(t, entry["http_headers"].(map[string]interface{}))
+	if entry["startup_timeout_sec"] != int64(codexNairiStartupTimeoutSec) {
+		t.Errorf("nairi startup_timeout_sec = %v, want %d", entry["startup_timeout_sec"], codexNairiStartupTimeoutSec)
+	}
+	if _, ok := config.MCPServers["private"]["startup_timeout_sec"]; ok {
+		t.Error("only the nairi entry gets the longer startup timeout")
+	}
 }
 
 func TestOpenCodeMCPProcessor_WritesNairiEntry(t *testing.T) {
