@@ -310,10 +310,8 @@ func ExpandHomeDir(path string) (string, error) {
 	return path, nil
 }
 
-// FetchAndStoreArtifact downloads an artifact file and saves it to the specified location
-// The location path may contain ~ which will be expanded to the user's home directory.
-// With stdioOnly, an MCP config keeps only its stdio servers, so remote servers and their
-// credentials never reach the disk.
+// FetchAndStoreArtifact saves the attachment at location, expanding ~ to the user's home.
+// With stdioOnly, it filters MCP downloads before remote credentials reach disk.
 func FetchAndStoreArtifact(client *clients.AgentsApiClient, attachmentID string, location string, stdioOnly bool) error {
 	// Expand ~ in location path
 	expandedPath, err := ExpandHomeDir(location)
