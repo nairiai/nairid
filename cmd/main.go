@@ -173,14 +173,8 @@ func fetchAndStoreArtifacts(agentsApiClient *clients.AgentsApiClient) error {
 		return fmt.Errorf("failed to clean eksecd rules directory: %w", err)
 	}
 
-	// Skip MCP config cleanup and download when MCP proxy is enabled
-	// (configs will be fetched from the proxy at processing time)
-	if clients.AgentMCPProxy() == "" {
-		if err := utils.CleanEksecdMCPDir(); err != nil {
-			return fmt.Errorf("failed to clean eksecd MCP directory: %w", err)
-		}
-	} else {
-		log.Info("📦 MCP proxy enabled, skipping MCP config artifact downloads")
+	if err := utils.CleanEksecdMCPDir(); err != nil {
+		return fmt.Errorf("failed to clean eksecd MCP directory: %w", err)
 	}
 
 	if err := utils.CleanEksecdSkillsDir(); err != nil {
@@ -200,18 +194,8 @@ func fetchAndStoreArtifacts(agentsApiClient *clients.AgentsApiClient) error {
 
 	log.Info("📦 Found %d artifact(s) to download", len(artifacts))
 
-	// Check if MCP proxy is enabled (skip MCP config artifact downloads)
-	mcpProxyEnabled := clients.AgentMCPProxy() != ""
-
 	// Download and store each artifact file
 	for _, artifact := range artifacts {
-		// Skip MCP config artifacts when proxy is enabled
-		// (the proxy fetches its own configs directly from the backend)
-		if mcpProxyEnabled && (artifact.Type == "mcp_config" || artifact.Type == "mcp_cfg") {
-			log.Info("📦 Skipping %s artifact (MCP proxy handles this): %s", artifact.Type, artifact.Title)
-			continue
-		}
-
 		log.Info("📦 Processing %s artifact: %s (%s)", artifact.Type, artifact.Title, artifact.Description)
 
 		for _, file := range artifact.Files {
@@ -227,6 +211,36 @@ func fetchAndStoreArtifacts(agentsApiClient *clients.AgentsApiClient) error {
 
 	log.Info("✅ Successfully downloaded all artifacts")
 	return nil
+}
+
+// setupNairiMCP returns the Nairi MCP gateway entry for the agent CLI, or nil to keep remote
+// MCP servers in the agent's own config as before. Only once it returns an entry does the API
+// client ask for MCP configs without the servers the gateway serves.
+func setupNairiMCP(agentsApiClient *clients.AgentsApiClient, apiBaseURL, agentID string) *utils.NairiMCP {
+	var key string
+	switch {
+	case agentsApiClient.IsSelfHosted():
+		fetched, err := agentsApiClient.FetchMCPKey()
+		if err != nil {
+			log.Info("🔌 Nairi MCP gateway unavailable, keeping remote MCP servers local: %v", err)
+			return nil
+		}
+		key = fetched
+	case clients.AgentHTTPProxy() != "":
+		// The secret proxy swaps the placeholder for the key, on the gateway path only.
+		key = clients.NairiMCPKeySecret
+	default:
+		log.Info("🔌 No secret proxy to fill the MCP key, keeping remote MCP servers local")
+		return nil
+	}
+
+	headers := map[string]string{"Authorization": "Bearer " + key}
+	if agentID != "" {
+		headers["X-AGENT-ID"] = agentID
+	}
+	agentsApiClient.UseMCPGateway(core.GetVersion())
+	log.Info("🔌 Using the Nairi MCP gateway at %s%s", apiBaseURL, clients.NairiMCPGatewayPath)
+	return &utils.NairiMCP{URL: apiBaseURL + clients.NairiMCPGatewayPath, Headers: headers}
 }
 
 // processAgentRules processes rules from eksecd directory based on agent type
@@ -260,40 +274,22 @@ func processAgentRules(agentType, workDir, targetHomeDir string) error {
 // processMCPConfigs processes MCP configs from eksecd directory based on agent type
 // targetHomeDir specifies the home directory to deploy configs to.
 // If empty, uses the current user's home directory.
-func processMCPConfigs(agentType, workDir, targetHomeDir string) error {
+func processMCPConfigs(agentType, workDir, targetHomeDir string, nairi *utils.NairiMCP) error {
 	log.Info("🔌 Processing MCP configs for agent type: %s", agentType)
 
 	var processor utils.MCPProcessor
 
-	// Check if MCP proxy mode is enabled
-	mcpProxyURL := clients.AgentMCPProxy()
-	if mcpProxyURL != "" {
-		log.Info("🔌 MCP proxy mode enabled: %s", mcpProxyURL)
-		switch agentType {
-		case "claude":
-			processor = utils.NewClaudeCodeProxiedMCPProcessor(mcpProxyURL)
-		case "opencode":
-			processor = utils.NewOpenCodeProxiedMCPProcessor(mcpProxyURL)
-		case "codex":
-			processor = utils.NewCodexProxiedMCPProcessor(mcpProxyURL)
-		case "cursor":
-			processor = utils.NewNoOpMCPProcessor()
-		default:
-			return fmt.Errorf("unknown agent type: %s", agentType)
-		}
-	} else {
-		switch agentType {
-		case "claude":
-			processor = utils.NewClaudeCodeMCPProcessor(workDir)
-		case "opencode":
-			processor = utils.NewOpenCodeMCPProcessor(workDir)
-		case "codex":
-			processor = utils.NewCodexMCPProcessor()
-		case "cursor":
-			processor = utils.NewNoOpMCPProcessor()
-		default:
-			return fmt.Errorf("unknown agent type: %s", agentType)
-		}
+	switch agentType {
+	case "claude":
+		processor = utils.NewClaudeCodeMCPProcessor(workDir, nairi)
+	case "opencode":
+		processor = utils.NewOpenCodeMCPProcessor(workDir, nairi)
+	case "codex":
+		processor = utils.NewCodexMCPProcessor(nairi)
+	case "cursor":
+		processor = utils.NewNoOpMCPProcessor()
+	default:
+		return fmt.Errorf("unknown agent type: %s", agentType)
 	}
 
 	if err := processor.ProcessMCPConfigs(targetHomeDir); err != nil {
@@ -474,6 +470,9 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 		return nil, fmt.Errorf("failed to fetch and apply env vars: %w", err)
 	}
 
+	// Before the artifact download: the gateway decides which MCP configs nairid gets.
+	nairiMCP := setupNairiMCP(agentsApiClient, apiBaseURL, agentIDForAPI)
+
 	// Fetch and store agent artifacts (rules, guidelines, instructions)
 	if err := fetchAndStoreArtifacts(agentsApiClient); err != nil {
 		return nil, fmt.Errorf("failed to fetch and store artifacts: %w", err)
@@ -501,7 +500,7 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 	}
 
 	// Process MCP configs based on agent type
-	if err := processMCPConfigs(agentType, workDir, targetHomeDir); err != nil {
+	if err := processMCPConfigs(agentType, workDir, targetHomeDir, nairiMCP); err != nil {
 		return nil, fmt.Errorf("failed to process MCP configs: %w", err)
 	}
 

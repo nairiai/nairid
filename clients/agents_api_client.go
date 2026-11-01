@@ -15,6 +15,18 @@ import (
 	"nairid/models"
 )
 
+// NairidVersionHeader tells the backend this nairid reaches remote MCP servers through the Nairi
+// MCP gateway, so MCP configs come without them.
+const NairidVersionHeader = "X-Nairid-Version"
+
+const (
+	// NairiMCPGatewayPath is the backend's MCP gateway endpoint.
+	NairiMCPGatewayPath = "/api/agents/mcp"
+	// NairiMCPKeySecret is the placeholder the secret proxy fills with a managed agent's MCP key
+	// on the gateway path, so the key never sits in the agent's config.
+	NairiMCPKeySecret = "CCASECRET_NAIRI_MCP_KEY"
+)
+
 // AttachmentResponse represents the API response for fetching an attachment
 type AttachmentResponse struct {
 	ID   string `json:"id"`
@@ -44,10 +56,11 @@ type TokenResponse struct {
 
 // AgentsApiClient handles API requests to the Claude Control agents API
 type AgentsApiClient struct {
-	apiKey  string
-	baseURL string
-	agentID string
-	client  *http.Client
+	apiKey     string
+	baseURL    string
+	agentID    string
+	client     *http.Client
+	mcpGateway string // nairid version, sent once the agent uses the MCP gateway
 }
 
 // NewAgentsApiClient creates a new agents API client
@@ -68,6 +81,48 @@ func (c *AgentsApiClient) IsSelfHosted() bool {
 	return strings.HasPrefix(c.apiKey, "nairid_") || strings.HasPrefix(c.apiKey, "eksecd_") || strings.HasPrefix(c.apiKey, "ccagent_")
 }
 
+// UseMCPGateway makes MCP config downloads leave out the servers the Nairi MCP gateway serves.
+func (c *AgentsApiClient) UseMCPGateway(nairidVersion string) {
+	c.mcpGateway = nairidVersion
+}
+
+// MCPKeyResponse is the API response for a self-hosted agent's MCP gateway key
+type MCPKeyResponse struct {
+	Key string `json:"key"`
+}
+
+// FetchMCPKey fetches a self-hosted agent's key for the Nairi MCP gateway. Backends without
+// the gateway answer 404 (older) or 501 (turned off).
+func (c *AgentsApiClient) FetchMCPKey() (string, error) {
+	req, err := http.NewRequest("GET", c.baseURL+"/api/agents/mcp-key", nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-AGENT-ID", c.agentID)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var keyResp MCPKeyResponse
+	if err := json.NewDecoder(resp.Body).Decode(&keyResp); err != nil {
+		return "", fmt.Errorf("failed to decode response: %w", err)
+	}
+	if keyResp.Key == "" {
+		return "", fmt.Errorf("API returned an empty MCP key")
+	}
+	return keyResp.Key, nil
+}
+
 // FetchAttachment fetches an attachment by ID from the Claude Control API
 func (c *AgentsApiClient) FetchAttachment(attachmentID string) (*AttachmentResponse, error) {
 	url := fmt.Sprintf("%s/api/agents/attachments/%s", c.baseURL, attachmentID)
@@ -80,6 +135,9 @@ func (c *AgentsApiClient) FetchAttachment(attachmentID string) (*AttachmentRespo
 	// Add Bearer token authentication header
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
 	req.Header.Set("Accept", "application/json")
+	if c.mcpGateway != "" {
+		req.Header.Set(NairidVersionHeader, c.mcpGateway)
+	}
 
 	resp, err := c.client.Do(req)
 	if err != nil {
