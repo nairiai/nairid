@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	toml "github.com/pelletier/go-toml/v2"
@@ -244,6 +245,40 @@ func TestOpenCodeMCPProcessor_WritesNairiEntry(t *testing.T) {
 	assertGatewayHeaders(t, entry["headers"].(map[string]interface{}))
 	if _, ok := config.MCP["private"]["oauth"]; ok {
 		t.Error("only the nairi entry turns off OpenCode's OAuth")
+	}
+}
+
+// A managed agent on the gateway drops a remote server that reached the disk anyway: the gateway
+// serves it.
+func TestStdioOnlyMCPProcessor_GatewayDropsRemoteServers(t *testing.T) {
+	configPaths := map[string]string{
+		"claude":   ".claude.json",
+		"opencode": filepath.Join(".config", "opencode", "opencode.json"),
+		"codex":    filepath.Join(".codex", "config.toml"),
+	}
+	for agentType, configPath := range configPaths {
+		t.Run(agentType, func(t *testing.T) {
+			home := writeRemoteMCPConfig(t)
+			processor, err := NewStdioOnlyMCPProcessor(agentType, testNairiMCP())
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if err := processor.ProcessMCPConfigs(home); err != nil {
+				t.Fatal(err)
+			}
+
+			content, err := os.ReadFile(filepath.Join(home, configPath))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(content), "mcp.example.com") || strings.Contains(string(content), LocalMCPsHeader) {
+				t.Errorf("expected the remote server dropped, got %s", content)
+			}
+			if !strings.Contains(string(content), testNairiMCP().URL) {
+				t.Errorf("expected the gateway entry, got %s", content)
+			}
+		})
 	}
 }
 

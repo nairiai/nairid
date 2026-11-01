@@ -64,15 +64,15 @@ func withNairiMCP(servers map[string]interface{}, nairi *NairiMCP) map[string]in
 	return servers
 }
 
-// agentMCPServers merges the downloaded MCP configs, then adds the gateway entry or, with
-// stdioOnly, drops the remote servers.
+// agentMCPServers merges the downloaded MCP configs, drops the remote servers with stdioOnly,
+// then adds the gateway entry if there is one.
 func agentMCPServers(nairi *NairiMCP, stdioOnly bool) (map[string]interface{}, error) {
 	servers, err := MergeMCPConfigs()
 	if err != nil {
 		return nil, fmt.Errorf("failed to merge MCP configs: %w", err)
 	}
 	if stdioOnly {
-		return withoutRemoteServers(servers), nil
+		servers = withoutRemoteServers(servers)
 	}
 	return withNairiMCP(servers, nairi), nil
 }
@@ -85,7 +85,7 @@ func withoutRemoteServers(servers map[string]interface{}) map[string]interface{}
 		if !isRemoteServer(configMap) {
 			continue
 		}
-		log.Warn("🔌 Dropping remote MCP server %q: no Nairi agent MCP gateway to reach it through", name)
+		log.Warn("🔌 Dropping remote MCP server %q: managed agents reach remote servers only through the Nairi agent MCP gateway", name)
 		delete(servers, name)
 	}
 	return servers

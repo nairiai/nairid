@@ -273,29 +273,29 @@ func TestSetupAgentMCP_Managed(t *testing.T) {
 			wantKey:      placeholderKey, wantKeyCalls: 2, wantProbeCalls: 1, wantSleeps: allRetries[:1],
 		},
 		{
-			name:          "an older backend's 404 is not retried and keeps only stdio servers",
-			keyReplies:    []reply{{http.StatusNotFound, `404 page not found`}},
-			wantStdioOnly: true, wantKeyCalls: 1,
+			name:         "an older backend's 404 is not retried and keeps only stdio servers",
+			keyReplies:   []reply{{http.StatusNotFound, `404 page not found`}},
+			wantKeyCalls: 1,
 		},
 		{
-			name:          "a fleet member the backend does not know keeps only stdio servers",
-			keyReplies:    []reply{{http.StatusBadRequest, `{"error":"agent not found"}`}},
-			wantStdioOnly: true, wantKeyCalls: 1,
+			name:         "a fleet member the backend does not know keeps only stdio servers",
+			keyReplies:   []reply{{http.StatusBadRequest, `{"error":"agent not found"}`}},
+			wantKeyCalls: 1,
 		},
 		{
-			name:          "gateway turned off keeps only stdio servers",
-			keyReplies:    []reply{notEnabled},
-			wantStdioOnly: true, wantKeyCalls: 1,
+			name:         "gateway turned off keeps only stdio servers",
+			keyReplies:   []reply{notEnabled},
+			wantKeyCalls: 1,
 		},
 		{
-			name:          "a failing backend keeps only stdio servers after retrying",
-			keyReplies:    []reply{{http.StatusInternalServerError, `internal error`}},
-			wantStdioOnly: true, wantKeyCalls: 4, wantSleeps: allRetries,
+			name:         "a failing backend keeps only stdio servers after retrying",
+			keyReplies:   []reply{{http.StatusInternalServerError, `internal error`}},
+			wantKeyCalls: 4, wantSleeps: allRetries,
 		},
 		{
 			name:       "a secret proxy filling another agent's key keeps only stdio servers",
 			keyReplies: keyOK, probeReplies: []reply{agentMismatch},
-			wantStdioOnly: true, wantKeyCalls: 1, wantProbeCalls: 1,
+			wantKeyCalls: 1, wantProbeCalls: 1,
 		},
 		{
 			name:       "retries a probe 401 while the secret proxy gets the key, then uses the gateway",
@@ -305,21 +305,21 @@ func TestSetupAgentMCP_Managed(t *testing.T) {
 		{
 			name:       "a probe 401 that does not clear keeps only stdio servers",
 			keyReplies: keyOK, probeReplies: []reply{unauthorized},
-			wantStdioOnly: true, wantKeyCalls: 1, wantProbeCalls: 4, wantSleeps: allRetries,
+			wantKeyCalls: 1, wantProbeCalls: 4, wantSleeps: allRetries,
 		},
 		{
 			name:       "a rolled back backend keeps only stdio servers, not the local ones",
 			keyReplies: keyOK, probeReplies: []reply{routeNotFound},
-			wantStdioOnly: true, wantKeyCalls: 1, wantProbeCalls: 1,
+			wantKeyCalls: 1, wantProbeCalls: 1,
 		},
 		{
 			name:       "a 500 naming a 404 is retried, then keeps only stdio servers",
 			keyReplies: keyOK, probeReplies: []reply{serverError404Body},
-			wantStdioOnly: true, wantKeyCalls: 1, wantProbeCalls: 4, wantSleeps: allRetries,
+			wantKeyCalls: 1, wantProbeCalls: 4, wantSleeps: allRetries,
 		},
 	}
 	for _, tt := range tests {
-		tt.managed = true
+		tt.managed, tt.wantStdioOnly = true, true
 		if tt.apiKey == "" {
 			tt.apiKey = managedAPIKey
 		}
@@ -508,11 +508,11 @@ func TestManagedAgentMCPConfig(t *testing.T) {
 		probeReplies []reply
 		wantServers  []string
 	}{
-		{name: "gateway", keyReplies: []reply{placeholderKeyReply}, wantServers: []string{"fs", "nairi", "private"}},
+		{name: "gateway", keyReplies: []reply{placeholderKeyReply}, wantServers: []string{"fs", "nairi"}},
 		{
 			name:        "retry then gateway",
 			keyReplies:  []reply{{http.StatusBadGateway, `bad gateway`}, placeholderKeyReply},
-			wantServers: []string{"fs", "nairi", "private"},
+			wantServers: []string{"fs", "nairi"},
 		},
 		{name: "fail closed", keyReplies: []reply{unavailable}, wantServers: []string{"fs"}},
 		{
@@ -541,6 +541,53 @@ func TestManagedAgentMCPConfig(t *testing.T) {
 				t.Errorf("the agent's config holds Composio's credential: %s", content)
 			}
 		})
+	}
+}
+
+// On the gateway, a managed agent whose backend failed to strip the remote servers drops them
+// itself, so no credential of theirs reaches the disk.
+func TestManagedAgentMCPConfig_GatewayDropsUnstrippedServers(t *testing.T) {
+	for _, agentType := range []string{"claude", "codex", "opencode"} {
+		t.Run(agentType, func(t *testing.T) {
+			backend := &fakeBackend{ignoresVersion: true}
+			agentHome := agentRun{
+				agentType: agentType, managed: true, keyReplies: []reply{placeholderKeyReply}, backend: backend,
+			}.run(t)
+
+			if backend.mcpDownloads != 1 || !backend.stripAsked {
+				t.Errorf("MCP config downloads = %d, with %s: %v; want 1 with it",
+					backend.mcpDownloads, clients.NairidVersionHeader, backend.stripAsked)
+			}
+			_, servers := readAgentMCPServers(t, agentType, agentHome)
+			if got := serverNames(servers); !reflect.DeepEqual(got, []string{"fs", "nairi"}) {
+				t.Errorf("MCP servers = %v, want [fs nairi]", got)
+			}
+			for _, dir := range []string{os.Getenv("HOME"), agentHome} {
+				assertNoFileContains(t, dir, "mcp-remote", "test_platform_key", "test_remote_token", ".example.com")
+			}
+		})
+	}
+}
+
+func assertNoFileContains(t *testing.T, dir string, leaks ...string) {
+	t.Helper()
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, leak := range leaks {
+			if strings.Contains(string(content), leak) {
+				t.Errorf("%s contains %q: %s", path, leak, content)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -725,7 +772,7 @@ func TestAgentMCPReprobe_MovesToGateway(t *testing.T) {
 			defer cancel()
 			cfg.reprobeGateway(ctx)
 
-			if setup := cfg.current(); ctx.Err() != nil || setup.nairi == nil || setup.stdioOnly || setup.reprobe {
+			if setup := cfg.current(); ctx.Err() != nil || setup.nairi == nil || !setup.stdioOnly || setup.reprobe {
 				t.Fatalf("re-probe ended with %+v, %v; want the gateway", setup, ctx.Err())
 			}
 			if backend.keyCalls != tt.wantKeyCalls || backend.mcpDownloads != 2 || !backend.stripAsked {
@@ -733,8 +780,8 @@ func TestAgentMCPReprobe_MovesToGateway(t *testing.T) {
 					backend.keyCalls, backend.mcpDownloads, clients.NairidVersionHeader, backend.stripAsked, tt.wantKeyCalls)
 			}
 			_, servers := readAgentMCPServers(t, tt.agentType, cfg.targetHomeDir)
-			if got := serverNames(servers); !reflect.DeepEqual(got, []string{"fs", "nairi", "private"}) {
-				t.Errorf("MCP servers = %v, want [fs nairi private]", got)
+			if got := serverNames(servers); !reflect.DeepEqual(got, []string{"fs", "nairi"}) {
+				t.Errorf("MCP servers = %v, want [fs nairi]", got)
 			}
 		})
 	}

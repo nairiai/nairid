@@ -606,16 +606,16 @@ func (p *CodexMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 }
 
 // NewStdioOnlyMCPProcessor creates a processor for agentType that writes only the stdio servers of
-// the downloaded configs, replacing the MCP servers an earlier run wrote. Managed agents use it
-// when the gateway is unavailable.
-func NewStdioOnlyMCPProcessor(agentType string) (MCPProcessor, error) {
+// the downloaded configs, plus the gateway entry when nairi is set, replacing the MCP servers an
+// earlier run wrote. Managed agents use it.
+func NewStdioOnlyMCPProcessor(agentType string, nairi *NairiMCP) (MCPProcessor, error) {
 	switch agentType {
 	case "claude":
-		return &ClaudeCodeMCPProcessor{stdioOnly: true}, nil
+		return &ClaudeCodeMCPProcessor{nairi: nairi, stdioOnly: true}, nil
 	case "opencode":
-		return &OpenCodeMCPProcessor{stdioOnly: true}, nil
+		return &OpenCodeMCPProcessor{nairi: nairi, stdioOnly: true}, nil
 	case "codex":
-		return &CodexMCPProcessor{stdioOnly: true}, nil
+		return &CodexMCPProcessor{nairi: nairi, stdioOnly: true}, nil
 	case "cursor":
 		return NewNoOpMCPProcessor(), nil
 	}

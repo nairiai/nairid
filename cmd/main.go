@@ -226,7 +226,7 @@ var agentMCPRetrySleep = time.Sleep
 // the agent's own config, as self-hosted agents did before the gateway.
 type agentMCPSetup struct {
 	nairi     *utils.NairiMCP // the Nairi agent MCP gateway entry
-	stdioOnly bool            // managed agents off the gateway keep only stdio servers
+	stdioOnly bool            // managed agents keep only stdio servers, plus nairi on the gateway
 	reprobe   bool            // off the gateway behind a secret proxy, so the gateway may come back
 }
 
@@ -243,7 +243,8 @@ func setupAgentMCP(agentsApiClient *clients.AgentsApiClient, apiBaseURL, agentID
 
 	key, err := managedMCPKey(agentsApiClient, proxyURL)
 	if err == nil {
-		return agentMCPSetup{nairi: useNairiMCP(agentsApiClient, apiBaseURL, agentID, key)}
+		// Stdio only too: a backend that fails to strip must not leave credentials on disk.
+		return agentMCPSetup{nairi: useNairiMCP(agentsApiClient, apiBaseURL, agentID, key), stdioOnly: true}
 	}
 	if clients.AgentMCPStatus(err) == http.StatusForbidden {
 		log.Error("🔌 The secret proxy filled in another agent's MCP key: it did not send this pod's id")
@@ -433,7 +434,7 @@ func (c *agentMCPConfig) moveToGateway() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	// Failing closed already made the API client ask for MCP configs without remote servers.
-	gateway := agentMCPSetup{nairi: nairiMCPEntry(c.apiBaseURL, c.agentID, key)}
+	gateway := agentMCPSetup{nairi: nairiMCPEntry(c.apiBaseURL, c.agentID, key), stdioOnly: true}
 	err = fetchAndStoreArtifacts(c.client, gateway)
 	if err == nil {
 		err = processMCPConfigs(c.agentType, c.workDir, c.targetHomeDir, gateway)
@@ -499,7 +500,7 @@ func newMCPProcessor(agentType, workDir string, mcpSetup agentMCPSetup) (utils.M
 		return utils.NewNoOpMCPProcessor(), nil
 	}
 	if mcpSetup.stdioOnly {
-		return utils.NewStdioOnlyMCPProcessor(agentType)
+		return utils.NewStdioOnlyMCPProcessor(agentType, mcpSetup.nairi)
 	}
 
 	switch agentType {
