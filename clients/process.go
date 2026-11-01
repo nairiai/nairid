@@ -128,6 +128,13 @@ func BuildAgentCommandWithContext(ctx context.Context, name string, args ...stri
 	// Inject HTTP proxy settings for agent processes if configured
 	filteredEnv = InjectProxyEnv(filteredEnv)
 
+	// Claude Code auto-loads the account's claude.ai connectors (Gmail, Drive, Calendar,
+	// Slack, ...) on startup. An agent should never silently inherit the account owner's
+	// personal connectors, so turn them off for every claude invocation.
+	if name == "claude" {
+		filteredEnv = append(filteredEnv, "ENABLE_CLAUDEAI_MCP_SERVERS=false")
+	}
+
 	log.Printf("[BuildAgentCommandWithContext] execUser=%q, name=%q", execUser, name)
 
 	if execUser == "" {
