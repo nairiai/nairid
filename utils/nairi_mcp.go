@@ -3,8 +3,10 @@ package utils
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -87,6 +89,24 @@ func withoutRemoteServers(servers map[string]interface{}) map[string]interface{}
 		delete(servers, name)
 	}
 	return servers
+}
+
+// isMCPConfigPath reports whether path is in the directory MergeMCPConfigs reads.
+func isMCPConfigPath(path string) bool {
+	mcpDir, err := GetEksecdMCPDir()
+	return err == nil && filepath.Dir(filepath.Clean(path)) == mcpDir
+}
+
+// stdioOnlyMCPConfig drops the remote servers from one downloaded MCP config file.
+func stdioOnlyMCPConfig(content []byte) ([]byte, error) {
+	var config map[string]interface{}
+	if err := json.Unmarshal(content, &config); err != nil {
+		return nil, err
+	}
+	if servers, ok := config["mcpServers"].(map[string]interface{}); ok {
+		config["mcpServers"] = withoutRemoteServers(servers)
+	}
+	return json.Marshal(config)
 }
 
 // isRemoteServer reports whether a server reaches a remote one: a url entry, a non-stdio type,

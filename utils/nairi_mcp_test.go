@@ -1,12 +1,17 @@
 package utils
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
 	toml "github.com/pelletier/go-toml/v2"
+
+	"nairid/clients"
 )
 
 func testNairiMCP() *NairiMCP {
@@ -239,5 +244,41 @@ func TestOpenCodeMCPProcessor_WritesNairiEntry(t *testing.T) {
 	assertGatewayHeaders(t, entry["headers"].(map[string]interface{}))
 	if _, ok := config.MCP["private"]["oauth"]; ok {
 		t.Error("only the nairi entry turns off OpenCode's OAuth")
+	}
+}
+
+// Off the gateway, a downloaded MCP config keeps only its stdio servers, so a remote server's
+// credential never reaches the disk; files outside the MCP directory are written as sent.
+func TestFetchAndStoreArtifact_StdioOnlyFiltersMCPConfigs(t *testing.T) {
+	cfg := `{"mcpServers":{"fs":{"command":"npx","args":["server-fs"]},` +
+		`"composio":{"command":"npx","args":["-y","mcp-remote@0.1","https://composio.example.com/mcp",` +
+		`"--header","x-api-key:test_platform_key"]},"private":{"type":"http","url":"https://mcp.example.com/mcp"}}}`
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"id": "att_1", "data": base64.StdEncoding.EncodeToString([]byte(cfg))})
+	}))
+	t.Cleanup(ts.Close)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	client := clients.NewAgentsApiClient("test-api-key", ts.URL, "ag_123")
+
+	for _, location := range []string{"~/.config/eksecd/mcp/servers.json", "~/notes/servers.json"} {
+		if err := FetchAndStoreArtifact(client, "att_1", location, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	mcpContent, err := os.ReadFile(filepath.Join(home, ".config", "eksecd", "mcp", "servers.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(mcpContent) != `{"mcpServers":{"fs":{"args":["server-fs"],"command":"npx"}}}` {
+		t.Errorf("MCP config = %s, want the stdio server only", mcpContent)
+	}
+	other, err := os.ReadFile(filepath.Join(home, "notes", "servers.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(other) != cfg {
+		t.Errorf("a file outside the MCP directory changed: %s", other)
 	}
 }

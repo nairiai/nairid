@@ -376,7 +376,7 @@ func (r agentRun) run(t *testing.T) string {
 	writeStaleAgentConfig(t, r.agentType, agentHome)
 
 	mcpSetup := setupAgentMCP(client, ts.URL, "ag_123")
-	if err := fetchAndStoreArtifacts(client); err != nil {
+	if err := fetchAndStoreArtifacts(client, mcpSetup); err != nil {
 		t.Fatal(err)
 	}
 	if err := processMCPConfigs(r.agentType, agentHome, agentHome, mcpSetup); err != nil {
@@ -548,9 +548,19 @@ func assertStdioOnlyConfig(t *testing.T, agentType, agentHome string, wantServer
 	if got := serverNames(servers); !reflect.DeepEqual(got, wantServers) {
 		t.Errorf("MCP servers = %v, want %v", got, wantServers)
 	}
-	for _, leak := range []string{"url", "mcp-remote", "test_platform_key", "test_remote_token", "nairi"} {
+	assertNoRemoteServer(t, agentType+" config", content, "nairi")
+	downloaded, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".config", "eksecd", "mcp", "servers.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoRemoteServer(t, "downloaded MCP config", string(downloaded))
+}
+
+func assertNoRemoteServer(t *testing.T, what, content string, more ...string) {
+	t.Helper()
+	for _, leak := range append([]string{"url", "mcp-remote", "test_platform_key", "test_remote_token"}, more...) {
 		if strings.Contains(content, leak) {
-			t.Errorf("the agent's %s config contains %q: %s", agentType, leak, content)
+			t.Errorf("the %s contains %q: %s", what, leak, content)
 		}
 	}
 }

@@ -166,7 +166,7 @@ func fetchAndApplyEnvVars(agentsApiClient *clients.AgentsApiClient, envManager *
 }
 
 // fetchAndStoreArtifacts fetches agent artifacts from API and stores them locally
-func fetchAndStoreArtifacts(agentsApiClient *clients.AgentsApiClient) error {
+func fetchAndStoreArtifacts(agentsApiClient *clients.AgentsApiClient, mcpSetup agentMCPSetup) error {
 	log.Info("📦 Fetching agent artifacts from API...")
 
 	// Clean up existing rules, MCP configs, and skills before downloading new ones
@@ -203,7 +203,7 @@ func fetchAndStoreArtifacts(agentsApiClient *clients.AgentsApiClient) error {
 		for _, file := range artifact.Files {
 			log.Info("📥 Downloading artifact file to: %s", file.Location)
 
-			if err := utils.FetchAndStoreArtifact(agentsApiClient, file.AttachmentID, file.Location); err != nil {
+			if err := utils.FetchAndStoreArtifact(agentsApiClient, file.AttachmentID, file.Location, mcpSetup.stdioOnly); err != nil {
 				return fmt.Errorf("failed to download artifact file %s: %w", file.Location, err)
 			}
 
@@ -578,7 +578,7 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 	mcpSetup := setupAgentMCP(agentsApiClient, apiBaseURL, agentIDForAPI)
 
 	// Fetch and store agent artifacts (rules, guidelines, instructions)
-	if err := fetchAndStoreArtifacts(agentsApiClient); err != nil {
+	if err := fetchAndStoreArtifacts(agentsApiClient, mcpSetup); err != nil {
 		return nil, fmt.Errorf("failed to fetch and store artifacts: %w", err)
 	}
 

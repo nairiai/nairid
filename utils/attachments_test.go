@@ -483,7 +483,7 @@ func TestFetchAndStoreArtifact_Success(t *testing.T) {
 	location := filepath.Join(tempDir, "test-rule.md")
 
 	// Fetch and store artifact
-	err := FetchAndStoreArtifact(client, "test-attachment-id", location)
+	err := FetchAndStoreArtifact(client, "test-attachment-id", location, false)
 
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
@@ -528,7 +528,7 @@ func TestFetchAndStoreArtifact_WithTilde(t *testing.T) {
 	location := "~/eksec_test_artifact.md"
 
 	// Fetch and store artifact
-	err := FetchAndStoreArtifact(client, "test-attachment-id", location)
+	err := FetchAndStoreArtifact(client, "test-attachment-id", location, false)
 
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
@@ -558,7 +558,7 @@ func TestFetchAndStoreArtifact_APIError(t *testing.T) {
 
 	location := filepath.Join(tempDir, "test-rule.md")
 
-	err := FetchAndStoreArtifact(client, "nonexistent-id", location)
+	err := FetchAndStoreArtifact(client, "nonexistent-id", location, false)
 
 	if err == nil {
 		t.Error("Expected error for API failure, got nil")
@@ -584,7 +584,7 @@ func TestFetchAndStoreArtifact_EmptyContent(t *testing.T) {
 
 	location := filepath.Join(tempDir, "test-rule.md")
 
-	err := FetchAndStoreArtifact(client, "test-id", location)
+	err := FetchAndStoreArtifact(client, "test-id", location, false)
 
 	if err == nil {
 		t.Error("Expected error for empty content, got nil")
