@@ -1305,12 +1305,22 @@ func (g *GitClient) UpdateRemoteURLWithToken(token string) error {
 // cannot have a file and a directory at the same path under refs/remotes/origin,
 // and the fetch fails with "unable to update local ref". Pruning removes the
 // stale parent ref before writing the nested one.
+// FetchOriginTimeout bounds every git fetch so a hung remote can't freeze the caller
+// indefinitely. A var, not a const, so tests can use a short timeout.
+var FetchOriginTimeout = 5 * time.Minute
+
 func (g *GitClient) FetchOrigin() error {
 	log.Info("📋 Starting to fetch from origin")
-	cmd := exec.Command("git", "fetch", "--prune", "origin")
+	ctx, cancel := context.WithTimeout(context.Background(), FetchOriginTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "fetch", "--prune", "origin")
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			log.Error("❌ Git fetch timed out after %s\nOutput: %s", FetchOriginTimeout, string(output))
+			return fmt.Errorf("git fetch timed out after %s: %w\nOutput: %s", FetchOriginTimeout, err, string(output))
+		}
 		log.Error("❌ Git fetch failed: %v\nOutput: %s", err, string(output))
 		return fmt.Errorf("git fetch failed: %w\nOutput: %s", err, string(output))
 	}
