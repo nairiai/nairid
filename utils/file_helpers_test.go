@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -270,6 +271,47 @@ func TestReplaceFileAsTargetUser_NewAndSymlinkedFiles(t *testing.T) {
 	if got, err := os.ReadFile(target); err != nil || string(got) != "v2" {
 		t.Errorf("link target = %q, %v; want v2", got, err)
 	}
+}
+
+// A link the agent made in its home is replaced as the agent wherever it points, so the agent's
+// rights refuse a target outside its home, like nairid's own .env.
+func TestReplaceFileAsTargetUser_LinkOutOfTheAgentHome(t *testing.T) {
+	homes := t.TempDir()
+	t.Setenv("AGENT_EXEC_USER", "agentrunner")
+	outside := filepath.Join(homes, "ccagent", ".env")
+	link := filepath.Join(homes, "agentrunner", ".claude.json")
+	for _, dir := range []string{filepath.Dir(outside), filepath.Dir(link)} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(outside, []byte("NAIRI_KEY=test"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	var ranAs []string
+	stubAgentUser(t, homes, func(user string, _ ...string) *exec.Cmd {
+		ranAs = append(ranAs, user)
+		return exec.Command("false") // the agent can't write there
+	})
+
+	err := replaceFileAsTargetUser(link, []byte(`{"mcpServers":{}}`), 0600)
+
+	if err == nil || !slices.Equal(ranAs, []string{"agentrunner"}) {
+		t.Errorf("error = %v, ran as %v; want a refused write as agentrunner", err, ranAs)
+	}
+	if got, err := os.ReadFile(outside); err != nil || string(got) != "NAIRI_KEY=test" {
+		t.Errorf("the file outside the agent's home = %q, %v; want it untouched", got, err)
+	}
+}
+
+func stubAgentUser(t *testing.T, homes string, run func(user string, args ...string) *exec.Cmd) {
+	t.Helper()
+	oldHomes, oldRun := agentHomesDir, runAsUser
+	agentHomesDir, runAsUser = homes, run
+	t.Cleanup(func() { agentHomesDir, runAsUser = oldHomes, oldRun })
 }
 
 // openOldConfig writes a 0600 config and opens it, as a reader would hold it during the write.

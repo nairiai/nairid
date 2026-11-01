@@ -49,22 +49,32 @@ func readFileAsTargetUser(filePath string) ([]byte, error) {
 	return stdout.Bytes(), nil
 }
 
+// agentHomesDir and runAsUser are variables so tests can stand in for /home and sudo.
+var (
+	agentHomesDir = "/home"
+	runAsUser     = func(user string, args ...string) *exec.Cmd {
+		return exec.Command("sudo", append([]string{"-u", user}, args...)...)
+	}
+)
+
 // replaceFileAsTargetUser writes content to a temp file next to filePath and renames it over, so
-// an agent CLI never reads its config half written. An existing file keeps its mode.
+// an agent CLI never reads its config half written. An existing file keeps its mode. The user comes
+// from the path before links resolve, so a link in the agent's home can't reach past its rights.
 func replaceFileAsTargetUser(filePath string, content []byte, perm os.FileMode) error {
+	execUser := os.Getenv("AGENT_EXEC_USER")
+	asAgent := execUser != "" && strings.HasPrefix(filepath.Clean(filePath), filepath.Join(agentHomesDir, execUser)+"/")
 	if resolved, err := filepath.EvalSymlinks(filePath); err == nil {
 		filePath = resolved
 	}
 	if info, err := os.Stat(filePath); err == nil {
 		perm = info.Mode().Perm()
 	}
-	execUser := os.Getenv("AGENT_EXEC_USER")
-	if execUser == "" || !strings.HasPrefix(filePath, "/home/"+execUser) {
+	if !asAgent {
 		return replaceFile(filePath, content, perm)
 	}
 
 	log.Info("🔌 Replacing file as user '%s': %s", execUser, filePath)
-	cmd := exec.Command("sudo", "-u", execUser, "sh", "-c", replaceFileScript, "sh", filePath, fmt.Sprintf("%o", perm))
+	cmd := runAsUser(execUser, "sh", "-c", replaceFileScript, "sh", filePath, fmt.Sprintf("%o", perm))
 	cmd.Stdin = bytes.NewReader(content)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
