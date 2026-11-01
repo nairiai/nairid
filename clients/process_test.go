@@ -3,6 +3,7 @@ package clients
 import (
 	"context"
 	"os"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -265,6 +266,50 @@ func TestBuildAgentCommandWithContext_Managed(t *testing.T) {
 	// cmd.Env should NOT be set in managed mode (env passed via 'env' command inside bash)
 	if cmd.Env != nil {
 		t.Error("cmd.Env should be nil in managed mode (env passed via 'env' command inside bash)")
+	}
+}
+
+func TestBuildAgentCommandWithContext_DisablesClaudeAIConnectors_SelfHosted(t *testing.T) {
+	original := os.Getenv("AGENT_EXEC_USER")
+	defer func() { _ = os.Setenv("AGENT_EXEC_USER", original) }()
+	_ = os.Unsetenv("AGENT_EXEC_USER")
+
+	cmd := BuildAgentCommandWithContext(context.Background(), "claude", "-p", "hi")
+
+	found := false
+	for _, e := range cmd.Env {
+		if e == "ENABLE_CLAUDEAI_MCP_SERVERS=false" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("Expected ENABLE_CLAUDEAI_MCP_SERVERS=false in env for a claude command, got: %v", cmd.Env)
+	}
+}
+
+func TestBuildAgentCommandWithContext_DisablesClaudeAIConnectors_Managed(t *testing.T) {
+	original := os.Getenv("AGENT_EXEC_USER")
+	defer func() { _ = os.Setenv("AGENT_EXEC_USER", original) }()
+	_ = os.Setenv("AGENT_EXEC_USER", "agentrunner")
+
+	cmd := BuildAgentCommandWithContext(context.Background(), "claude", "-p", "hi")
+
+	bashScript := cmd.Args[5]
+	if !strings.Contains(bashScript, "ENABLE_CLAUDEAI_MCP_SERVERS=false") {
+		t.Errorf("Expected ENABLE_CLAUDEAI_MCP_SERVERS=false in the managed bash script, got: %s", bashScript)
+	}
+}
+
+func TestBuildAgentCommandWithContext_OtherAgentsDoNotGetClaudeAIVar(t *testing.T) {
+	original := os.Getenv("AGENT_EXEC_USER")
+	defer func() { _ = os.Setenv("AGENT_EXEC_USER", original) }()
+	_ = os.Unsetenv("AGENT_EXEC_USER")
+
+	for _, name := range []string{"codex", "cursor-agent", "opencode"} {
+		cmd := BuildAgentCommandWithContext(context.Background(), name, "-p", "hi")
+		if slices.Contains(cmd.Env, "ENABLE_CLAUDEAI_MCP_SERVERS=false") {
+			t.Errorf("%s should not get the claude-only ENABLE_CLAUDEAI_MCP_SERVERS var, got: %v", name, cmd.Env)
+		}
 	}
 }
 
