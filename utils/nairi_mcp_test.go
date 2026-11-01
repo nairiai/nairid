@@ -179,6 +179,39 @@ func TestCodexMCPProcessor_WritesNairiEntry(t *testing.T) {
 	}
 }
 
+func TestCodexMCPProcessor_RenamedCustomerNairiKeepsDefaultTimeout(t *testing.T) {
+	home := writeRemoteMCPConfig(t)
+	cfg := `{"mcpServers":{"nairi":{"command":"npx","args":["customer-nairi"]}}}`
+	if err := os.WriteFile(filepath.Join(home, ".config", "eksecd", "mcp", "nairi.json"), []byte(cfg), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := NewCodexMCPProcessor(testNairiMCP()).ProcessMCPConfigs(""); err != nil {
+		t.Fatal(err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		MCPServers map[string]map[string]interface{} `toml:"mcp_servers"`
+	}
+	if err := toml.Unmarshal(content, &config); err != nil {
+		t.Fatal(err)
+	}
+	if config.MCPServers[NairiMCPServerName]["startup_timeout_sec"] != int64(codexNairiStartupTimeoutSec) {
+		t.Errorf("gateway entry lost its startup timeout: %v", config.MCPServers[NairiMCPServerName])
+	}
+	moved, ok := config.MCPServers[NairiMCPServerName+"-2"]
+	if !ok {
+		t.Fatalf("expected the customer's server under nairi-2, got %v", config.MCPServers)
+	}
+	if _, ok := moved["startup_timeout_sec"]; ok {
+		t.Error("the customer's renamed server keeps Codex's default startup timeout")
+	}
+}
+
 func TestOpenCodeMCPProcessor_WritesNairiEntry(t *testing.T) {
 	home := writeRemoteMCPConfig(t)
 

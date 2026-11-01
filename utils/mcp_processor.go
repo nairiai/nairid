@@ -572,10 +572,13 @@ func (p *CodexMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 			}
 
 			codexServerConfig["enabled"] = true
-			if p.nairi != nil && serverName == NairiMCPServerName {
-				codexServerConfig["startup_timeout_sec"] = codexNairiStartupTimeoutSec
-			}
 			codexMCPServers[serverName] = codexServerConfig
+		}
+
+		// With the gateway on, a customer server named "nairi" was renamed, so this is our entry.
+		nairiEntry, isNairi := codexMCPServers[NairiMCPServerName].(map[string]interface{})
+		if isNairi && p.nairi != nil {
+			nairiEntry["startup_timeout_sec"] = codexNairiStartupTimeoutSec
 		}
 
 		existingConfig["mcp_servers"] = codexMCPServers
