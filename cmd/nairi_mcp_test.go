@@ -32,16 +32,18 @@ func mcpKeyBackend(t *testing.T, status int, body string) (*httptest.Server, *bo
 	return ts, &keyAsked, &stripAsked
 }
 
+type setupNairiMCPCase struct {
+	name        string
+	apiKey      string
+	proxy       string
+	status      int
+	body        string
+	wantKey     string
+	wantKeyCall bool
+}
+
 func TestSetupNairiMCP(t *testing.T) {
-	tests := []struct {
-		name        string
-		apiKey      string
-		proxy       string
-		status      int
-		body        string
-		wantKey     string
-		wantKeyCall bool
-	}{
+	tests := []setupNairiMCPCase{
 		{
 			name:   "managed without a secret proxy keeps remote servers local",
 			apiKey: managedAPIKey,
@@ -85,34 +87,36 @@ func TestSetupNairiMCP(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("AGENT_HTTP_PROXY", tt.proxy)
-			ts, keyAsked, stripAsked := mcpKeyBackend(t, tt.status, tt.body)
-			client := clients.NewAgentsApiClient(tt.apiKey, ts.URL, "ag_123")
+		t.Run(tt.name, func(t *testing.T) { runSetupNairiMCPCase(t, tt) })
+	}
+}
 
-			got := setupNairiMCP(client, ts.URL, "ag_123")
+func runSetupNairiMCPCase(t *testing.T, tt setupNairiMCPCase) {
+	t.Setenv("AGENT_HTTP_PROXY", tt.proxy)
+	ts, keyAsked, stripAsked := mcpKeyBackend(t, tt.status, tt.body)
+	client := clients.NewAgentsApiClient(tt.apiKey, ts.URL, "ag_123")
 
-			if *keyAsked != tt.wantKeyCall {
-				t.Errorf("asked for the MCP key = %v, want %v", *keyAsked, tt.wantKeyCall)
-			}
-			if _, err := client.FetchAttachment("att_123"); err != nil {
-				t.Fatal(err)
-			}
-			if tt.wantKey == "" {
-				if got != nil || *stripAsked {
-					t.Errorf("expected no gateway entry and full MCP configs, got entry %v, strip asked %v", got, *stripAsked)
-				}
-				return
-			}
-			if got == nil {
-				t.Fatal("expected a gateway entry")
-			}
-			if got.URL != ts.URL+clients.NairiMCPGatewayPath || got.Headers["Authorization"] != "Bearer "+tt.wantKey {
-				t.Errorf("unexpected gateway entry %v", got)
-			}
-			if !*stripAsked {
-				t.Error("expected MCP configs to be fetched without gateway-served servers")
-			}
-		})
+	got := setupNairiMCP(client, ts.URL, "ag_123")
+
+	if *keyAsked != tt.wantKeyCall {
+		t.Errorf("asked for the MCP key = %v, want %v", *keyAsked, tt.wantKeyCall)
+	}
+	if _, err := client.FetchAttachment("att_123"); err != nil {
+		t.Fatal(err)
+	}
+	if tt.wantKey == "" {
+		if got != nil || *stripAsked {
+			t.Errorf("expected no gateway entry and full MCP configs, got entry %v, strip asked %v", got, *stripAsked)
+		}
+		return
+	}
+	if got == nil {
+		t.Fatal("expected a gateway entry")
+	}
+	if got.URL != ts.URL+clients.NairiMCPGatewayPath || got.Headers["Authorization"] != "Bearer "+tt.wantKey {
+		t.Errorf("unexpected gateway entry %v", got)
+	}
+	if !*stripAsked {
+		t.Error("expected MCP configs to be fetched without gateway-served servers")
 	}
 }
