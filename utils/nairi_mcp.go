@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"path"
 	"sort"
 	"strings"
 
@@ -74,19 +75,46 @@ func agentMCPServers(nairi *NairiMCP, stdioOnly bool) (map[string]interface{}, e
 	return withNairiMCP(servers, nairi), nil
 }
 
-// withoutRemoteServers drops the remote servers. The backend already leaves them out for a
-// nairid that sends its version; this catches one it missed.
+// withoutRemoteServers drops the remote servers. A backend from before the gateway ignores
+// nairid's version and still sends Composio's mcp-remote wrapper with the platform key.
 func withoutRemoteServers(servers map[string]interface{}) map[string]interface{} {
 	for name, serverConfig := range servers {
 		configMap, _ := serverConfig.(map[string]interface{})
-		_, hasURL := configMap["url"]
-		serverType, _ := configMap["type"].(string)
-		if hasURL || (serverType != "" && serverType != "stdio") {
-			log.Warn("🔌 Dropping remote MCP server %q: no Nairi agent MCP gateway to reach it through", name)
-			delete(servers, name)
+		if !isRemoteServer(configMap) {
+			continue
 		}
+		log.Warn("🔌 Dropping remote MCP server %q: no Nairi agent MCP gateway to reach it through", name)
+		delete(servers, name)
 	}
 	return servers
+}
+
+// isRemoteServer reports whether a server reaches a remote one: a url entry, a non-stdio type,
+// or a stdio bridge through mcp-remote.
+func isRemoteServer(configMap map[string]interface{}) bool {
+	if _, hasURL := configMap["url"]; hasURL {
+		return true
+	}
+	if serverType, _ := configMap["type"].(string); serverType != "" && serverType != "stdio" {
+		return true
+	}
+	command, _ := configMap["command"].(string)
+	if isMCPRemote(command) {
+		return true
+	}
+	args, _ := configMap["args"].([]interface{})
+	for _, arg := range args {
+		if s, _ := arg.(string); isMCPRemote(s) {
+			return true
+		}
+	}
+	return false
+}
+
+// isMCPRemote matches mcp-remote run directly, by path or as an npx package with a version.
+func isMCPRemote(s string) bool {
+	name := path.Base(s)
+	return name == "mcp-remote" || strings.HasPrefix(name, "mcp-remote@")
 }
 
 // localServerIDs lists the remote servers the backend left in the downloaded config: the ones

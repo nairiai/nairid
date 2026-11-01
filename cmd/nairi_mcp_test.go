@@ -65,6 +65,7 @@ type fakeBackend struct {
 	keyReplies     []reply // one per mcp-key call, the last one repeating
 	probeReplies   []reply // one per gateway probe, the last one repeating
 	strippedConfig string  // defaults to strippedMCPConfig
+	ignoresVersion bool    // a backend from before the gateway sends legacyMCPConfig anyway
 	keyCalls       int
 	probeCalls     int
 	proxiedProbes  int
@@ -95,10 +96,10 @@ func (b *fakeBackend) handle(w http.ResponseWriter, r *http.Request) {
 		b.mcpDownloads++
 		b.stripAsked = r.Header.Get(clients.NairidVersionHeader) != ""
 		config := legacyMCPConfig
-		if b.stripAsked {
+		if b.stripAsked && !b.ignoresVersion {
 			config = strippedMCPConfig
 		}
-		if b.stripAsked && b.strippedConfig != "" {
+		if b.stripAsked && !b.ignoresVersion && b.strippedConfig != "" {
 			config = b.strippedConfig
 		}
 		data := base64.StdEncoding.EncodeToString([]byte(config))
@@ -497,41 +498,59 @@ func TestManagedAgentMCPConfig(t *testing.T) {
 // Off the gateway, each agent CLI keeps the stdio servers and nothing that reaches a remote
 // server: no url entry, no Composio wrapper or key, no gateway entry.
 func TestManagedAgentMCPConfig_FailClosed(t *testing.T) {
-	configs := []struct {
-		name           string
-		strippedConfig string
-		wantServers    []string
-	}{
-		{name: "stdio server kept", strippedConfig: strippedMCPConfig, wantServers: []string{"fs"}},
-		{name: "only a remote server", strippedConfig: `{"mcpServers":{` + urlServer + `}}`, wantServers: []string{}},
+	for _, tt := range failClosedCases() {
+		t.Run(tt.agentType+"/"+tt.name, func(t *testing.T) {
+			backend := &fakeBackend{strippedConfig: tt.strippedConfig, ignoresVersion: tt.ignoresVersion}
+			agentHome := agentRun{
+				agentType: tt.agentType, managed: true, keyReplies: []reply{tt.keyReply}, backend: backend,
+			}.run(t)
+
+			if backend.mcpDownloads != 1 || !backend.stripAsked {
+				t.Errorf("MCP config downloads = %d, with %s: %v; want 1 with it",
+					backend.mcpDownloads, clients.NairidVersionHeader, backend.stripAsked)
+			}
+			assertStdioOnlyConfig(t, tt.agentType, agentHome, tt.wantServers)
+		})
 	}
+}
+
+type failClosedCase struct {
+	agentType      string
+	name           string
+	keyReply       reply
+	strippedConfig string
+	ignoresVersion bool
+	wantServers    []string
+}
+
+func failClosedCases() []failClosedCase {
+	configs := []failClosedCase{
+		{name: "stdio server kept", keyReply: notEnabled, strippedConfig: strippedMCPConfig, wantServers: []string{"fs"}},
+		{
+			name: "only a remote server", keyReply: notEnabled,
+			strippedConfig: `{"mcpServers":{` + urlServer + `}}`, wantServers: []string{},
+		},
+		{name: "backend without the gateway", keyReply: routeNotFound, ignoresVersion: true, wantServers: []string{"fs"}},
+	}
+	var cases []failClosedCase
 	for _, agentType := range []string{"claude", "codex", "opencode"} {
 		for _, cfg := range configs {
-			t.Run(agentType+"/"+cfg.name, func(t *testing.T) {
-				backend := &fakeBackend{strippedConfig: cfg.strippedConfig}
-				agentHome := agentRun{
-					agentType: agentType, managed: true, keyReplies: []reply{notEnabled}, backend: backend,
-				}.run(t)
+			cfg.agentType = agentType
+			cases = append(cases, cfg)
+		}
+	}
+	return cases
+}
 
-				if backend.mcpDownloads != 1 || !backend.stripAsked {
-					t.Errorf("MCP config downloads = %d, with %s: %v; want 1 with it",
-						backend.mcpDownloads, clients.NairidVersionHeader, backend.stripAsked)
-				}
-				content, servers := readAgentMCPServers(t, agentType, agentHome)
-				if got := serverNames(servers); !reflect.DeepEqual(got, cfg.wantServers) {
-					t.Errorf("MCP servers = %v, want %v", got, cfg.wantServers)
-				}
-				for name, server := range servers {
-					if _, hasURL := server["url"]; hasURL {
-						t.Errorf("server %s has a url: %v", name, server)
-					}
-				}
-				for _, leak := range []string{"url", "mcp-remote", "test_platform_key", "test_remote_token", "nairi"} {
-					if strings.Contains(content, leak) {
-						t.Errorf("the agent's %s config contains %q: %s", agentType, leak, content)
-					}
-				}
-			})
+func assertStdioOnlyConfig(t *testing.T, agentType, agentHome string, wantServers []string) {
+	t.Helper()
+	content, servers := readAgentMCPServers(t, agentType, agentHome)
+	if got := serverNames(servers); !reflect.DeepEqual(got, wantServers) {
+		t.Errorf("MCP servers = %v, want %v", got, wantServers)
+	}
+	for _, leak := range []string{"url", "mcp-remote", "test_platform_key", "test_remote_token", "nairi"} {
+		if strings.Contains(content, leak) {
+			t.Errorf("the agent's %s config contains %q: %s", agentType, leak, content)
 		}
 	}
 }
