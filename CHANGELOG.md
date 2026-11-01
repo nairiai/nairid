@@ -1,3 +1,12 @@
+## [v0.0.127] - 2026-11-01
+
+### Bugfixes
+
+- Codex shell commands now go through the secret proxy ([#241](https://github.com/nairiai/nairid/pull/241))
+  - Codex `shell_environment_policy` is `inherit = "all"` with `ignore_default_excludes`, so shell commands keep `HTTP(S)_PROXY`, `NO_PROXY`, the CA variables and vault placeholders, as Claude Code shells do
+  - A shell `curl` now gets placeholder secrets filled and the proxy's path blocks applied, instead of going out direct
+  - On Windows, blocked daemon env names are matched case-insensitively so mixed-case credentials stay out of agent processes
+
 ## [v0.0.126] - 2026-11-01
 
 ### Performance
