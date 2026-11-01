@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -153,8 +155,8 @@ func stdioOnlyMCPConfig(content []byte) ([]byte, error) {
 	return json.Marshal(config)
 }
 
-// isRemoteServer reports whether a server reaches a remote one: a url entry, a non-stdio type,
-// or a stdio bridge through mcp-remote.
+// isRemoteServer reports whether a server reaches a remote one a managed agent must not run: a
+// url entry, a non-stdio type, or Composio's mcp-remote wrapper. A customer's own wrapper stays.
 func isRemoteServer(configMap map[string]interface{}) bool {
 	if _, hasURL := configMap["url"]; hasURL {
 		return true
@@ -162,17 +164,45 @@ func isRemoteServer(configMap map[string]interface{}) bool {
 	if serverType, _ := configMap["type"].(string); serverType != "" && serverType != "stdio" {
 		return true
 	}
+	return isComposioWrapper(configMap)
+}
+
+// isComposioWrapper reports whether a server runs mcp-remote against composio.dev or with a
+// COMPOSIO_API_KEY. nairid can't see the backend's Composio flag, so doubt counts as Composio.
+func isComposioWrapper(configMap map[string]interface{}) bool {
 	command, _ := configMap["command"].(string)
-	if isMCPRemote(command) {
-		return true
-	}
+	words := []string{command}
 	args, _ := configMap["args"].([]interface{})
 	for _, arg := range args {
-		if s, _ := arg.(string); isMCPRemote(s) {
-			return true
-		}
+		s, _ := arg.(string)
+		words = append(words, s)
 	}
-	return false
+	at := slices.IndexFunc(words, isMCPRemote)
+	if at < 0 {
+		return false
+	}
+	// mcp-remote connects to its first argument.
+	if at+1 == len(words) || mayBeComposioURL(words[at+1]) {
+		return true
+	}
+	env, _ := configMap["env"].(map[string]interface{})
+	for name, value := range env {
+		s, _ := value.(string)
+		words = append(words, name, s)
+	}
+	return slices.ContainsFunc(words, func(word string) bool {
+		return strings.Contains(strings.ToUpper(word), "COMPOSIO_API_KEY")
+	})
+}
+
+// mayBeComposioURL reports whether raw is on composio.dev, a subdomain or a lookalike such as
+// composio.dev.evil, or too broken to tell.
+func mayBeComposioURL(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Hostname() == "" {
+		return true
+	}
+	return strings.Contains("."+strings.ToLower(parsed.Hostname())+".", ".composio.dev.")
 }
 
 // isMCPRemote matches mcp-remote run directly, by path or as an npx package with a version.
