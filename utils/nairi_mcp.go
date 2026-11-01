@@ -8,14 +8,14 @@ import (
 )
 
 const (
-	// NairiMCPServerName is the agent CLI's entry for the Nairi MCP gateway.
+	// NairiMCPServerName is the agent CLI's entry for the Nairi agent MCP gateway.
 	NairiMCPServerName = "nairi"
 	// LocalMCPsHeader lists the remote MCP servers a self-hosted agent kept in its own config,
 	// so the gateway does not serve them a second time.
 	LocalMCPsHeader = "X-Nairi-Local-MCPs"
 )
 
-// NairiMCP is the Nairi MCP gateway entry nairid adds to the agent CLI's MCP config. The
+// NairiMCP is the Nairi agent MCP gateway entry nairid adds to the agent CLI's MCP config. The
 // gateway serves the agent's remote and Composio MCP servers.
 type NairiMCP struct {
 	URL     string

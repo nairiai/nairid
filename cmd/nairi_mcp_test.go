@@ -82,8 +82,8 @@ func TestSetupNairiMCP(t *testing.T) {
 		{
 			name:   "self-hosted with the gateway on uses its key",
 			apiKey: selfHostedAPIKey,
-			status: http.StatusOK, body: `{"key":"mcpk_test"}`,
-			wantKey: "mcpk_test", wantKeyCall: true,
+			status: http.StatusOK, body: `{"key":"nairiagentmcp_test"}`,
+			wantKey: "nairiagentmcp_test", wantKeyCall: true,
 		},
 	}
 	for _, tt := range tests {
@@ -113,7 +113,7 @@ func runSetupNairiMCPCase(t *testing.T, tt setupNairiMCPCase) {
 	if got == nil {
 		t.Fatal("expected a gateway entry")
 	}
-	if got.URL != ts.URL+clients.NairiMCPGatewayPath || got.Headers["Authorization"] != "Bearer "+tt.wantKey {
+	if got.URL != ts.URL+clients.NairiAgentMCPGatewayPath || got.Headers["Authorization"] != "Bearer "+tt.wantKey {
 		t.Errorf("unexpected gateway entry %v", got)
 	}
 	if !*stripAsked {

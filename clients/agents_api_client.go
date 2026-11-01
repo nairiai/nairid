@@ -16,11 +16,11 @@ import (
 )
 
 // NairidVersionHeader tells the backend this nairid reaches remote MCP servers through the Nairi
-// MCP gateway, so MCP configs come without them.
+// agent MCP gateway, so MCP configs come without them.
 const NairidVersionHeader = "X-Nairid-Version"
 
-// NairiMCPGatewayPath is the backend's MCP gateway endpoint.
-const NairiMCPGatewayPath = "/api/agents/mcp"
+// NairiAgentMCPGatewayPath is the backend's agent MCP gateway endpoint.
+const NairiAgentMCPGatewayPath = "/api/agents/mcp"
 
 // AttachmentResponse represents the API response for fetching an attachment
 type AttachmentResponse struct {
@@ -51,11 +51,11 @@ type TokenResponse struct {
 
 // AgentsApiClient handles API requests to the Claude Control agents API
 type AgentsApiClient struct {
-	apiKey     string
-	baseURL    string
-	agentID    string
-	client     *http.Client
-	mcpGateway string // nairid version, sent once the agent uses the MCP gateway
+	apiKey          string
+	baseURL         string
+	agentID         string
+	client          *http.Client
+	agentMCPGateway string // nairid version, sent once the agent uses the agent MCP gateway
 }
 
 // NewAgentsApiClient creates a new agents API client
@@ -76,19 +76,20 @@ func (c *AgentsApiClient) IsSelfHosted() bool {
 	return strings.HasPrefix(c.apiKey, "nairid_") || strings.HasPrefix(c.apiKey, "eksecd_") || strings.HasPrefix(c.apiKey, "ccagent_")
 }
 
-// UseMCPGateway makes MCP config downloads leave out the servers the Nairi MCP gateway serves.
-func (c *AgentsApiClient) UseMCPGateway(nairidVersion string) {
-	c.mcpGateway = nairidVersion
+// UseAgentMCPGateway makes MCP config downloads leave out the servers the Nairi agent MCP
+// gateway serves.
+func (c *AgentsApiClient) UseAgentMCPGateway(nairidVersion string) {
+	c.agentMCPGateway = nairidVersion
 }
 
-// MCPKeyResponse is the API response for a self-hosted agent's MCP gateway key
+// MCPKeyResponse is the API response for an agent's key to the agent MCP gateway
 type MCPKeyResponse struct {
 	Key string `json:"key"`
 }
 
-// FetchMCPKey fetches the agent's key for the Nairi MCP gateway: the key itself for a self-hosted
-// agent, a placeholder its secret proxy fills for a managed one. Backends without the gateway
-// answer 404 (older), 501 (turned off) or 400 (managed agents not yet supported).
+// FetchMCPKey fetches the agent's key for the Nairi agent MCP gateway: the key itself for a
+// self-hosted agent, a placeholder its secret proxy fills for a managed one. Older backends
+// answer 404, and backends without managed support answer 400 for managed agents.
 func (c *AgentsApiClient) FetchMCPKey() (string, error) {
 	req, err := http.NewRequest("GET", c.baseURL+"/api/agents/mcp-key", nil)
 	if err != nil {
@@ -131,8 +132,8 @@ func (c *AgentsApiClient) FetchAttachment(attachmentID string) (*AttachmentRespo
 	// Add Bearer token authentication header
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
 	req.Header.Set("Accept", "application/json")
-	if c.mcpGateway != "" {
-		req.Header.Set(NairidVersionHeader, c.mcpGateway)
+	if c.agentMCPGateway != "" {
+		req.Header.Set(NairidVersionHeader, c.agentMCPGateway)
 	}
 
 	resp, err := c.client.Do(req)

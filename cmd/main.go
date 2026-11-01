@@ -213,9 +213,9 @@ func fetchAndStoreArtifacts(agentsApiClient *clients.AgentsApiClient) error {
 	return nil
 }
 
-// setupNairiMCP returns the Nairi MCP gateway entry for the agent CLI, or nil to keep remote
-// MCP servers in the agent's own config as before. Only once it returns an entry does the API
-// client ask for MCP configs without the servers the gateway serves.
+// setupNairiMCP returns the Nairi agent MCP gateway entry for the agent CLI, or nil to keep
+// remote MCP servers in the agent's own config as before. Only once it returns an entry does
+// the API client ask for MCP configs without the servers the gateway serves.
 func setupNairiMCP(agentsApiClient *clients.AgentsApiClient, apiBaseURL, agentID string) *utils.NairiMCP {
 	if !agentsApiClient.IsSelfHosted() && clients.AgentHTTPProxy() == "" {
 		log.Info("🔌 No secret proxy to fill the MCP key, keeping remote MCP servers local")
@@ -225,7 +225,7 @@ func setupNairiMCP(agentsApiClient *clients.AgentsApiClient, apiBaseURL, agentID
 	// to stop running remote servers locally.
 	key, err := agentsApiClient.FetchMCPKey()
 	if err != nil {
-		log.Info("🔌 Nairi MCP gateway unavailable, keeping remote MCP servers local: %v", err)
+		log.Info("🔌 Nairi agent MCP gateway unavailable, keeping remote MCP servers local: %v", err)
 		return nil
 	}
 
@@ -233,9 +233,9 @@ func setupNairiMCP(agentsApiClient *clients.AgentsApiClient, apiBaseURL, agentID
 	if agentID != "" {
 		headers["X-AGENT-ID"] = agentID
 	}
-	agentsApiClient.UseMCPGateway(core.GetVersion())
-	log.Info("🔌 Using the Nairi MCP gateway at %s%s", apiBaseURL, clients.NairiMCPGatewayPath)
-	return &utils.NairiMCP{URL: apiBaseURL + clients.NairiMCPGatewayPath, Headers: headers}
+	agentsApiClient.UseAgentMCPGateway(core.GetVersion())
+	log.Info("🔌 Using the Nairi agent MCP gateway at %s%s", apiBaseURL, clients.NairiAgentMCPGatewayPath)
+	return &utils.NairiMCP{URL: apiBaseURL + clients.NairiAgentMCPGatewayPath, Headers: headers}
 }
 
 // processAgentRules processes rules from eksecd directory based on agent type

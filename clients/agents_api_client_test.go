@@ -52,10 +52,10 @@ func TestFetchAttachment_SendsVersionOnlyWithGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 	if gotVersion != "" {
-		t.Errorf("expected no %s before UseMCPGateway, got %q", NairidVersionHeader, gotVersion)
+		t.Errorf("expected no %s before UseAgentMCPGateway, got %q", NairidVersionHeader, gotVersion)
 	}
 
-	client.UseMCPGateway("1.2.3")
+	client.UseAgentMCPGateway("1.2.3")
 	if _, err := client.FetchAttachment("att_123"); err != nil {
 		t.Fatal(err)
 	}
