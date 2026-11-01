@@ -456,23 +456,13 @@ func (p *OpenCodeMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 	return nil
 }
 
-// codexShellEnvironmentVars are the variables Codex passes to its shell commands: Codex's
-// Unix and Windows "core" sets plus the proxy and CA variables, so a shell curl goes through
-// the secret proxy like the agent CLI's own traffic. Codex matches them case-insensitively.
-var codexShellEnvironmentVars = []string{
-	"PATH", "SHELL", "TMPDIR", "TEMP", "TMP", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "LOGNAME", "USER",
-	"PATHEXT", "COMSPEC", "SYSTEMROOT", "WINDIR", "SYSTEMDRIVE", "USERNAME", "USERDOMAIN", "USERPROFILE",
-	"HOMEDRIVE", "HOMEPATH", "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432", "PROGRAMDATA",
-	"LOCALAPPDATA", "APPDATA", "POWERSHELL", "PWSH",
-	"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
-	"NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "SSL_CERT_DIR", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO",
-}
-
+// codexShellEnvironmentPolicy passes the agent's whole environment to Codex shell commands, as
+// Claude Code does: the proxy and CA variables route a shell curl through the secret proxy, and
+// vault placeholders (often named *_KEY or *_TOKEN) reach the shell for the proxy to fill.
 func codexShellEnvironmentPolicy() map[string]interface{} {
 	return map[string]interface{}{
 		"inherit":                 "all",
 		"ignore_default_excludes": true,
-		"include_only":            codexShellEnvironmentVars,
 	}
 }
 
