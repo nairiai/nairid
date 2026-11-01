@@ -489,6 +489,8 @@ func TestRefreshStaleWorktrees_UpdatesStaleEntries(t *testing.T) {
 	remoteURL := gitOutput(t, mainRepo, "remote", "get-url", "origin")
 	workDir := t.TempDir()
 	gitOutput(t, workDir, "clone", remoteURL, ".")
+	gitOutput(t, workDir, "config", "user.email", "test@example.com")
+	gitOutput(t, workDir, "config", "user.name", "Test User")
 	if err := os.WriteFile(workDir+"/new-file.txt", []byte("new commit"), 0644); err != nil {
 		t.Fatalf("Failed to write new file: %v", err)
 	}
