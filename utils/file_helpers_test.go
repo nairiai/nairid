@@ -1,8 +1,11 @@
 package utils
 
 import (
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -211,5 +214,91 @@ func TestMkdirAllAsTargetUser_PathNotInAgentHome(t *testing.T) {
 	}
 	if !info.IsDir() {
 		t.Error("Expected a directory")
+	}
+}
+
+// A config is renamed over, not rewritten in place, so a reader holding the old file never sees it
+// half written; it keeps its mode.
+func TestReplaceFileAsTargetUser_RenamesOverTheFile(t *testing.T) {
+	t.Setenv("AGENT_EXEC_USER", "")
+	path, old := openOldConfig(t)
+
+	if err := replaceFileAsTargetUser(path, []byte("new"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	assertReplaced(t, path, old, 0600)
+}
+
+// The script sudo runs as the agent user does the same, with the mode it is given.
+func TestReplaceFileScript_RenamesOverTheFile(t *testing.T) {
+	path, old := openOldConfig(t)
+	cmd := exec.Command("sh", "-c", replaceFileScript, "sh", path, "640")
+	cmd.Stdin = strings.NewReader("new")
+
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+
+	assertReplaced(t, path, old, 0640)
+}
+
+// A new config gets perm; a symlinked one is replaced where the link points, and stays a link.
+func TestReplaceFileAsTargetUser_NewAndSymlinkedFiles(t *testing.T) {
+	t.Setenv("AGENT_EXEC_USER", "")
+	dir := t.TempDir()
+	target := filepath.Join(dir, "config.toml")
+	link := filepath.Join(dir, "link.toml")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := replaceFileAsTargetUser(target, []byte("v1"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := replaceFileAsTargetUser(link, []byte("v2"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("expected %s to stay a symlink, got %v, %v", link, info, err)
+	}
+	info, err := os.Stat(target)
+	if err != nil || info.Mode().Perm() != 0644 {
+		t.Fatalf("new file mode = %v, %v; want 0644", info, err)
+	}
+	if got, err := os.ReadFile(target); err != nil || string(got) != "v2" {
+		t.Errorf("link target = %q, %v; want v2", got, err)
+	}
+}
+
+// openOldConfig writes a 0600 config and opens it, as a reader would hold it during the write.
+func openOldConfig(t *testing.T) (string, *os.File) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), ".claude.json")
+	if err := os.WriteFile(path, []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	old, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = old.Close() })
+	return path, old
+}
+
+func assertReplaced(t *testing.T, path string, old *os.File, wantMode os.FileMode) {
+	t.Helper()
+	if got, err := os.ReadFile(path); err != nil || string(got) != "new" {
+		t.Errorf("file = %q, %v; want new", got, err)
+	}
+	if got, err := io.ReadAll(old); err != nil || string(got) != "old" {
+		t.Errorf("the reader holding the old file got %q, %v; want old", got, err)
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != wantMode {
+		t.Errorf("mode = %v, %v; want %v", info.Mode().Perm(), err, wantMode)
+	}
+	if entries, err := os.ReadDir(filepath.Dir(path)); err != nil || len(entries) != 1 {
+		t.Errorf("expected no temp file left, got %v, %v", entries, err)
 	}
 }

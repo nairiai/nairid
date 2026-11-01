@@ -4,11 +4,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	toml "github.com/pelletier/go-toml/v2"
 
 	"nairid/core/log"
 )
@@ -62,6 +66,46 @@ func withNairiMCP(servers map[string]interface{}, nairi *NairiMCP) map[string]in
 		"headers": headers,
 	}
 	return servers
+}
+
+// agentMCPConfigFiles is each agent CLI's config under its home and the key of its MCP servers.
+var agentMCPConfigFiles = map[string]struct{ path, serversKey string }{
+	"claude":   {".claude.json", "mcpServers"},
+	"opencode": {filepath.Join(".config", "opencode", "opencode.json"), "mcp"},
+	"codex":    {filepath.Join(".codex", "config.toml"), "mcp_servers"},
+}
+
+// HasNairiMCPEntry reports whether the agent CLI's config under homeDir holds the gateway entry.
+// An agent CLI without an MCP config reports true.
+func HasNairiMCPEntry(agentType, homeDir string) (bool, error) {
+	file, ok := agentMCPConfigFiles[agentType]
+	if !ok {
+		return true, nil
+	}
+	if homeDir == "" {
+		var err error
+		if homeDir, err = os.UserHomeDir(); err != nil {
+			return false, fmt.Errorf("failed to get home directory: %w", err)
+		}
+	}
+	content, err := readFileAsTargetUser(filepath.Join(homeDir, file.path))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var config map[string]interface{}
+	unmarshal := json.Unmarshal
+	if agentType == "codex" {
+		unmarshal = toml.Unmarshal
+	}
+	if err := unmarshal(content, &config); err != nil {
+		return false, fmt.Errorf("failed to parse %s: %w", file.path, err)
+	}
+	servers, _ := config[file.serversKey].(map[string]interface{})
+	_, ok = servers[NairiMCPServerName]
+	return ok, nil
 }
 
 // agentMCPServers merges the downloaded MCP configs, drops the remote servers with stdioOnly,

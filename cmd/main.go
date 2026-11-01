@@ -403,9 +403,9 @@ func (c *agentMCPConfig) writeMCPConfigs() error {
 	return nil
 }
 
-// reprobeGateway tries the gateway again every agentMCPReprobeInterval, until the agent uses it or
-// ctx ends. Without it, a backend blip, a host reboot or a stale secret proxy at startup kept a
-// managed agent off the gateway until a restart.
+// reprobeGateway tries the gateway again every agentMCPReprobeInterval until ctx ends. Without it,
+// a backend blip, a host reboot or a stale secret proxy at startup kept a managed agent off the
+// gateway until a restart. Once on it, each tick checks the CLI did not drop the gateway entry.
 func (c *agentMCPConfig) reprobeGateway(ctx context.Context) {
 	if !c.current().reprobe {
 		return
@@ -418,18 +418,20 @@ func (c *agentMCPConfig) reprobeGateway(ctx context.Context) {
 			return
 		case <-ticker.C:
 		}
-		if c.moveToGateway() {
-			return
+		if c.current().nairi != nil {
+			c.restoreGatewayEntry()
+			continue
 		}
+		c.moveToGateway()
 	}
 }
 
-// moveToGateway rewrites the agent CLI's MCP config with the gateway entry if the gateway answers,
-// and reports whether it did. Running jobs keep their CLI; new ones read the new config.
-func (c *agentMCPConfig) moveToGateway() bool {
+// moveToGateway rewrites the agent CLI's MCP config with the gateway entry if the gateway answers.
+// Running jobs keep their CLI; new ones read the new config.
+func (c *agentMCPConfig) moveToGateway() {
 	key, err := managedMCPKey(c.client, clients.AgentHTTPProxy())
 	if err != nil {
-		return false
+		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -441,11 +443,30 @@ func (c *agentMCPConfig) moveToGateway() bool {
 	}
 	if err != nil {
 		log.Warn("🔌 Failed to move the agent to the Nairi agent MCP gateway, retrying later: %v", err)
-		return false
+		return
 	}
 	c.setup = gateway
 	log.Info("🔌 Nairi agent MCP gateway reachable again, moved the agent to it")
-	return true
+}
+
+// restoreGatewayEntry writes the agent CLI's MCP config again if it lost the gateway entry: a CLI
+// running during the move can write its own copy of the config back over it.
+func (c *agentMCPConfig) restoreGatewayEntry() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	present, err := utils.HasNairiMCPEntry(c.agentType, c.targetHomeDir)
+	if err != nil {
+		log.Warn("🔌 Failed to check the agent's MCP config for the Nairi agent MCP gateway: %v", err)
+		return
+	}
+	if present {
+		return
+	}
+	if err := processMCPConfigs(c.agentType, c.workDir, c.targetHomeDir, c.setup); err != nil {
+		log.Warn("🔌 Failed to restore the Nairi agent MCP gateway entry, retrying later: %v", err)
+		return
+	}
+	log.Info("🔌 Restored the Nairi agent MCP gateway entry the agent CLI dropped")
 }
 
 // processAgentRules processes rules from eksecd directory based on agent type

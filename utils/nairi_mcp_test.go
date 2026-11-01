@@ -282,6 +282,44 @@ func TestStdioOnlyMCPProcessor_GatewayDropsRemoteServers(t *testing.T) {
 	}
 }
 
+func TestHasNairiMCPEntry(t *testing.T) {
+	tests := []struct {
+		name      string
+		agentType string
+		config    string // none written when empty
+		want      bool
+		wantErr   bool
+	}{
+		{name: "gateway entry", agentType: "claude", config: `{"mcpServers":{"nairi":{"type":"http"}}}`, want: true},
+		{name: "dropped by the CLI", agentType: "claude", config: `{"mcpServers":{"fs":{"command":"npx"}}}`},
+		{name: "no config yet", agentType: "claude"},
+		{name: "half written", agentType: "claude", config: `{"mcpSer`, wantErr: true},
+		{name: "codex", agentType: "codex", config: "[mcp_servers.nairi]\nurl = \"x\"\n", want: true},
+		{name: "cursor has no MCP config", agentType: "cursor", want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("AGENT_EXEC_USER", "")
+			path := filepath.Join(home, agentMCPConfigFiles[tt.agentType].path)
+			if tt.config != "" {
+				if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(tt.config), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			got, err := HasNairiMCPEntry(tt.agentType, home)
+
+			if got != tt.want || (err != nil) != tt.wantErr {
+				t.Errorf("HasNairiMCPEntry = %v, %v; want %v, error %v", got, err, tt.want, tt.wantErr)
+			}
+		})
+	}
+}
+
 // Off the gateway, a downloaded MCP config keeps only its stdio servers, so a remote server's
 // credential never reaches the disk; files outside the MCP directory are written as sent.
 func TestFetchAndStoreArtifact_StdioOnlyFiltersMCPConfigs(t *testing.T) {

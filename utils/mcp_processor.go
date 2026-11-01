@@ -312,7 +312,7 @@ func (p *ClaudeCodeMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 
 	log.Info("🔌 Updating .claude.json at: %s", claudeConfigPath)
 
-	if err := writeFileAsTargetUser(claudeConfigPath, configJSON, 0644); err != nil {
+	if err := replaceFileAsTargetUser(claudeConfigPath, configJSON, 0644); err != nil {
 		return fmt.Errorf("failed to write .claude.json: %w", err)
 	}
 
@@ -457,7 +457,7 @@ func (p *OpenCodeMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 
 	log.Info("🔌 Updating opencode.json at: %s", opencodeConfigPath)
 
-	if err := writeFileAsTargetUser(opencodeConfigPath, configJSON, 0644); err != nil {
+	if err := replaceFileAsTargetUser(opencodeConfigPath, configJSON, 0644); err != nil {
 		return fmt.Errorf("failed to write opencode.json: %w", err)
 	}
 
@@ -597,7 +597,7 @@ func (p *CodexMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 
 	log.Info("🔌 Updating config.toml at: %s", codexConfigPath)
 
-	if err := writeFileAsTargetUser(codexConfigPath, configTOML, 0644); err != nil {
+	if err := replaceFileAsTargetUser(codexConfigPath, configTOML, 0644); err != nil {
 		return fmt.Errorf("failed to write config.toml: %w", err)
 	}
 

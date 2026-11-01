@@ -768,12 +768,12 @@ func TestAgentMCPReprobe_MovesToGateway(t *testing.T) {
 			assertStdioOnlyConfig(t, tt.agentType, cfg.targetHomeDir, []string{"fs"})
 			fastReprobe(t)
 
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			cfg.reprobeGateway(ctx)
+			stop := startReprobe(t, cfg)
+			waitFor(t, "the move to the gateway", func() bool { return cfg.current().nairi != nil })
+			stop()
 
-			if setup := cfg.current(); ctx.Err() != nil || setup.nairi == nil || !setup.stdioOnly || setup.reprobe {
-				t.Fatalf("re-probe ended with %+v, %v; want the gateway", setup, ctx.Err())
+			if setup := cfg.current(); !setup.stdioOnly || setup.reprobe {
+				t.Fatalf("re-probe ended with %+v; want the gateway", setup)
 			}
 			if backend.keyCalls != tt.wantKeyCalls || backend.mcpDownloads != 2 || !backend.stripAsked {
 				t.Errorf("key calls = %d, MCP config downloads = %d, last with %s: %v; want %d, 2 with it",
@@ -784,6 +784,79 @@ func TestAgentMCPReprobe_MovesToGateway(t *testing.T) {
 				t.Errorf("MCP servers = %v, want [fs nairi]", got)
 			}
 		})
+	}
+}
+
+// A CLI running during the move can write back its copy of the config, without the gateway entry;
+// the next tick puts the entry back.
+func TestAgentMCPReprobe_RestoresDroppedGatewayEntry(t *testing.T) {
+	for _, agentType := range []string{"claude", "codex", "opencode"} {
+		t.Run(agentType, func(t *testing.T) {
+			cfg := agentRun{
+				agentType: agentType, managed: true, keyReplies: []reply{notEnabled, placeholderKeyReply},
+				backend: &fakeBackend{},
+			}.start(t)
+			configPath := filepath.Join(cfg.targetHomeDir, agentConfigPaths[agentType])
+			cliCopy, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fastReprobe(t)
+
+			stop := startReprobe(t, cfg)
+			waitFor(t, "the move to the gateway", func() bool { return cfg.current().nairi != nil })
+			cliWritesBack(t, configPath, cliCopy)
+			waitFor(t, "the gateway entry back", func() bool {
+				_, servers := readAgentMCPServers(t, agentType, cfg.targetHomeDir)
+				return servers["nairi"] != nil
+			})
+			stop()
+
+			_, servers := readAgentMCPServers(t, agentType, cfg.targetHomeDir)
+			if got := serverNames(servers); !reflect.DeepEqual(got, []string{"fs", "nairi"}) {
+				t.Errorf("MCP servers = %v, want [fs nairi]", got)
+			}
+		})
+	}
+}
+
+// startReprobe runs the gateway re-probe in the background; stop ends it and waits.
+func startReprobe(t *testing.T, cfg *agentMCPConfig) (stop func()) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		cfg.reprobeGateway(ctx)
+	}()
+	stop = func() {
+		cancel()
+		<-stopped
+	}
+	t.Cleanup(stop)
+	return stop
+}
+
+func waitFor(t *testing.T, what string, done func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !done() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// cliWritesBack writes content the way the agent CLIs do, so the re-probe never reads it half written.
+func cliWritesBack(t *testing.T, path string, content []byte) {
+	t.Helper()
+	tmp := path + ".cli"
+	if err := os.WriteFile(tmp, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		t.Fatal(err)
 	}
 }
 

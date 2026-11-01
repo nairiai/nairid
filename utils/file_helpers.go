@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"nairid/core/log"
@@ -46,6 +47,56 @@ func readFileAsTargetUser(filePath string) ([]byte, error) {
 	}
 
 	return stdout.Bytes(), nil
+}
+
+// replaceFileAsTargetUser writes content to a temp file next to filePath and renames it over, so
+// an agent CLI never reads its config half written. An existing file keeps its mode.
+func replaceFileAsTargetUser(filePath string, content []byte, perm os.FileMode) error {
+	if resolved, err := filepath.EvalSymlinks(filePath); err == nil {
+		filePath = resolved
+	}
+	if info, err := os.Stat(filePath); err == nil {
+		perm = info.Mode().Perm()
+	}
+	execUser := os.Getenv("AGENT_EXEC_USER")
+	if execUser == "" || !strings.HasPrefix(filePath, "/home/"+execUser) {
+		return replaceFile(filePath, content, perm)
+	}
+
+	log.Info("🔌 Replacing file as user '%s': %s", execUser, filePath)
+	cmd := exec.Command("sudo", "-u", execUser, "sh", "-c", replaceFileScript, "sh", filePath, fmt.Sprintf("%o", perm))
+	cmd.Stdin = bytes.NewReader(content)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to replace file as user %s: %w (stderr: %s)", execUser, err, stderr.String())
+	}
+	return nil
+}
+
+// replaceFileScript is replaceFile for sudo: $1 is the path, $2 the octal mode, stdin the content.
+const replaceFileScript = `tmp=$(mktemp "$1.XXXXXX") || exit 1
+if cat > "$tmp" && chmod "$2" "$tmp" && mv -f "$tmp" "$1"; then exit 0; fi
+rm -f "$tmp"
+exit 1`
+
+func replaceFile(filePath string, content []byte, perm os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(filePath), filepath.Base(filePath)+".*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }()
+	_, err = tmp.Write(content)
+	if err == nil {
+		err = tmp.Chmod(perm)
+	}
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), filePath)
 }
 
 // removeAllAsTargetUser removes a path and all its children, using sudo if necessary.
