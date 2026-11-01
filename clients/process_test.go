@@ -3,6 +3,7 @@ package clients
 import (
 	"context"
 	"os"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -306,10 +307,8 @@ func TestBuildAgentCommandWithContext_OtherAgentsDoNotGetClaudeAIVar(t *testing.
 
 	for _, name := range []string{"codex", "cursor-agent", "opencode"} {
 		cmd := BuildAgentCommandWithContext(context.Background(), name, "-p", "hi")
-		for _, e := range cmd.Env {
-			if e == "ENABLE_CLAUDEAI_MCP_SERVERS=false" {
-				t.Errorf("%s should not get the claude-only ENABLE_CLAUDEAI_MCP_SERVERS var, got: %v", name, cmd.Env)
-			}
+		if slices.Contains(cmd.Env, "ENABLE_CLAUDEAI_MCP_SERVERS=false") {
+			t.Errorf("%s should not get the claude-only ENABLE_CLAUDEAI_MCP_SERVERS var, got: %v", name, cmd.Env)
 		}
 	}
 }
