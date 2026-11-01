@@ -230,9 +230,16 @@ func TestSetupAgentMCP_SelfHosted(t *testing.T) {
 			keyReplies: []reply{placeholderKeyReply}, probeReplies: []reply{pong},
 			wantStdioOnly: true, wantKeyCalls: 1,
 		},
+		{
+			name:   "a managed API key without a secret proxy keeps only stdio servers, unasked",
+			apiKey: managedAPIKey, keyReplies: []reply{selfHostedKeyReply}, probeReplies: []reply{pong},
+			wantStdioOnly: true,
+		},
 	}
 	for _, tt := range tests {
-		tt.apiKey = selfHostedAPIKey
+		if tt.apiKey == "" {
+			tt.apiKey = selfHostedAPIKey
+		}
 		t.Run(tt.name, func(t *testing.T) { runSetupAgentMCPCase(t, tt) })
 	}
 }
@@ -544,8 +551,8 @@ func TestManagedAgentMCPConfig_FailClosed(t *testing.T) {
 		t.Run(tt.agentType+"/"+tt.name, func(t *testing.T) {
 			backend := &fakeBackend{strippedConfig: tt.strippedConfig, ignoresVersion: tt.ignoresVersion}
 			agentHome := agentRun{
-				agentType: tt.agentType, managed: true, withoutProxy: tt.withoutProxy,
-				keyReplies: []reply{tt.keyReply}, backend: backend,
+				agentType: tt.agentType, managed: !tt.selfHostedAPIKey, withoutProxy: tt.withoutProxy,
+				keyReplies: []reply{tt.keyReply}, probeReplies: tt.probeReplies, backend: backend,
 			}.run(t)
 
 			if backend.mcpDownloads != 1 || !backend.stripAsked {
@@ -558,13 +565,15 @@ func TestManagedAgentMCPConfig_FailClosed(t *testing.T) {
 }
 
 type failClosedCase struct {
-	agentType      string
-	name           string
-	withoutProxy   bool
-	keyReply       reply
-	strippedConfig string
-	ignoresVersion bool
-	wantServers    []string
+	agentType        string
+	name             string
+	withoutProxy     bool
+	selfHostedAPIKey bool // a managed row with a self-hosted API key
+	keyReply         reply
+	probeReplies     []reply
+	strippedConfig   string
+	ignoresVersion   bool
+	wantServers      []string
 }
 
 func failClosedCases() []failClosedCase {
@@ -577,11 +586,19 @@ func failClosedCases() []failClosedCase {
 		{name: "backend without the gateway", keyReply: routeNotFound, ignoresVersion: true, wantServers: []string{"fs"}},
 		{
 			name: "no secret proxy, older backend", withoutProxy: true, keyReply: managedKeyRefusal,
-			ignoresVersion: true, wantServers: []string{"fs"},
+			probeReplies: []reply{unauthorized}, ignoresVersion: true, wantServers: []string{"fs"},
 		},
 		{
 			name: "no secret proxy", withoutProxy: true, keyReply: placeholderKeyReply,
-			strippedConfig: strippedMCPConfig, wantServers: []string{"fs"},
+			probeReplies: []reply{unauthorized}, strippedConfig: strippedMCPConfig, wantServers: []string{"fs"},
+		},
+		{
+			name: "no secret proxy, self-hosted API key, older backend", withoutProxy: true, selfHostedAPIKey: true,
+			keyReply: managedKeyRefusal, ignoresVersion: true, wantServers: []string{"fs"},
+		},
+		{
+			name: "no secret proxy, self-hosted API key", withoutProxy: true, selfHostedAPIKey: true,
+			keyReply: placeholderKeyReply, strippedConfig: strippedMCPConfig, wantServers: []string{"fs"},
 		},
 	}
 	var cases []failClosedCase

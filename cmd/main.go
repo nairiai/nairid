@@ -234,6 +234,9 @@ type agentMCPSetup struct {
 // gateway does the API client ask for MCP configs without the servers the gateway serves.
 func setupAgentMCP(agentsApiClient *clients.AgentsApiClient, apiBaseURL, agentID string) agentMCPSetup {
 	proxyURL := clients.AgentHTTPProxy()
+	if proxyURL == "" && !agentsApiClient.IsSelfHosted() {
+		return failClosedAgentMCP(agentsApiClient, errManagedWithoutProxy)
+	}
 	if proxyURL == "" {
 		return setupSelfHostedAgentMCP(agentsApiClient, apiBaseURL, agentID)
 	}
@@ -261,7 +264,8 @@ func failClosedAgentMCP(agentsApiClient *clients.AgentsApiClient, err error) age
 }
 
 // setupSelfHostedAgentMCP uses the gateway when the backend has one, and otherwise keeps remote
-// MCP servers in the agent's own config. A managed agent missing its secret proxy fails closed.
+// MCP servers in the agent's own config. A managed row with a self-hosted API key and no secret
+// proxy gets a managed answer to the key fetch, and fails closed.
 func setupSelfHostedAgentMCP(agentsApiClient *clients.AgentsApiClient, apiBaseURL, agentID string) agentMCPSetup {
 	key, err := agentsApiClient.FetchMCPKey()
 	if clients.IsManagedAgentMCPKey(key, err) {
