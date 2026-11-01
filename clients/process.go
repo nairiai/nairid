@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -189,6 +190,11 @@ func buildShellCommand(name string, args []string) string {
 // FilterEnvForAgent removes sensitive variables from environment.
 // This prevents agent processes from accessing credentials like NAIRI_API_KEY.
 func FilterEnvForAgent(env []string) []string {
+	return filterEnvForAgent(env, runtime.GOOS == "windows")
+}
+
+// Windows env names are case-insensitive, so nairi_api_key there is still the daemon credential.
+func filterEnvForAgent(env []string, caseInsensitive bool) []string {
 	var filtered []string
 	for _, e := range env {
 		parts := strings.SplitN(e, "=", 2)
@@ -196,6 +202,9 @@ func FilterEnvForAgent(env []string) []string {
 			continue
 		}
 		key := parts[0]
+		if caseInsensitive {
+			key = strings.ToUpper(key)
+		}
 		if !BlockedEnvVars[key] {
 			filtered = append(filtered, e)
 		}
