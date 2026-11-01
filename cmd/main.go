@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
@@ -226,6 +227,7 @@ var agentMCPRetrySleep = time.Sleep
 type agentMCPSetup struct {
 	nairi     *utils.NairiMCP // the Nairi agent MCP gateway entry
 	stdioOnly bool            // managed agents off the gateway keep only stdio servers
+	reprobe   bool            // off the gateway behind a secret proxy, so the gateway may come back
 }
 
 // setupAgentMCP picks how the agent CLI reaches remote MCP servers. Only once it picks the
@@ -243,7 +245,9 @@ func setupAgentMCP(agentsApiClient *clients.AgentsApiClient, apiBaseURL, agentID
 	if clients.AgentMCPStatus(err) == http.StatusForbidden {
 		log.Error("🔌 The secret proxy filled in another agent's MCP key: it did not send this pod's id")
 	}
-	return failClosedAgentMCP(agentsApiClient, err)
+	setup := failClosedAgentMCP(agentsApiClient, err)
+	setup.reprobe = true
+	return setup
 }
 
 var errManagedWithoutProxy = errors.New("managed agent without a secret proxy: AGENT_HTTP_PROXY is not set")
@@ -337,13 +341,106 @@ func retryAgentMCP(what string, retryable func(error) bool, fn func() error) err
 // useNairiMCP returns the gateway entry for the agent CLI and makes MCP config downloads leave
 // out the servers the gateway serves.
 func useNairiMCP(agentsApiClient *clients.AgentsApiClient, apiBaseURL, agentID, key string) *utils.NairiMCP {
+	agentsApiClient.UseAgentMCPGateway(core.GetVersion())
+	return nairiMCPEntry(apiBaseURL, agentID, key)
+}
+
+// nairiMCPEntry is the gateway entry for the agent CLI.
+func nairiMCPEntry(apiBaseURL, agentID, key string) *utils.NairiMCP {
 	headers := map[string]string{"Authorization": "Bearer " + key}
 	if agentID != "" {
 		headers["X-AGENT-ID"] = agentID
 	}
-	agentsApiClient.UseAgentMCPGateway(core.GetVersion())
 	log.Info("🔌 Using the Nairi agent MCP gateway at %s%s", apiBaseURL, clients.NairiAgentMCPGatewayPath)
 	return &utils.NairiMCP{URL: apiBaseURL + clients.NairiAgentMCPGatewayPath, Headers: headers}
+}
+
+// agentMCPReprobeInterval is how often a managed agent off the gateway tries it again; swapped out
+// in tests.
+var agentMCPReprobeInterval = 5 * time.Minute
+
+// agentMCPConfig holds the agent CLI's MCP setup and writes it. Writes hold mu, so a re-probe
+// never races another write or writes back a setup that is no longer current.
+type agentMCPConfig struct {
+	mu            sync.Mutex
+	setup         agentMCPSetup
+	client        *clients.AgentsApiClient
+	apiBaseURL    string
+	agentID       string
+	agentType     string
+	workDir       string
+	targetHomeDir string
+}
+
+func (c *agentMCPConfig) current() agentMCPSetup {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.setup
+}
+
+// fetchArtifacts downloads the agent's artifacts, with the MCP configs the setup asks for.
+func (c *agentMCPConfig) fetchArtifacts() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := fetchAndStoreArtifacts(c.client, c.setup); err != nil {
+		return fmt.Errorf("failed to fetch and store artifacts: %w", err)
+	}
+	return nil
+}
+
+// writeMCPConfigs writes the downloaded MCP configs and the setup into the agent CLI's config.
+func (c *agentMCPConfig) writeMCPConfigs() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := processMCPConfigs(c.agentType, c.workDir, c.targetHomeDir, c.setup); err != nil {
+		return fmt.Errorf("failed to process MCP configs: %w", err)
+	}
+	return nil
+}
+
+// reprobeGateway tries the gateway again every agentMCPReprobeInterval, until the agent uses it or
+// ctx ends. Without it, a backend blip, a host reboot or a stale secret proxy at startup kept a
+// managed agent off the gateway until a restart.
+func (c *agentMCPConfig) reprobeGateway(ctx context.Context) {
+	if !c.current().reprobe {
+		return
+	}
+	ticker := time.NewTicker(agentMCPReprobeInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		if c.moveToGateway() {
+			return
+		}
+	}
+}
+
+// moveToGateway rewrites the agent CLI's MCP config with the gateway entry if the gateway answers,
+// and reports whether it did. Running jobs keep their CLI; new ones read the new config.
+func (c *agentMCPConfig) moveToGateway() bool {
+	key, err := managedMCPKey(c.client, clients.AgentHTTPProxy())
+	if err != nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Failing closed already made the API client ask for MCP configs without remote servers.
+	gateway := agentMCPSetup{nairi: nairiMCPEntry(c.apiBaseURL, c.agentID, key)}
+	err = fetchAndStoreArtifacts(c.client, gateway)
+	if err == nil {
+		err = processMCPConfigs(c.agentType, c.workDir, c.targetHomeDir, gateway)
+	}
+	if err != nil {
+		log.Warn("🔌 Failed to move the agent to the Nairi agent MCP gateway, retrying later: %v", err)
+		return false
+	}
+	c.setup = gateway
+	log.Info("🔌 Nairi agent MCP gateway reachable again, moved the agent to it")
+	return true
 }
 
 // processAgentRules processes rules from eksecd directory based on agent type
@@ -583,15 +680,6 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 		return nil, fmt.Errorf("failed to fetch and apply env vars: %w", err)
 	}
 
-	// Before the artifact download: how the agent reaches MCP servers decides which MCP configs
-	// nairid gets.
-	mcpSetup := setupAgentMCP(agentsApiClient, apiBaseURL, agentIDForAPI)
-
-	// Fetch and store agent artifacts (rules, guidelines, instructions)
-	if err := fetchAndStoreArtifacts(agentsApiClient, mcpSetup); err != nil {
-		return nil, fmt.Errorf("failed to fetch and store artifacts: %w", err)
-	}
-
 	// Get current working directory for Codex client
 	workDir, err := os.Getwd()
 	if err != nil {
@@ -608,14 +696,27 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 		log.Info("🏠 Agent exec user configured: %s, deploying artifacts to %s", execUser, targetHomeDir)
 	}
 
+	// Before the artifact download: how the agent reaches MCP servers decides which MCP configs
+	// nairid gets.
+	mcpConfig := &agentMCPConfig{
+		setup:  setupAgentMCP(agentsApiClient, apiBaseURL, agentIDForAPI),
+		client: agentsApiClient, apiBaseURL: apiBaseURL, agentID: agentIDForAPI,
+		agentType: agentType, workDir: workDir, targetHomeDir: targetHomeDir,
+	}
+
+	// Fetch and store agent artifacts (rules, guidelines, instructions)
+	if err := mcpConfig.fetchArtifacts(); err != nil {
+		return nil, err
+	}
+
 	// Process rules based on agent type
 	if err := processAgentRules(agentType, workDir, targetHomeDir); err != nil {
 		return nil, fmt.Errorf("failed to process agent rules: %w", err)
 	}
 
-	// Process MCP configs based on agent type
-	if err := processMCPConfigs(agentType, workDir, targetHomeDir, mcpSetup); err != nil {
-		return nil, fmt.Errorf("failed to process MCP configs: %w", err)
+	// After the rules: OpenCode's removes an opencode.json left from before.
+	if err := mcpConfig.writeMCPConfigs(); err != nil {
+		return nil, err
 	}
 
 	// Process skills based on agent type
@@ -818,6 +919,9 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 		cr.dispatcher,
 		messageHandler,
 	)
+
+	// Started last: it downloads the artifacts again, which the rules and skills above read.
+	go mcpConfig.reprobeGateway(context.Background())
 
 	log.Info("📋 Completed successfully - initialized CmdRunner with %s agent", agentType)
 	return cr, nil

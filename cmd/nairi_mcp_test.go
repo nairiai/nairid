@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -386,6 +387,12 @@ type agentRun struct {
 
 func (r agentRun) run(t *testing.T) string {
 	t.Helper()
+	return r.start(t).targetHomeDir
+}
+
+// start writes the agent CLI's MCP config the way NewCmdRunner does and returns what wrote it.
+func (r agentRun) start(t *testing.T) *agentMCPConfig {
+	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("AGENT_EXEC_USER", "")
 	t.Setenv("AGENT_HTTP_PROXY", "")
@@ -407,14 +414,17 @@ func (r agentRun) run(t *testing.T) string {
 	agentHome := t.TempDir()
 	writeStaleAgentConfig(t, r.agentType, agentHome)
 
-	mcpSetup := setupAgentMCP(client, ts.URL, "ag_123")
-	if err := fetchAndStoreArtifacts(client, mcpSetup); err != nil {
+	cfg := &agentMCPConfig{
+		setup: setupAgentMCP(client, ts.URL, "ag_123"), client: client, apiBaseURL: ts.URL, agentID: "ag_123",
+		agentType: r.agentType, workDir: agentHome, targetHomeDir: agentHome,
+	}
+	if err := cfg.fetchArtifacts(); err != nil {
 		t.Fatal(err)
 	}
-	if err := processMCPConfigs(r.agentType, agentHome, agentHome, mcpSetup); err != nil {
+	if err := cfg.writeMCPConfigs(); err != nil {
 		t.Fatal(err)
 	}
-	return agentHome
+	return cfg
 }
 
 var agentConfigPaths = map[string]string{
@@ -657,6 +667,91 @@ func TestSelfHostedAgentMCPConfig(t *testing.T) {
 			_, servers := readAgentMCPServers(t, "claude", agentHome)
 			if got := serverNames(servers); !reflect.DeepEqual(got, tt.wantServers) {
 				t.Errorf("MCP servers = %v, want %v", got, tt.wantServers)
+			}
+		})
+	}
+}
+
+// fastReprobe makes the gateway re-probe tick every millisecond.
+func fastReprobe(t *testing.T) {
+	t.Helper()
+	interval := agentMCPReprobeInterval
+	agentMCPReprobeInterval = time.Millisecond
+	t.Cleanup(func() { agentMCPReprobeInterval = interval })
+}
+
+// A managed agent that failed closed behind its secret proxy moves to the gateway once it answers.
+func TestAgentMCPReprobe_MovesToGateway(t *testing.T) {
+	refusedOnce := []reply{notEnabled, placeholderKeyReply}
+	tests := []struct {
+		agentType    string
+		name         string
+		keyReplies   []reply
+		wantKeyCalls int
+	}{
+		{agentType: "claude", name: "first tick", keyReplies: refusedOnce, wantKeyCalls: 2},
+		{agentType: "codex", name: "first tick", keyReplies: refusedOnce, wantKeyCalls: 2},
+		{agentType: "opencode", name: "first tick", keyReplies: refusedOnce, wantKeyCalls: 2},
+		{
+			agentType: "claude", name: "refused on the first tick too",
+			keyReplies: []reply{notEnabled, notEnabled, placeholderKeyReply}, wantKeyCalls: 3,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.agentType+"/"+tt.name, func(t *testing.T) {
+			backend := &fakeBackend{}
+			cfg := agentRun{agentType: tt.agentType, managed: true, keyReplies: tt.keyReplies, backend: backend}.start(t)
+			assertStdioOnlyConfig(t, tt.agentType, cfg.targetHomeDir, []string{"fs"})
+			fastReprobe(t)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			cfg.reprobeGateway(ctx)
+
+			if setup := cfg.current(); ctx.Err() != nil || setup.nairi == nil || setup.stdioOnly || setup.reprobe {
+				t.Fatalf("re-probe ended with %+v, %v; want the gateway", setup, ctx.Err())
+			}
+			if backend.keyCalls != tt.wantKeyCalls || backend.mcpDownloads != 2 || !backend.stripAsked {
+				t.Errorf("key calls = %d, MCP config downloads = %d, last with %s: %v; want %d, 2 with it",
+					backend.keyCalls, backend.mcpDownloads, clients.NairidVersionHeader, backend.stripAsked, tt.wantKeyCalls)
+			}
+			_, servers := readAgentMCPServers(t, tt.agentType, cfg.targetHomeDir)
+			if got := serverNames(servers); !reflect.DeepEqual(got, []string{"fs", "nairi", "private"}) {
+				t.Errorf("MCP servers = %v, want [fs nairi private]", got)
+			}
+		})
+	}
+}
+
+// Agents that did not fail closed behind a secret proxy do not re-probe, even with a gateway that
+// would answer.
+func TestAgentMCPReprobe_OnlyAfterFailingClosed(t *testing.T) {
+	tests := []struct {
+		name string
+		run  agentRun
+	}{
+		{name: "gateway at startup", run: agentRun{managed: true, keyReplies: []reply{placeholderKeyReply}}},
+		{
+			name: "managed without a secret proxy",
+			run:  agentRun{managed: true, withoutProxy: true, keyReplies: []reply{managedKeyRefusal, placeholderKeyReply}},
+		},
+		{name: "self-hosted off the gateway", run: agentRun{keyReplies: []reply{notEnabled, selfHostedKeyReply}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			backend := &fakeBackend{}
+			tt.run.agentType, tt.run.backend = "claude", backend
+			cfg := tt.run.start(t)
+			before, keyCalls := cfg.current(), backend.keyCalls
+			fastReprobe(t)
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			cfg.reprobeGateway(ctx)
+
+			if ctx.Err() != nil || backend.keyCalls != keyCalls || !reflect.DeepEqual(cfg.current(), before) {
+				t.Errorf("re-probe ran: %v, key calls %d -> %d, setup %+v -> %+v",
+					ctx.Err(), keyCalls, backend.keyCalls, before, cfg.current())
 			}
 		})
 	}
