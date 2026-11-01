@@ -28,11 +28,8 @@ var ErrPoolStopping = errors.New("pool is stopping")
 // Callers should fall back to synchronous worktree creation.
 var ErrWorktreeInvalid = errors.New("pooled worktree is no longer valid")
 
-// staleRefreshInterval bounds how long a ready pool worktree can go without a staleness
-// check against origin. Acquire no longer fetches inline (that used to sit on every job's
-// hot path), so this periodic background check is the only thing keeping the pool caught
-// up with newly merged commits.
-const staleRefreshInterval = 20 * time.Second
+// defaultStaleRefreshInterval is the interval between background freshness checks.
+const defaultStaleRefreshInterval = 20 * time.Second
 
 // PooledWorktree represents a pre-created worktree ready for use
 type PooledWorktree struct {
@@ -46,18 +43,19 @@ type PooledWorktree struct {
 // Pre-creating worktrees eliminates the 10-30+ second delay when starting jobs
 // on large repositories (1GB+), providing instant worktree assignment.
 type WorktreePool struct {
-	ready           []PooledWorktree
-	mutex           sync.Mutex
-	mainRepoMu      sync.Mutex // serializes git operations on the main repository (checkout, reset, clean)
-	branchMu        sync.Mutex // serializes pool branch create/rename/delete (shared .git/config and reflog temp file)
-	gitClient       *clients.GitClient
-	basePath        string        // ~/.eksec_worktrees/
-	targetSize      int           // from WORKTREE_POOL_SIZE env
-	replenishChan   chan struct{} // signals replenisher
-	stopChan        chan struct{} // for shutdown
-	wg              sync.WaitGroup
-	initialFillDone chan struct{} // closed once the first worktree is ready or the initial fill ends
-	initialFillOnce sync.Once
+	ready                []PooledWorktree
+	mutex                sync.Mutex
+	mainRepoMu           sync.Mutex // serializes git operations on the main repository (checkout, reset, clean)
+	branchMu             sync.Mutex // serializes pool branch create/rename/delete (shared .git/config and reflog temp file)
+	gitClient            *clients.GitClient
+	basePath             string        // ~/.eksec_worktrees/
+	targetSize           int           // from WORKTREE_POOL_SIZE env
+	replenishChan        chan struct{} // signals replenisher
+	stopChan             chan struct{} // for shutdown
+	wg                   sync.WaitGroup
+	initialFillDone      chan struct{} // closed once the first worktree is ready or the initial fill ends
+	initialFillOnce      sync.Once
+	staleRefreshInterval time.Duration // overridable in tests; see defaultStaleRefreshInterval
 }
 
 // NewWorktreePool creates a new worktree pool.
@@ -66,13 +64,14 @@ type WorktreePool struct {
 // targetSize: the target number of worktrees to maintain in the pool
 func NewWorktreePool(gitClient *clients.GitClient, basePath string, targetSize int) *WorktreePool {
 	return &WorktreePool{
-		ready:           make([]PooledWorktree, 0, targetSize),
-		gitClient:       gitClient,
-		basePath:        basePath,
-		targetSize:      targetSize,
-		replenishChan:   make(chan struct{}, 1), // buffered to allow non-blocking sends
-		stopChan:        make(chan struct{}),
-		initialFillDone: make(chan struct{}),
+		ready:                make([]PooledWorktree, 0, targetSize),
+		gitClient:            gitClient,
+		basePath:             basePath,
+		targetSize:           targetSize,
+		replenishChan:        make(chan struct{}, 1), // buffered to allow non-blocking sends
+		stopChan:             make(chan struct{}),
+		initialFillDone:      make(chan struct{}),
+		staleRefreshInterval: defaultStaleRefreshInterval,
 	}
 }
 
@@ -142,10 +141,8 @@ func (p *WorktreePool) isStopping() bool {
 // It renames the pool worktree directory and branch to match the job.
 // If the pool is empty, returns an error so the caller can fall back to sync creation.
 //
-// Does not fetch or check staleness itself — that ran inline here until it was moved to
-// the background replenisher (see staleRefreshInterval) because it put a network round
-// trip on every job's hot path. A handed-out worktree can lag origin by at most that
-// interval; it is never unboundedly stale.
+// Does not fetch or check staleness itself; the background replenisher does that on
+// staleRefreshInterval, so a handed-out worktree can lag origin by at most that bound.
 //
 // Parameters:
 //   - jobID: the unique identifier for the job (used as directory name)
@@ -169,10 +166,8 @@ func (p *WorktreePool) Acquire(jobID, branchName string) (string, error) {
 
 	log.Info("🏊 Acquired worktree from pool (remaining: %d)", poolSize)
 
-	// Signal replenisher (non-blocking). It also re-checks staleness on every signal
-	// (see replenisherLoop), so popping a worktree here no longer waits on a fetch:
-	// staleness is handled by the background loop instead, bounded to at most
-	// staleRefreshInterval (or sooner, since every Acquire signals it too).
+	// Signal replenisher to top the pool back up (non-blocking); staleness itself is
+	// handled separately, on staleRefreshInterval, not by this signal.
 	select {
 	case p.replenishChan <- struct{}{}:
 	default:
@@ -234,8 +229,18 @@ func (p *WorktreePool) replenisherLoop(ctx context.Context) {
 	// worktree is ready; the remaining worktrees keep filling in the background.
 	log.Info("🔄 Worktree pool: starting initial fill (target size: %d)", p.targetSize)
 	p.fillToTarget(ctx)
+	// Reclaimed worktrees (see ReclaimOrphanedPoolWorktrees) skip fillToTarget's own
+	// fetch when they already fill the pool, so refresh explicitly before advertising
+	// anything ready — origin may have moved on while nairid was offline.
+	p.refreshStaleWorktrees()
 	p.markInitialFillDone()
 	log.Info("✅ Worktree pool: initial fill complete (pool size: %d)", p.GetPoolSize())
+
+	// A ticker, not time.After, so a steady stream of replenish signals can't starve the
+	// periodic refresh: time.After inside select would be re-armed on every loop
+	// iteration and never fire if another case keeps winning first.
+	staleTicker := time.NewTicker(p.staleRefreshInterval)
+	defer staleTicker.Stop()
 
 	for {
 		select {
@@ -248,12 +253,8 @@ func (p *WorktreePool) replenisherLoop(ctx context.Context) {
 		case <-p.replenishChan:
 			log.Debug("🔄 Worktree pool: replenish signal received")
 			p.fillToTarget(ctx)
-		case <-time.After(staleRefreshInterval):
-			// Periodic refresh of stale worktrees. This is now the only place that
-			// fetches origin for staleness — Acquire used to do it inline on every
-			// job's hot path. Bounds how stale a handed-out worktree can be to at
-			// most staleRefreshInterval, instead of zero, in exchange for never
-			// blocking a job on a fetch.
+		case <-staleTicker.C:
+			// Periodic staleness check; see staleRefreshInterval.
 			log.Debug("🔄 Worktree pool: periodic staleness check")
 			p.refreshStaleWorktrees()
 		}
@@ -389,6 +390,10 @@ func (p *WorktreePool) refreshWorktreeAfterFetch(wtPath, defaultBranch string) e
 
 // refreshStaleWorktrees checks and refreshes any stale worktrees in the pool.
 func (p *WorktreePool) refreshStaleWorktrees() {
+	if p.GetPoolSize() == 0 {
+		return
+	}
+
 	// Fetch latest from origin first to get up-to-date commit info
 	if err := p.gitClient.FetchOrigin(); err != nil {
 		log.Warn("⚠️ Failed to fetch from origin for periodic staleness check: %v", err)
@@ -643,9 +648,6 @@ func (p *WorktreePool) ReclaimOrphanedPoolWorktrees() error {
 		return fmt.Errorf("failed to read worktree directory: %w", err)
 	}
 
-	// Get current commit for staleness tracking
-	_, currentCommit, _ := p.getCurrentOriginCommit()
-
 	reclaimedCount := 0
 	removedCount := 0
 
@@ -692,13 +694,21 @@ func (p *WorktreePool) ReclaimOrphanedPoolWorktrees() error {
 			continue
 		}
 
-		// Reclaim to pool
+		// Reclaim to pool. BaseCommit is the worktree's own HEAD, not origin's current
+		// commit: it may have sat since before an outage, and the startup
+		// refreshStaleWorktrees pass needs its real base to know whether to refresh it.
+		headCommit, err := p.gitClient.GetLatestCommitHashInWorktree(wtPath)
+		if err != nil {
+			log.Warn("⚠️ Failed to get HEAD for reclaimed worktree %s: %v", wtPath, err)
+			continue
+		}
+
 		p.mutex.Lock()
 		if len(p.ready) < p.targetSize {
 			pooledWT := PooledWorktree{
 				Path:       wtPath,
 				BranchName: branchName,
-				BaseCommit: currentCommit,
+				BaseCommit: headCommit,
 				CreatedAt:  time.Now(),
 			}
 			p.ready = append(p.ready, pooledWT)

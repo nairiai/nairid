@@ -483,31 +483,145 @@ func TestRefreshStaleWorktrees_UpdatesStaleEntries(t *testing.T) {
 
 	staleCommit := pool.ready[0].BaseCommit
 
-	// Advance the remote past what the pool worktree was created from. Clone from the
-	// actual bare remote (not mainRepo, which has main checked out and refuses a push
-	// to its current branch).
-	remoteURL := gitOutput(t, mainRepo, "remote", "get-url", "origin")
-	workDir := t.TempDir()
-	gitOutput(t, workDir, "clone", remoteURL, ".")
-	gitOutput(t, workDir, "config", "user.email", "test@example.com")
-	gitOutput(t, workDir, "config", "user.name", "Test User")
-	if err := os.WriteFile(workDir+"/new-file.txt", []byte("new commit"), 0644); err != nil {
-		t.Fatalf("Failed to write new file: %v", err)
-	}
-	gitOutput(t, workDir, "add", "new-file.txt")
-	gitOutput(t, workDir, "commit", "-m", "advance main")
-	gitOutput(t, workDir, "push", "origin", "HEAD")
+	newCommit := pushNewCommit(t, mainRepo)
 
 	pool.refreshStaleWorktrees()
 
 	if pool.ready[0].BaseCommit == staleCommit {
 		t.Error("Expected refreshStaleWorktrees to update the stale BaseCommit")
 	}
-	newCommit := gitOutput(t, mainRepo, "rev-parse", "origin/"+gitOutput(t, mainRepo, "branch", "--show-current"))
 	if pool.ready[0].BaseCommit != newCommit {
 		t.Errorf("Expected refreshed BaseCommit %s to match origin %s", pool.ready[0].BaseCommit, newCommit)
 	}
 	if head := gitOutput(t, pool.ready[0].Path, "rev-parse", "HEAD"); head != newCommit {
 		t.Errorf("Expected worktree HEAD to be reset to the new commit %s, got %s", newCommit, head)
+	}
+}
+
+// pushNewCommit clones mainRepo's actual remote (mainRepo itself refuses a push to its
+// checked-out branch), commits a new file, and pushes it, returning the new commit hash.
+func pushNewCommit(t *testing.T, mainRepo string) string {
+	t.Helper()
+	remoteURL := gitOutput(t, mainRepo, "remote", "get-url", "origin")
+	workDir := t.TempDir()
+	gitOutput(t, workDir, "clone", remoteURL, ".")
+	gitOutput(t, workDir, "config", "user.email", "test@example.com")
+	gitOutput(t, workDir, "config", "user.name", "Test User")
+	fileName := fmt.Sprintf("new-file-%d.txt", time.Now().UnixNano())
+	if err := os.WriteFile(workDir+"/"+fileName, []byte("new commit"), 0644); err != nil {
+		t.Fatalf("Failed to write new file: %v", err)
+	}
+	gitOutput(t, workDir, "add", fileName)
+	gitOutput(t, workDir, "commit", "-m", "advance main")
+	gitOutput(t, workDir, "push", "origin", "HEAD")
+	return gitOutput(t, workDir, "rev-parse", "HEAD")
+}
+
+// Regression for reviewer1's starvation finding: time.After re-armed inside select on
+// every loop iteration never fires if another case (the replenish signal) keeps winning
+// first. A ticker must fire on its own schedule regardless of how often jobs arrive.
+func TestReplenisherLoop_PeriodicRefreshSurvivesContinuousReplenishSignals(t *testing.T) {
+	mainRepo, worktreeBase, cleanup := setupTestGitRepoWithRemote(t)
+	defer cleanup()
+
+	gitClient := clients.NewGitClient()
+	gitClient.SetRepoPathProvider(func() string { return mainRepo })
+
+	pool := NewWorktreePool(gitClient, worktreeBase, 2)
+	pool.staleRefreshInterval = 100 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	pool.Start(ctx)
+	defer pool.Stop()
+	waitForPoolSize(t, pool, 2)
+
+	newCommit := pushNewCommit(t, mainRepo)
+
+	// Flood the replenisher with signals faster than staleRefreshInterval, for far longer
+	// than the interval, the way a steady stream of jobs would. A refresh that only ever
+	// fires once signals stop (the time.After-restarts-on-every-signal bug) would still
+	// pass a check made *after* the flood ends, so the freshness check below runs
+	// concurrently, while the flood is still going, and must see it catch up quickly.
+	flood, stopFlood := context.WithTimeout(context.Background(), 2*time.Second)
+	defer stopFlood()
+	floodDone := make(chan struct{})
+	go func() {
+		defer close(floodDone)
+		for flood.Err() == nil {
+			select {
+			case pool.replenishChan <- struct{}{}:
+			default:
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+	defer func() { <-floodDone }()
+
+	// Must catch up within a handful of intervals, well before the flood (2s) ends.
+	deadline := time.Now().Add(5 * pool.staleRefreshInterval)
+	for {
+		pool.mutex.Lock()
+		allFresh := len(pool.ready) > 0
+		for _, wt := range pool.ready {
+			if wt.BaseCommit != newCommit {
+				allFresh = false
+			}
+		}
+		pool.mutex.Unlock()
+		if allFresh {
+			stopFlood()
+			break
+		}
+		if time.Now().After(deadline) {
+			stopFlood()
+			t.Fatal("Periodic staleness refresh never caught up despite continuous replenish signals")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// Regression for reviewer1's startup finding: ReclaimOrphanedPoolWorktrees can fill the
+// pool completely, so fillToTarget's own fetch-if-needed never runs, and the first jobs
+// after a long outage would get a worktree based on whatever origin was before the
+// outage. The replenisher must refresh reclaimed entries before releasing the initial fill.
+func TestReplenisherLoop_RefreshesReclaimedWorktreesBeforeInitialFillReleases(t *testing.T) {
+	mainRepo, worktreeBase, cleanup := setupTestGitRepoWithRemote(t)
+	defer cleanup()
+
+	gitClient := clients.NewGitClient()
+	gitClient.SetRepoPathProvider(func() string { return mainRepo })
+
+	// Simulate a prior run that left one pool-ready worktree on disk, then advance the
+	// remote to simulate time passing while nairid was offline.
+	seedPool := NewWorktreePool(gitClient, worktreeBase, 1)
+	seedPool.fillToTarget(context.Background())
+	waitForPoolSize(t, seedPool, 1)
+	staleCommit := seedPool.ready[0].BaseCommit
+
+	newCommit := pushNewCommit(t, mainRepo)
+
+	pool := NewWorktreePool(gitClient, worktreeBase, 1)
+	if err := pool.ReclaimOrphanedPoolWorktrees(); err != nil {
+		t.Fatalf("ReclaimOrphanedPoolWorktrees failed: %v", err)
+	}
+	if pool.GetPoolSize() != 1 {
+		t.Fatalf("Expected the seeded worktree to be reclaimed, pool size is %d", pool.GetPoolSize())
+	}
+	if pool.ready[0].BaseCommit != staleCommit {
+		t.Fatalf("Expected reclaim to record the worktree's actual (stale) HEAD, got %s", pool.ready[0].BaseCommit)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	pool.Start(ctx)
+	defer pool.Stop()
+	waitForInitialFill(t, pool)
+
+	if pool.ready[0].BaseCommit != newCommit {
+		t.Errorf("Expected the reclaimed worktree to be refreshed to %s before the initial fill released, got %s", newCommit, pool.ready[0].BaseCommit)
+	}
+	if head := gitOutput(t, pool.ready[0].Path, "rev-parse", "HEAD"); head != newCommit {
+		t.Errorf("Expected the reclaimed worktree's HEAD to be reset to %s, got %s", newCommit, head)
 	}
 }
