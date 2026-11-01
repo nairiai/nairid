@@ -454,7 +454,7 @@ func (c *agentMCPConfig) moveToGateway() {
 func (c *agentMCPConfig) restoreGatewayEntry() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	present, err := utils.HasNairiMCPEntry(c.agentType, c.targetHomeDir)
+	present, err := utils.HasNairiMCPEntry(c.agentType, c.targetHomeDir, c.setup.nairi.URL)
 	if err != nil {
 		log.Warn("🔌 Failed to check the agent's MCP config for the Nairi agent MCP gateway: %v", err)
 		return

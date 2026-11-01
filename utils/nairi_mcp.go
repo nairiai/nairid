@@ -77,9 +77,10 @@ var agentMCPConfigFiles = map[string]struct{ path, serversKey string }{
 	"codex":    {filepath.Join(".codex", "config.toml"), "mcp_servers"},
 }
 
-// HasNairiMCPEntry reports whether the agent CLI's config under homeDir holds the gateway entry.
-// An agent CLI without an MCP config reports true.
-func HasNairiMCPEntry(agentType, homeDir string) (bool, error) {
+// HasNairiMCPEntry reports whether the agent CLI's config under homeDir holds the gateway entry
+// for gatewayURL. A customer server the CLI wrote back under its name doesn't count. An agent CLI
+// without an MCP config reports true.
+func HasNairiMCPEntry(agentType, homeDir, gatewayURL string) (bool, error) {
 	file, ok := agentMCPConfigFiles[agentType]
 	if !ok {
 		return true, nil
@@ -106,8 +107,9 @@ func HasNairiMCPEntry(agentType, homeDir string) (bool, error) {
 		return false, fmt.Errorf("failed to parse %s: %w", file.path, err)
 	}
 	servers, _ := config[file.serversKey].(map[string]interface{})
-	_, ok = servers[NairiMCPServerName]
-	return ok, nil
+	entry, _ := servers[NairiMCPServerName].(map[string]interface{})
+	url, _ := entry["url"].(string)
+	return url == gatewayURL, nil
 }
 
 // agentMCPServers merges the downloaded MCP configs, drops the remote servers with stdioOnly,

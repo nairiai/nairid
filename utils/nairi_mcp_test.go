@@ -343,33 +343,43 @@ func TestHasNairiMCPEntry(t *testing.T) {
 		want      bool
 		wantErr   bool
 	}{
-		{name: "gateway entry", agentType: "claude", config: `{"mcpServers":{"nairi":{"type":"http"}}}`, want: true},
+		{name: "gateway entry", agentType: "claude", config: `{"mcpServers":{"nairi":{"type":"http","url":"https://gw.example.com/mcp"}}}`, want: true},
 		{name: "dropped by the CLI", agentType: "claude", config: `{"mcpServers":{"fs":{"command":"npx"}}}`},
+		{name: "customer server under the name", agentType: "claude", config: `{"mcpServers":{"nairi":{"command":"npx"}}}`},
+		{name: "another url under the name", agentType: "claude", config: `{"mcpServers":{"nairi":{"type":"http","url":"https://mcp.example.com/mcp"}}}`},
 		{name: "no config yet", agentType: "claude"},
 		{name: "half written", agentType: "claude", config: `{"mcpSer`, wantErr: true},
-		{name: "codex", agentType: "codex", config: "[mcp_servers.nairi]\nurl = \"x\"\n", want: true},
+		{name: "opencode", agentType: "opencode", config: `{"mcp":{"nairi":{"type":"remote","url":"https://gw.example.com/mcp"}}}`, want: true},
+		{name: "codex", agentType: "codex", config: "[mcp_servers.nairi]\nurl = \"https://gw.example.com/mcp\"\n", want: true},
+		{name: "codex customer server under the name", agentType: "codex", config: "[mcp_servers.nairi]\ncommand = \"npx\"\n"},
 		{name: "cursor has no MCP config", agentType: "cursor", want: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("AGENT_EXEC_USER", "")
-			path := filepath.Join(home, agentMCPConfigFiles[tt.agentType].path)
-			if tt.config != "" {
-				if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(path, []byte(tt.config), 0644); err != nil {
-					t.Fatal(err)
-				}
-			}
+			writeAgentMCPConfig(t, filepath.Join(home, agentMCPConfigFiles[tt.agentType].path), tt.config)
 
-			got, err := HasNairiMCPEntry(tt.agentType, home)
+			got, err := HasNairiMCPEntry(tt.agentType, home, "https://gw.example.com/mcp")
 
 			if got != tt.want || (err != nil) != tt.wantErr {
 				t.Errorf("HasNairiMCPEntry = %v, %v; want %v, error %v", got, err, tt.want, tt.wantErr)
 			}
 		})
+	}
+}
+
+// writeAgentMCPConfig writes config to path, or nothing when config is empty.
+func writeAgentMCPConfig(t *testing.T, path, config string) {
+	t.Helper()
+	if config == "" {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(config), 0644); err != nil {
+		t.Fatal(err)
 	}
 }
 
