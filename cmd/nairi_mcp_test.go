@@ -58,7 +58,24 @@ var (
 	unavailable        = reply{http.StatusServiceUnavailable, `unavailable`}
 	unauthorized       = reply{http.StatusUnauthorized, `{"error":"unauthorized"}`}
 	agentMismatch      = reply{http.StatusForbidden, `{"error":"agent_mismatch"}`}
+	// What claudecontrol main and older stack heads answer a managed agent's MCP key fetch.
+	managedKeyRefusal = reply{
+		http.StatusBadRequest, `{"error":"managed agents get their MCP key from the secret proxy"}` + "\n",
+	}
+	unknownAgent = reply{http.StatusBadRequest, `{"error":"agent not found, send X-AGENT-ID"}` + "\n"}
+	// No answer: the backend closes the connection.
+	dropped = reply{}
 )
+
+func (rep reply) write(w http.ResponseWriter) {
+	if rep.status == 0 {
+		conn, _, _ := w.(http.Hijacker).Hijack()
+		_ = conn.Close()
+		return
+	}
+	w.WriteHeader(rep.status)
+	_, _ = w.Write([]byte(rep.body))
+}
 
 // fakeBackend answers the agent API calls nairid makes to set up MCP servers.
 type fakeBackend struct {
@@ -77,18 +94,15 @@ type fakeBackend struct {
 func (b *fakeBackend) handle(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/api/agents/mcp-key":
-		reply := b.keyReplies[min(b.keyCalls, len(b.keyReplies)-1)]
+		b.keyReplies[min(b.keyCalls, len(b.keyReplies)-1)].write(w)
 		b.keyCalls++
-		w.WriteHeader(reply.status)
-		_, _ = w.Write([]byte(reply.body))
 	case clients.NairiAgentMCPGatewayPath:
 		reply := b.probeReplies[min(b.probeCalls, len(b.probeReplies)-1)]
 		b.probeCalls++
 		if r.Header.Get("Mcp-Session-Id") != "" {
 			b.sessionProbes++
 		}
-		w.WriteHeader(reply.status)
-		_, _ = w.Write([]byte(reply.body))
+		reply.write(w)
 	case "/api/agents/artifacts":
 		_, _ = w.Write([]byte(`[{"title":"MCP servers","type":"mcp_config",` +
 			`"files":[{"location":"~/.config/eksecd/mcp/servers.json","attachmentId":"att_mcp"}]}]`))
@@ -199,6 +213,21 @@ func TestSetupAgentMCP_SelfHosted(t *testing.T) {
 			name:       "the gateway answers",
 			keyReplies: keyOK, probeReplies: []reply{pong},
 			wantKey: selfHostedKey, wantKeyCalls: 1, wantProbeCalls: 1,
+		},
+		{
+			name:         "an unknown agent's 400 keeps remote servers local",
+			keyReplies:   []reply{unknownAgent},
+			wantKeyCalls: 1,
+		},
+		{
+			name:          "a managed agent without a secret proxy on an older backend keeps only stdio servers",
+			keyReplies:    []reply{managedKeyRefusal},
+			wantStdioOnly: true, wantKeyCalls: 1,
+		},
+		{
+			name:       "a managed agent without a secret proxy keeps only stdio servers, unprobed",
+			keyReplies: []reply{placeholderKeyReply}, probeReplies: []reply{pong},
+			wantStdioOnly: true, wantKeyCalls: 1,
 		},
 	}
 	for _, tt := range tests {
@@ -349,6 +378,7 @@ func runSetupAgentMCPCase(t *testing.T, tt setupAgentMCPCase) {
 type agentRun struct {
 	agentType    string
 	managed      bool
+	withoutProxy bool // a managed pod whose env lacks AGENT_HTTP_PROXY
 	keyReplies   []reply
 	probeReplies []reply // defaults to pong
 	backend      *fakeBackend
@@ -368,8 +398,10 @@ func (r agentRun) run(t *testing.T) string {
 	ts := r.backend.serve(t)
 	apiKey := selfHostedAPIKey
 	if r.managed {
-		r.backend.secretProxy(t)
 		apiKey = managedAPIKey
+	}
+	if r.managed && !r.withoutProxy {
+		r.backend.secretProxy(t)
 	}
 	client := clients.NewAgentsApiClient(apiKey, ts.URL, "ag_123")
 	agentHome := t.TempDir()
@@ -502,7 +534,8 @@ func TestManagedAgentMCPConfig_FailClosed(t *testing.T) {
 		t.Run(tt.agentType+"/"+tt.name, func(t *testing.T) {
 			backend := &fakeBackend{strippedConfig: tt.strippedConfig, ignoresVersion: tt.ignoresVersion}
 			agentHome := agentRun{
-				agentType: tt.agentType, managed: true, keyReplies: []reply{tt.keyReply}, backend: backend,
+				agentType: tt.agentType, managed: true, withoutProxy: tt.withoutProxy,
+				keyReplies: []reply{tt.keyReply}, backend: backend,
 			}.run(t)
 
 			if backend.mcpDownloads != 1 || !backend.stripAsked {
@@ -517,6 +550,7 @@ func TestManagedAgentMCPConfig_FailClosed(t *testing.T) {
 type failClosedCase struct {
 	agentType      string
 	name           string
+	withoutProxy   bool
 	keyReply       reply
 	strippedConfig string
 	ignoresVersion bool
@@ -531,6 +565,14 @@ func failClosedCases() []failClosedCase {
 			strippedConfig: `{"mcpServers":{` + urlServer + `}}`, wantServers: []string{},
 		},
 		{name: "backend without the gateway", keyReply: routeNotFound, ignoresVersion: true, wantServers: []string{"fs"}},
+		{
+			name: "no secret proxy, older backend", withoutProxy: true, keyReply: managedKeyRefusal,
+			ignoresVersion: true, wantServers: []string{"fs"},
+		},
+		{
+			name: "no secret proxy", withoutProxy: true, keyReply: placeholderKeyReply,
+			strippedConfig: strippedMCPConfig, wantServers: []string{"fs"},
+		},
 	}
 	var cases []failClosedCase
 	for _, agentType := range []string{"claude", "codex", "opencode"} {
@@ -558,7 +600,8 @@ func assertStdioOnlyConfig(t *testing.T, agentType, agentHome string, wantServer
 
 func assertNoRemoteServer(t *testing.T, what, content string, more ...string) {
 	t.Helper()
-	for _, leak := range append([]string{"url", "mcp-remote", "test_platform_key", "test_remote_token"}, more...) {
+	leaks := []string{"url", "mcp-remote", "test_platform_key", "test_remote_token", placeholderKey, selfHostedKey}
+	for _, leak := range append(leaks, more...) {
 		if strings.Contains(content, leak) {
 			t.Errorf("the %s contains %q: %s", what, leak, content)
 		}
@@ -568,18 +611,32 @@ func assertNoRemoteServer(t *testing.T, what, content string, more ...string) {
 // A self-hosted agent on a backend without the gateway keeps every remote server in its own
 // config, as before; with the gateway, Composio goes and the gateway entry comes.
 func TestSelfHostedAgentMCPConfig(t *testing.T) {
+	keyOK := []reply{selfHostedKeyReply}
 	tests := []struct {
 		name         string
+		keyReplies   []reply
 		probeReplies []reply
 		wantStrip    bool
 		wantServers  []string
 	}{
 		{
-			name: "backend without the gateway", probeReplies: []reply{routeNotFound},
+			name: "backend without the gateway", keyReplies: keyOK, probeReplies: []reply{routeNotFound},
 			wantServers: []string{"composio", "fs", "private"},
 		},
 		{
-			name: "gateway", probeReplies: []reply{pong},
+			name: "backend without the mcp-key route", keyReplies: []reply{routeNotFound},
+			wantServers: []string{"composio", "fs", "private"},
+		},
+		{
+			name: "unreachable backend", keyReplies: []reply{dropped},
+			wantServers: []string{"composio", "fs", "private"},
+		},
+		{
+			name: "an unknown agent's 400", keyReplies: []reply{unknownAgent},
+			wantServers: []string{"composio", "fs", "private"},
+		},
+		{
+			name: "gateway", keyReplies: keyOK, probeReplies: []reply{pong},
 			wantStrip: true, wantServers: []string{"fs", "nairi", "private"},
 		},
 	}
@@ -587,8 +644,7 @@ func TestSelfHostedAgentMCPConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			backend := &fakeBackend{}
 			agentHome := agentRun{
-				agentType: "claude", keyReplies: []reply{selfHostedKeyReply}, probeReplies: tt.probeReplies,
-				backend: backend,
+				agentType: "claude", keyReplies: tt.keyReplies, probeReplies: tt.probeReplies, backend: backend,
 			}.run(t)
 
 			if backend.mcpDownloads != 1 || backend.stripAsked != tt.wantStrip {

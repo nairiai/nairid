@@ -243,6 +243,13 @@ func setupAgentMCP(agentsApiClient *clients.AgentsApiClient, apiBaseURL, agentID
 	if clients.AgentMCPStatus(err) == http.StatusForbidden {
 		log.Error("🔌 The secret proxy filled in another agent's MCP key: it did not send this pod's id")
 	}
+	return failClosedAgentMCP(agentsApiClient, err)
+}
+
+var errManagedWithoutProxy = errors.New("managed agent without a secret proxy: AGENT_HTTP_PROXY is not set")
+
+// failClosedAgentMCP keeps only the stdio servers of a managed agent off the gateway.
+func failClosedAgentMCP(agentsApiClient *clients.AgentsApiClient, err error) agentMCPSetup {
 	log.Error("🔌 Nairi agent MCP gateway unavailable, keeping only stdio MCP servers: %v", err)
 	// Remote servers and their credentials come out of the MCP configs, as with the gateway.
 	agentsApiClient.UseAgentMCPGateway(core.GetVersion())
@@ -250,9 +257,12 @@ func setupAgentMCP(agentsApiClient *clients.AgentsApiClient, apiBaseURL, agentID
 }
 
 // setupSelfHostedAgentMCP uses the gateway when the backend has one, and otherwise keeps remote
-// MCP servers in the agent's own config.
+// MCP servers in the agent's own config. A managed agent missing its secret proxy fails closed.
 func setupSelfHostedAgentMCP(agentsApiClient *clients.AgentsApiClient, apiBaseURL, agentID string) agentMCPSetup {
 	key, err := agentsApiClient.FetchMCPKey()
+	if clients.IsManagedAgentMCPKey(key, err) {
+		return failClosedAgentMCP(agentsApiClient, errManagedWithoutProxy)
+	}
 	if err != nil {
 		log.Info("🔌 Nairi agent MCP gateway unavailable, keeping remote MCP servers local: %v", err)
 		return agentMCPSetup{}

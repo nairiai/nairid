@@ -10,14 +10,28 @@ import (
 
 func TestFetchMCPKey(t *testing.T) {
 	tests := []struct {
-		name       string
-		status     int
-		body       string
-		wantKey    string
-		wantErr    bool
-		wantStatus int
+		name        string
+		status      int
+		body        string
+		wantKey     string
+		wantErr     bool
+		wantStatus  int
+		wantManaged bool
 	}{
 		{name: "returns the key", status: http.StatusOK, body: `{"key":"mcpk_test"}`, wantKey: "mcpk_test"},
+		{
+			name: "secret proxy placeholder", status: http.StatusOK, body: `{"key":"CCASECRET_NAIRI_MCP_KEY"}`,
+			wantKey: "CCASECRET_NAIRI_MCP_KEY", wantManaged: true,
+		},
+		{
+			name: "managed agent on an older backend", status: http.StatusBadRequest,
+			body:    `{"error":"managed agents get their MCP key from the secret proxy"}` + "\n",
+			wantErr: true, wantStatus: http.StatusBadRequest, wantManaged: true,
+		},
+		{
+			name: "unknown agent", status: http.StatusBadRequest, body: `{"error":"agent not found, send X-AGENT-ID"}`,
+			wantErr: true, wantStatus: http.StatusBadRequest,
+		},
 		{
 			name: "gateway not enabled", status: http.StatusNotImplemented, body: `{"error":"not enabled"}`,
 			wantErr: true, wantStatus: http.StatusNotImplemented,
@@ -50,6 +64,9 @@ func TestFetchMCPKey(t *testing.T) {
 			}
 			if got := AgentMCPStatus(err); got != tt.wantStatus {
 				t.Errorf("AgentMCPStatus(%v) = %d, want %d", err, got, tt.wantStatus)
+			}
+			if got := IsManagedAgentMCPKey(key, err); got != tt.wantManaged {
+				t.Errorf("IsManagedAgentMCPKey(%q, %v) = %v, want %v", key, err, got, tt.wantManaged)
 			}
 		})
 	}

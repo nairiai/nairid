@@ -124,6 +124,24 @@ func IsAgentMCPRouteNotFound(err error) bool {
 	return json.Unmarshal([]byte(statusErr.Body), &body) == nil && body.Error != nil
 }
 
+// IsManagedAgentMCPKey reports whether a FetchMCPKey answer is for a managed agent: a secret
+// proxy placeholder, or the 400 older backends refuse a managed agent with. Other 400s, such as
+// an unknown agent, say nothing about it.
+func IsManagedAgentMCPKey(key string, err error) bool {
+	if strings.HasPrefix(key, "CCASECRET_") {
+		return true
+	}
+	var statusErr *AgentMCPStatusError
+	if !errors.As(err, &statusErr) || statusErr.Status != http.StatusBadRequest {
+		return false
+	}
+	var body struct {
+		Error string `json:"error"`
+	}
+	return json.Unmarshal([]byte(statusErr.Body), &body) == nil &&
+		body.Error == "managed agents get their MCP key from the secret proxy"
+}
+
 func agentMCPStatusError(resp *http.Response) error {
 	bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 	return &AgentMCPStatusError{Status: resp.StatusCode, Body: string(bodyBytes)}
