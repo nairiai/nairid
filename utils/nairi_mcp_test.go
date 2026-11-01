@@ -233,5 +233,11 @@ func TestOpenCodeMCPProcessor_WritesNairiEntry(t *testing.T) {
 	if entry["type"] != "remote" || entry["url"] != testNairiMCP().URL || entry["enabled"] != true {
 		t.Fatalf("unexpected nairi entry %v", entry)
 	}
+	if oauth, ok := entry["oauth"]; !ok || oauth != false {
+		t.Errorf("nairi oauth = %v (set %v), want false so a gateway 401 does not disable it", oauth, ok)
+	}
 	assertGatewayHeaders(t, entry["headers"].(map[string]interface{}))
+	if _, ok := config.MCP["private"]["oauth"]; ok {
+		t.Error("only the nairi entry turns off OpenCode's OAuth")
+	}
 }

@@ -3,8 +3,11 @@ package utils
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"sort"
 	"strings"
+
+	"nairid/core/log"
 )
 
 const (
@@ -54,6 +57,34 @@ func withNairiMCP(servers map[string]interface{}, nairi *NairiMCP) map[string]in
 		"type":    "http",
 		"url":     nairi.URL,
 		"headers": headers,
+	}
+	return servers
+}
+
+// agentMCPServers merges the downloaded MCP configs, then adds the gateway entry or, with
+// stdioOnly, drops the remote servers.
+func agentMCPServers(nairi *NairiMCP, stdioOnly bool) (map[string]interface{}, error) {
+	servers, err := MergeMCPConfigs()
+	if err != nil {
+		return nil, fmt.Errorf("failed to merge MCP configs: %w", err)
+	}
+	if stdioOnly {
+		return withoutRemoteServers(servers), nil
+	}
+	return withNairiMCP(servers, nairi), nil
+}
+
+// withoutRemoteServers drops the remote servers. The backend already leaves them out for a
+// nairid that sends its version; this catches one it missed.
+func withoutRemoteServers(servers map[string]interface{}) map[string]interface{} {
+	for name, serverConfig := range servers {
+		configMap, _ := serverConfig.(map[string]interface{})
+		_, hasURL := configMap["url"]
+		serverType, _ := configMap["type"].(string)
+		if hasURL || (serverType != "" && serverType != "stdio") {
+			log.Warn("🔌 Dropping remote MCP server %q: no Nairi agent MCP gateway to reach it through", name)
+			delete(servers, name)
+		}
 	}
 	return servers
 }

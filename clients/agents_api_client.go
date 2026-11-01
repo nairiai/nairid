@@ -3,10 +3,12 @@ package clients
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,6 +89,46 @@ type MCPKeyResponse struct {
 	Key string `json:"key"`
 }
 
+// ErrAgentMCPUnreachable is a FetchMCPKey or ProbeAgentMCPGateway request that got no response.
+var ErrAgentMCPUnreachable = errors.New("agent MCP request failed")
+
+// AgentMCPStatusError is a non-2xx answer to FetchMCPKey or ProbeAgentMCPGateway.
+type AgentMCPStatusError struct {
+	Status int
+	Body   string
+}
+
+func (e *AgentMCPStatusError) Error() string {
+	return fmt.Sprintf("API returned status %d: %s", e.Status, e.Body)
+}
+
+// AgentMCPStatus is the HTTP status of an AgentMCPStatusError in err, or 0.
+func AgentMCPStatus(err error) int {
+	var statusErr *AgentMCPStatusError
+	if !errors.As(err, &statusErr) {
+		return 0
+	}
+	return statusErr.Status
+}
+
+// IsAgentMCPRouteNotFound is a 404 from the backend's router, a backend without the gateway.
+// An edge 404 or the gateway's own JSON-RPC 404 has another body.
+func IsAgentMCPRouteNotFound(err error) bool {
+	var statusErr *AgentMCPStatusError
+	if !errors.As(err, &statusErr) || statusErr.Status != http.StatusNotFound {
+		return false
+	}
+	var body struct {
+		Error *string `json:"error"`
+	}
+	return json.Unmarshal([]byte(statusErr.Body), &body) == nil && body.Error != nil
+}
+
+func agentMCPStatusError(resp *http.Response) error {
+	bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return &AgentMCPStatusError{Status: resp.StatusCode, Body: string(bodyBytes)}
+}
+
 // FetchMCPKey fetches the agent's key for the Nairi agent MCP gateway: the key itself for a
 // self-hosted agent, a placeholder its secret proxy fills for a managed one. Older backends
 // answer 404, and backends without managed support answer 400 for managed agents.
@@ -101,13 +143,12 @@ func (c *AgentsApiClient) FetchMCPKey() (string, error) {
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to execute request: %w", err)
+		return "", fmt.Errorf("%w: %w", ErrAgentMCPUnreachable, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(bodyBytes))
+		return "", agentMCPStatusError(resp)
 	}
 
 	var keyResp MCPKeyResponse
@@ -118,6 +159,43 @@ func (c *AgentsApiClient) FetchMCPKey() (string, error) {
 		return "", fmt.Errorf("API returned an empty MCP key")
 	}
 	return keyResp.Key, nil
+}
+
+// ProbeAgentMCPGateway sends the gateway an MCP ping with key, to confirm it is there before
+// MCP configs come without the servers it serves. With proxyURL the ping goes through that proxy,
+// as the agent CLI's requests do.
+func (c *AgentsApiClient) ProbeAgentMCPGateway(key, proxyURL string) error {
+	body := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`)
+	req, err := http.NewRequest("POST", c.baseURL+NairiAgentMCPGatewayPath, body)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Content-Type", "application/json")
+	if c.agentID != "" {
+		req.Header.Set("X-AGENT-ID", c.agentID)
+	}
+
+	client := c.client
+	if proxyURL != "" {
+		proxy, err := url.Parse(proxyURL)
+		if err != nil {
+			return fmt.Errorf("invalid proxy URL: %w", err)
+		}
+		client = &http.Client{Timeout: c.client.Timeout, Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrAgentMCPUnreachable, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	return agentMCPStatusError(resp)
 }
 
 // FetchAttachment fetches an attachment by ID from the Claude Control API

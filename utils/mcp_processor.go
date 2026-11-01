@@ -246,7 +246,8 @@ func uniqueServerName(servers map[string]interface{}, name string) string {
 
 // ClaudeCodeMCPProcessor handles MCP config processing for Claude Code
 type ClaudeCodeMCPProcessor struct {
-	nairi *NairiMCP
+	nairi     *NairiMCP
+	stdioOnly bool
 }
 
 // NewClaudeCodeMCPProcessor creates a new Claude Code MCP processor. nairi may be nil.
@@ -261,14 +262,12 @@ func NewClaudeCodeMCPProcessor(workDir string, nairi *NairiMCP) *ClaudeCodeMCPPr
 func (p *ClaudeCodeMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 	log.Info("🔌 Processing MCP configs for Claude Code agent")
 
-	// Get merged MCP server configs
-	mcpServers, err := MergeMCPConfigs()
+	mcpServers, err := agentMCPServers(p.nairi, p.stdioOnly)
 	if err != nil {
-		return fmt.Errorf("failed to merge MCP configs: %w", err)
+		return err
 	}
-	mcpServers = withNairiMCP(mcpServers, p.nairi)
 
-	if len(mcpServers) == 0 {
+	if len(mcpServers) == 0 && !p.stdioOnly {
 		log.Info("🔌 No MCP configs found in eksecd MCP directory")
 		return nil
 	}
@@ -323,8 +322,9 @@ func (p *ClaudeCodeMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 
 // OpenCodeMCPProcessor handles MCP config processing for OpenCode
 type OpenCodeMCPProcessor struct {
-	workDir string
-	nairi   *NairiMCP
+	workDir   string
+	nairi     *NairiMCP
+	stdioOnly bool
 }
 
 // NewOpenCodeMCPProcessor creates a new OpenCode MCP processor. nairi may be nil.
@@ -343,14 +343,12 @@ func NewOpenCodeMCPProcessor(workDir string, nairi *NairiMCP) *OpenCodeMCPProces
 func (p *OpenCodeMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 	log.Info("🔌 Processing MCP configs for OpenCode agent")
 
-	// Get merged MCP server configs
-	mcpServers, err := MergeMCPConfigs()
+	mcpServers, err := agentMCPServers(p.nairi, p.stdioOnly)
 	if err != nil {
-		return fmt.Errorf("failed to merge MCP configs: %w", err)
+		return err
 	}
-	mcpServers = withNairiMCP(mcpServers, p.nairi)
 
-	if len(mcpServers) == 0 {
+	if len(mcpServers) == 0 && !p.stdioOnly {
 		log.Info("🔌 No MCP configs found in eksecd MCP directory")
 		return nil
 	}
@@ -407,6 +405,12 @@ func (p *OpenCodeMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 		opencodeConfig["enabled"] = true
 
 		opencodeMcpServers[serverName] = opencodeConfig
+	}
+
+	// Without this, one gateway 401 makes OpenCode mark the entry needs_auth for the session.
+	nairiEntry, isNairi := opencodeMcpServers[NairiMCPServerName].(map[string]interface{})
+	if isNairi && p.nairi != nil {
+		nairiEntry["oauth"] = false
 	}
 
 	// Determine home directory for OpenCode config
@@ -473,7 +477,8 @@ func codexShellEnvironmentPolicy() map[string]interface{} {
 
 // CodexMCPProcessor handles MCP config processing for Codex
 type CodexMCPProcessor struct {
-	nairi *NairiMCP
+	nairi     *NairiMCP
+	stdioOnly bool
 }
 
 // NewCodexMCPProcessor creates a new Codex MCP processor. nairi may be nil.
@@ -486,12 +491,10 @@ func NewCodexMCPProcessor(nairi *NairiMCP) *CodexMCPProcessor {
 func (p *CodexMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 	log.Info("🔌 Processing MCP configs for Codex agent")
 
-	// Get merged MCP server configs
-	mcpServers, err := MergeMCPConfigs()
+	mcpServers, err := agentMCPServers(p.nairi, p.stdioOnly)
 	if err != nil {
-		return fmt.Errorf("failed to merge MCP configs: %w", err)
+		return err
 	}
-	mcpServers = withNairiMCP(mcpServers, p.nairi)
 
 	// Determine home directory for Codex config
 	homeDir := targetHomeDir
@@ -524,6 +527,9 @@ func (p *CodexMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 	}
 
 	existingConfig["shell_environment_policy"] = codexShellEnvironmentPolicy()
+	if p.stdioOnly {
+		delete(existingConfig, "mcp_servers")
+	}
 
 	if len(mcpServers) == 0 {
 		log.Info("🔌 No MCP configs found, writing config with shell_environment_policy only")
@@ -597,6 +603,23 @@ func (p *CodexMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 
 	log.Info("✅ Successfully configured %d MCP server(s) for Codex", len(mcpServers))
 	return nil
+}
+
+// NewStdioOnlyMCPProcessor creates a processor for agentType that writes only the stdio servers of
+// the downloaded configs, replacing the MCP servers an earlier run wrote. Managed agents use it
+// when the gateway is unavailable.
+func NewStdioOnlyMCPProcessor(agentType string) (MCPProcessor, error) {
+	switch agentType {
+	case "claude":
+		return &ClaudeCodeMCPProcessor{stdioOnly: true}, nil
+	case "opencode":
+		return &OpenCodeMCPProcessor{stdioOnly: true}, nil
+	case "codex":
+		return &CodexMCPProcessor{stdioOnly: true}, nil
+	case "cursor":
+		return NewNoOpMCPProcessor(), nil
+	}
+	return nil, fmt.Errorf("unknown agent type: %s", agentType)
 }
 
 // NoOpMCPProcessor is a no-op implementation for agents that don't support MCP configs
