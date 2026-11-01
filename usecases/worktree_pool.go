@@ -28,6 +28,12 @@ var ErrPoolStopping = errors.New("pool is stopping")
 // Callers should fall back to synchronous worktree creation.
 var ErrWorktreeInvalid = errors.New("pooled worktree is no longer valid")
 
+// staleRefreshInterval bounds how long a ready pool worktree can go without a staleness
+// check against origin. Acquire no longer fetches inline (that used to sit on every job's
+// hot path), so this periodic background check is the only thing keeping the pool caught
+// up with newly merged commits.
+const staleRefreshInterval = 20 * time.Second
+
 // PooledWorktree represents a pre-created worktree ready for use
 type PooledWorktree struct {
 	Path       string // e.g., ~/.eksec_worktrees/pool-{uuid}
@@ -136,6 +142,11 @@ func (p *WorktreePool) isStopping() bool {
 // It renames the pool worktree directory and branch to match the job.
 // If the pool is empty, returns an error so the caller can fall back to sync creation.
 //
+// Does not fetch or check staleness itself — that ran inline here until it was moved to
+// the background replenisher (see staleRefreshInterval) because it put a network round
+// trip on every job's hot path. A handed-out worktree can lag origin by at most that
+// interval; it is never unboundedly stale.
+//
 // Parameters:
 //   - jobID: the unique identifier for the job (used as directory name)
 //   - branchName: the target branch name for the job (e.g., "nairid/adjective-noun-timestamp")
@@ -158,30 +169,13 @@ func (p *WorktreePool) Acquire(jobID, branchName string) (string, error) {
 
 	log.Info("🏊 Acquired worktree from pool (remaining: %d)", poolSize)
 
-	// Signal replenisher (non-blocking)
+	// Signal replenisher (non-blocking). It also re-checks staleness on every signal
+	// (see replenisherLoop), so popping a worktree here no longer waits on a fetch:
+	// staleness is handled by the background loop instead, bounded to at most
+	// staleRefreshInterval (or sooner, since every Acquire signals it too).
 	select {
 	case p.replenishChan <- struct{}{}:
 	default:
-	}
-
-	// Fetch latest from origin before staleness check to ensure we have
-	// the most recent commits. Without this fetch, we would compare against
-	// a stale local origin/main ref, missing newly merged PRs on GitHub.
-	if err := p.gitClient.FetchOrigin(); err != nil {
-		log.Warn("⚠️ Failed to fetch from origin before staleness check: %v", err)
-		// Continue anyway - we'll still check staleness against local refs
-	}
-
-	// Check staleness and refresh if needed
-	defaultBranch, currentCommit, err := p.getCurrentOriginCommit()
-	if err != nil {
-		log.Warn("⚠️ Failed to get current origin commit for staleness check: %v", err)
-	} else if pooledWT.BaseCommit != currentCommit {
-		log.Info("🔄 Worktree %s is stale, refreshing...", pooledWT.Path)
-		if err := p.refreshWorktreeAfterFetch(pooledWT.Path, defaultBranch); err != nil {
-			log.Warn("⚠️ Failed to refresh stale worktree: %v", err)
-			// Continue anyway - it might still work
-		}
 	}
 
 	// Validate the worktree is still registered with git before attempting to move.
@@ -254,8 +248,12 @@ func (p *WorktreePool) replenisherLoop(ctx context.Context) {
 		case <-p.replenishChan:
 			log.Debug("🔄 Worktree pool: replenish signal received")
 			p.fillToTarget(ctx)
-		case <-time.After(5 * time.Minute):
-			// Periodic refresh of stale worktrees
+		case <-time.After(staleRefreshInterval):
+			// Periodic refresh of stale worktrees. This is now the only place that
+			// fetches origin for staleness — Acquire used to do it inline on every
+			// job's hot path. Bounds how stale a handed-out worktree can be to at
+			// most staleRefreshInterval, instead of zero, in exchange for never
+			// blocking a job on a fetch.
 			log.Debug("🔄 Worktree pool: periodic staleness check")
 			p.refreshStaleWorktrees()
 		}

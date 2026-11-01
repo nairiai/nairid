@@ -434,3 +434,78 @@ func TestFallbackAndCleanupDuringPoolFill_NoLockErrors(t *testing.T) {
 		t.Errorf("Expected stale branch %s to be deleted, still present: %q", staleBranch, branches)
 	}
 }
+
+// Regression: Acquire used to fetch origin and check staleness inline, putting a network
+// round trip on every job's hot path. That moved to the background replenisher's periodic
+// refreshStaleWorktrees — Acquire itself must not touch the network at all.
+func TestAcquire_DoesNotFetchOrigin(t *testing.T) {
+	mainRepo, worktreeBase, cleanup := setupTestGitRepoWithRemote(t)
+	defer cleanup()
+
+	gitClient := clients.NewGitClient()
+	gitClient.SetRepoPathProvider(func() string { return mainRepo })
+
+	pool := NewWorktreePool(gitClient, worktreeBase, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	pool.Start(ctx)
+	waitForPoolSize(t, pool, 1)
+	pool.Stop()
+
+	// Only start the spy now, so the fill's own fetches above don't count.
+	spy := installGitSpy(t, false)
+
+	if _, err := pool.Acquire("job-no-fetch", "nairid/no-fetch"); err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+
+	if n := spy.count(t, "fetch "); n != 0 {
+		t.Errorf("Expected Acquire to do no fetch, got %d fetch call(s)", n)
+	}
+}
+
+// refreshStaleWorktrees (the background replenisher's periodic check, not the job's hot
+// path) is what's actually responsible for catching up a pool worktree whose BaseCommit
+// has fallen behind origin.
+func TestRefreshStaleWorktrees_UpdatesStaleEntries(t *testing.T) {
+	mainRepo, worktreeBase, cleanup := setupTestGitRepoWithRemote(t)
+	defer cleanup()
+
+	gitClient := clients.NewGitClient()
+	gitClient.SetRepoPathProvider(func() string { return mainRepo })
+
+	pool := NewWorktreePool(gitClient, worktreeBase, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	pool.Start(ctx)
+	waitForPoolSize(t, pool, 1)
+	pool.Stop()
+
+	staleCommit := pool.ready[0].BaseCommit
+
+	// Advance the remote past what the pool worktree was created from. Clone from the
+	// actual bare remote (not mainRepo, which has main checked out and refuses a push
+	// to its current branch).
+	remoteURL := gitOutput(t, mainRepo, "remote", "get-url", "origin")
+	workDir := t.TempDir()
+	gitOutput(t, workDir, "clone", remoteURL, ".")
+	if err := os.WriteFile(workDir+"/new-file.txt", []byte("new commit"), 0644); err != nil {
+		t.Fatalf("Failed to write new file: %v", err)
+	}
+	gitOutput(t, workDir, "add", "new-file.txt")
+	gitOutput(t, workDir, "commit", "-m", "advance main")
+	gitOutput(t, workDir, "push", "origin", "HEAD")
+
+	pool.refreshStaleWorktrees()
+
+	if pool.ready[0].BaseCommit == staleCommit {
+		t.Error("Expected refreshStaleWorktrees to update the stale BaseCommit")
+	}
+	newCommit := gitOutput(t, mainRepo, "rev-parse", "origin/"+gitOutput(t, mainRepo, "branch", "--show-current"))
+	if pool.ready[0].BaseCommit != newCommit {
+		t.Errorf("Expected refreshed BaseCommit %s to match origin %s", pool.ready[0].BaseCommit, newCommit)
+	}
+	if head := gitOutput(t, pool.ready[0].Path, "rev-parse", "HEAD"); head != newCommit {
+		t.Errorf("Expected worktree HEAD to be reset to the new commit %s, got %s", newCommit, head)
+	}
+}
