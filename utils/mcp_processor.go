@@ -475,6 +475,15 @@ func codexShellEnvironmentPolicy() map[string]interface{} {
 	}
 }
 
+// withOptionalMCPStartupGrace sets how long Codex waits for MCP servers before the first turn,
+// unless the customer set it.
+func withOptionalMCPStartupGrace(config map[string]interface{}) {
+	if _, set := config[codexOptionalMCPStartupGraceKey]; set {
+		return
+	}
+	config[codexOptionalMCPStartupGraceKey] = codexOptionalMCPStartupGraceMs
+}
+
 // CodexMCPProcessor handles MCP config processing for Codex
 type CodexMCPProcessor struct {
 	nairi     *NairiMCP
@@ -585,6 +594,7 @@ func (p *CodexMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 		nairiEntry, isNairi := codexMCPServers[NairiMCPServerName].(map[string]interface{})
 		if isNairi && p.nairi != nil {
 			nairiEntry["startup_timeout_sec"] = codexNairiStartupTimeoutSec
+			withOptionalMCPStartupGrace(existingConfig)
 		}
 
 		existingConfig["mcp_servers"] = codexMCPServers

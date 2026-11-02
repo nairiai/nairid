@@ -1,12 +1,14 @@
 package utils
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -216,6 +218,117 @@ func TestCodexMCPProcessor_RenamedCustomerNairiKeepsDefaultTimeout(t *testing.T)
 	if _, ok := moved["startup_timeout_sec"]; ok {
 		t.Error("the customer's renamed server keeps Codex's default startup timeout")
 	}
+}
+
+// With the gateway on, Codex waits for the nairi tools before the first turn instead of starting
+// without them. A grace the customer set stays.
+func TestCodexMCPProcessor_SetsOptionalMCPStartupGrace(t *testing.T) {
+	tests := []struct {
+		name     string
+		existing string // config.toml before the write, none when empty
+		nairi    *NairiMCP
+		want     interface{} // mcp_optional_startup_grace_ms after the write, nil when absent
+	}{
+		{name: "fresh config", nairi: testNairiMCP(), want: int64(10000)},
+		{
+			name:     "customer's value kept",
+			existing: "mcp_optional_startup_grace_ms = 2500\n",
+			nairi:    testNairiMCP(),
+			want:     int64(2500),
+		},
+		{
+			name:     "customer's zero kept",
+			existing: "mcp_optional_startup_grace_ms = 0\n",
+			nairi:    testNairiMCP(),
+			want:     int64(0),
+		},
+		{name: "gateway off", nairi: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := writeRemoteMCPConfig(t)
+			writeCodexConfig(t, home, tt.existing)
+
+			if err := NewCodexMCPProcessor(tt.nairi).ProcessMCPConfigs(""); err != nil {
+				t.Fatal(err)
+			}
+
+			grace, ok := readCodexConfig(t, home)["mcp_optional_startup_grace_ms"]
+			if tt.want == nil && ok {
+				t.Fatalf("mcp_optional_startup_grace_ms = %v, want none", grace)
+			}
+			if tt.want != nil && grace != tt.want {
+				t.Errorf("mcp_optional_startup_grace_ms = %v (%T), want %v", grace, grace, tt.want)
+			}
+		})
+	}
+}
+
+// The gateway write keeps the customer's Codex settings and gives the same bytes every run.
+func TestCodexMCPProcessor_GatewayWriteKeepsSettingsAndIsStable(t *testing.T) {
+	home := writeRemoteMCPConfig(t)
+	writeCodexConfig(t, home, "model = \"gpt-5-codex\"\n[profiles.fast]\nmodel = \"gpt-5-codex-mini\"\n"+
+		"[features]\nweb_search_request = true\n")
+	processor := NewCodexMCPProcessor(testNairiMCP())
+	configPath := filepath.Join(home, ".codex", "config.toml")
+
+	if err := processor.ProcessMCPConfigs(""); err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := processor.ProcessMCPConfigs(""); err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(first, second) {
+		t.Errorf("second write changed config.toml:\n%s\nthen\n%s", first, second)
+	}
+	config := readCodexConfig(t, home)
+	profiles, _ := config["profiles"].(map[string]interface{})
+	fast, _ := profiles["fast"].(map[string]interface{})
+	if config["model"] != "gpt-5-codex" || fast["model"] != "gpt-5-codex-mini" {
+		t.Errorf("customer settings lost: model %v, profiles %v", config["model"], config["profiles"])
+	}
+	if want := map[string]interface{}{"web_search_request": true}; !reflect.DeepEqual(config["features"], want) {
+		t.Errorf("features = %v, want %v", config["features"], want)
+	}
+	if grace := config["mcp_optional_startup_grace_ms"]; grace != int64(10000) {
+		t.Errorf("mcp_optional_startup_grace_ms = %v, want 10000", grace)
+	}
+}
+
+func writeCodexConfig(t *testing.T, home, content string) {
+	t.Helper()
+	if content == "" {
+		return
+	}
+	dir := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readCodexConfig(t *testing.T, home string) map[string]interface{} {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]interface{}
+	if err := toml.Unmarshal(content, &config); err != nil {
+		t.Fatal(err)
+	}
+	return config
 }
 
 func TestOpenCodeMCPProcessor_WritesNairiEntry(t *testing.T) {

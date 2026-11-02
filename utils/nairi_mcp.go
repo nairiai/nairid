@@ -28,6 +28,10 @@ const (
 	// codexNairiStartupTimeoutSec replaces Codex's 10s default, which also covers the first
 	// tools/list: the gateway may take up to 10s to initialize upstreams and 10s to list them.
 	codexNairiStartupTimeoutSec = 30
+	// Codex 0.147+ drops optional MCP servers not started within 1s of the first tool capture; 10s
+	// covers the gateway's startup with margin. The key exists from 0.151.0; older Codex ignores it.
+	codexOptionalMCPStartupGraceKey = "mcp_optional_startup_grace_ms"
+	codexOptionalMCPStartupGraceMs  = 10000
 )
 
 // NairiMCP is the Nairi agent MCP gateway entry nairid adds to the agent CLI's MCP config. The
