@@ -51,6 +51,7 @@ type CmdRunner struct {
 	envManager      *env.EnvManager
 	agentID         string
 	agentsApiClient *clients.AgentsApiClient
+	mcpConfig       *agentMCPConfig
 	wsURL           string
 	nairiAPIKey       string
 	instanceNamespace string // per-instance namespace for path isolation
@@ -369,6 +370,7 @@ var agentMCPReprobeInterval = 5 * time.Minute
 // never races another write or writes back a setup that is no longer current.
 type agentMCPConfig struct {
 	mu            sync.Mutex
+	refreshMu     sync.Mutex // one refresh at a time; it sets the gateway up outside mu
 	setup         agentMCPSetup
 	client        *clients.AgentsApiClient
 	apiBaseURL    string
@@ -481,6 +483,39 @@ func (c *agentMCPConfig) restoreGatewayEntry() {
 		return
 	}
 	log.Info("🔌 Restored the Nairi agent MCP gateway entry the agent CLI dropped")
+}
+
+// refresh downloads the agent's artifacts again and rewrites the agent CLI's rules, MCP config
+// and skills, so a config change in Nairi needs no nairid restart. Running jobs keep their CLI;
+// new ones read the new config.
+func (c *agentMCPConfig) refresh() error {
+	c.refreshMu.Lock()
+	defer c.refreshMu.Unlock()
+	// A self-hosted agent's first boot can beat its registration, get a 400 from the mcp-key route
+	// and stay off the gateway. Try it again before the download, which depends on the answer.
+	var fresh agentMCPSetup
+	if c.current() == (agentMCPSetup{}) {
+		fresh = setupAgentMCP(c.client, c.apiBaseURL, c.agentID)
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.setup == (agentMCPSetup{}) {
+		c.setup = fresh
+	}
+	if err := fetchAndStoreArtifacts(c.client, c.setup); err != nil {
+		return fmt.Errorf("failed to fetch and store artifacts: %w", err)
+	}
+	if err := processAgentRules(c.agentType, c.workDir, c.targetHomeDir); err != nil {
+		return fmt.Errorf("failed to process agent rules: %w", err)
+	}
+	if err := processMCPConfigs(c.agentType, c.workDir, c.targetHomeDir, c.setup); err != nil {
+		return fmt.Errorf("failed to process MCP configs: %w", err)
+	}
+	if err := processSkills(c.agentType, c.targetHomeDir); err != nil {
+		return fmt.Errorf("failed to process skills: %w", err)
+	}
+	return nil
 }
 
 // processAgentRules processes rules from eksecd directory based on agent type
@@ -855,6 +890,7 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 		envManager:        envManager,
 		agentID:           agentID,
 		agentsApiClient:   agentsApiClient,
+		mcpConfig:         mcpConfig,
 		wsURL:             wsURL,
 		nairiAPIKey:       nairiAPIKey,
 		instanceNamespace: instanceNamespace,
@@ -1257,6 +1293,20 @@ func newShutdownContext() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), shutdownSignals...)
 }
 
+// refreshConfig applies the env vars, rules, MCP servers and skills the backend has now, sent when
+// the agent's config changes in Nairi.
+func (cr *CmdRunner) refreshConfig() {
+	log.Info("🔄 Refreshing the agent config")
+	if err := fetchAndApplyEnvVars(cr.agentsApiClient, cr.envManager); err != nil {
+		log.Warn("🔄 Failed to refresh env vars: %v", err)
+	}
+	if err := cr.mcpConfig.refresh(); err != nil {
+		log.Error("❌ Failed to refresh the agent config: %v", err)
+		return
+	}
+	log.Info("✅ Refreshed the agent config, new turns use it")
+}
+
 // startSocketIOClientWithRetry wraps startSocketIOClient with exponential backoff retry logic.
 // It returns nil once ctx is cancelled.
 func (cr *CmdRunner) startSocketIOClientWithRetry(ctx context.Context, serverURLStr, apiKey string) error {
@@ -1437,6 +1487,9 @@ func (cr *CmdRunner) startSocketIOClient(ctx context.Context, serverURLStr, apiK
 		case models.MessageTypeStopTurn:
 			// Not in a pool: a stop must not wait behind turns or idle checks.
 			go cr.messageHandler.HandleMessage(msg)
+		case models.MessageTypeRefreshConfig:
+			// Not through the dispatcher: there is no job, and turns must not wait on downloads.
+			go cr.refreshConfig()
 		default:
 			// Route other message types through dispatcher
 			cr.dispatcher.Dispatch(msg)

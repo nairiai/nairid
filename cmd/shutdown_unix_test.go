@@ -77,9 +77,11 @@ func TestSIGTERMExitsDuringReconnectBackoff(t *testing.T) {
 }
 
 type shutdownBackend struct {
-	srv       *httptest.Server
-	attempts  atomic.Int32
-	connected chan struct{}
+	srv           *httptest.Server
+	attempts      atomic.Int32
+	artifactCalls atomic.Int32
+	connected     chan struct{}
+	onConnect     func(*ioserver.Socket) // set before nairid starts
 }
 
 // newShutdownBackend answers the startup API calls. With acceptSocket false, every socket.io
@@ -89,7 +91,13 @@ func newShutdownBackend(t *testing.T, acceptSocket bool) *shutdownBackend {
 	b := &shutdownBackend{connected: make(chan struct{})}
 	io := ioserver.NewServer(nil, nil)
 	var once sync.Once
-	if err := io.On("connection", func(...any) { once.Do(func() { close(b.connected) }) }); err != nil {
+	err := io.On("connection", func(clients ...any) {
+		once.Do(func() { close(b.connected) })
+		if client, ok := clients[0].(*ioserver.Socket); ok && b.onConnect != nil {
+			b.onConnect(client)
+		}
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	socketHandler := io.ServeHandler(nil)
@@ -100,6 +108,7 @@ func newShutdownBackend(t *testing.T, acceptSocket bool) *shutdownBackend {
 		_, _ = w.Write([]byte(`{"env_vars":[]}`))
 	})
 	mux.HandleFunc("/api/agents/artifacts", func(w http.ResponseWriter, r *http.Request) {
+		b.artifactCalls.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`[]`))
 	})
