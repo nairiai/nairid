@@ -152,19 +152,17 @@ func fetchAndApplyEnvVars(agentsApiClient *clients.AgentsApiClient, envManager *
 		return fmt.Errorf("failed to fetch env vars: %w", err)
 	}
 
-	if len(envVars) == 0 {
-		log.Info("🔧 No environment variables configured for this agent")
-		return nil
-	}
-
+	vars := make(map[string]string, len(envVars))
 	for _, ev := range envVars {
-		if err := envManager.Set(ev.Key, ev.Value); err != nil {
-			return fmt.Errorf("failed to set env var %s: %w", ev.Key, err)
-		}
+		vars[ev.Key] = ev.Value
 		log.Info("🔧 Set environment variable: %s", ev.Key)
 	}
+	// Still applied when empty: a refresh must drop the keys the backend removed.
+	if err := envManager.ApplyBackendVars(vars); err != nil {
+		return fmt.Errorf("failed to apply env vars: %w", err)
+	}
 
-	log.Info("🔧 Successfully applied %d environment variable(s)", len(envVars))
+	log.Info("🔧 Applied %d environment variable(s)", len(envVars))
 	return nil
 }
 
@@ -514,6 +512,10 @@ func (c *agentMCPConfig) refresh() error {
 	}
 	if err := processSkills(c.agentType, c.targetHomeDir); err != nil {
 		return fmt.Errorf("failed to process skills: %w", err)
+	}
+	// The OpenCode rules step deletes opencode.json, permissions included, as startup does.
+	if err := processPermissions(c.agentType, c.workDir, c.targetHomeDir); err != nil {
+		return fmt.Errorf("failed to process permissions: %w", err)
 	}
 	return nil
 }

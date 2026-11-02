@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -90,6 +91,9 @@ type fakeBackend struct {
 	sessionProbes  int
 	mcpDownloads   int
 	stripAsked     bool
+	rule           string // a rule artifact's content, none when empty
+	noMCP          bool   // the agent has no MCP servers configured
+	envVars        string // the /api/agents/env list, [] when empty
 }
 
 func (b *fakeBackend) handle(w http.ResponseWriter, r *http.Request) {
@@ -105,8 +109,21 @@ func (b *fakeBackend) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		reply.write(w)
 	case "/api/agents/artifacts":
-		_, _ = w.Write([]byte(`[{"title":"MCP servers","type":"mcp_config",` +
-			`"files":[{"location":"~/.config/eksecd/mcp/servers.json","attachmentId":"att_mcp"}]}]`))
+		var artifacts []string
+		if !b.noMCP {
+			artifacts = append(artifacts, `{"title":"MCP servers","type":"mcp_config",`+
+				`"files":[{"location":"~/.config/eksecd/mcp/servers.json","attachmentId":"att_mcp"}]}`)
+		}
+		if b.rule != "" {
+			artifacts = append(artifacts, `{"title":"Style","type":"rule",`+
+				`"files":[{"location":"~/.config/eksecd/rules/style.md","attachmentId":"att_rule"}]}`)
+		}
+		_, _ = w.Write([]byte("[" + strings.Join(artifacts, ",") + "]"))
+	case "/api/agents/attachments/att_rule":
+		data := base64.StdEncoding.EncodeToString([]byte(b.rule))
+		_, _ = w.Write([]byte(`{"id":"att_rule","data":"` + data + `"}`))
+	case "/api/agents/env":
+		_, _ = w.Write([]byte(`{"env_vars":` + cmp.Or(b.envVars, "[]") + `}`))
 	default:
 		b.mcpDownloads++
 		b.stripAsked = r.Header.Get(clients.NairidVersionHeader) != ""

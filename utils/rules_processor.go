@@ -210,6 +210,57 @@ func CleanEksecdRulesDir() error {
 	return nil
 }
 
+// claudeRulesMarker marks ~/.claude/rules as written by nairid, so the last rule's removal can
+// clear it without touching a rules dir the user wrote. Claude Code reads only *.md files there.
+const claudeRulesMarker = ".nairid-managed"
+
+// generatedRulesHeader starts every AGENTS.md nairid generates; a file without it is the user's.
+const generatedRulesHeader = "# Rules\n\nThe following is a list of rules that you need to strictly follow when they are relevant to your task.\n"
+
+func resolveHomeDir(targetHomeDir string) (string, error) {
+	if targetHomeDir != "" {
+		return targetHomeDir, nil
+	}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get home directory: %w", err)
+	}
+	return homeDir, nil
+}
+
+// removeManagedClaudeRules clears the rules dir an earlier run deployed, once no rules are left.
+func removeManagedClaudeRules(targetHomeDir string) error {
+	homeDir, err := resolveHomeDir(targetHomeDir)
+	if err != nil {
+		return err
+	}
+	claudeRulesDir := filepath.Join(homeDir, ".claude", "rules")
+	if _, err := readFileAsTargetUser(filepath.Join(claudeRulesDir, claudeRulesMarker)); err != nil {
+		return nil
+	}
+	log.Info("📋 Removing the rules nairid deployed to %s", claudeRulesDir)
+	if err := removeAllAsTargetUser(claudeRulesDir); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove the deployed rules: %w", err)
+	}
+	return nil
+}
+
+// removeGeneratedAgentsMd deletes an AGENTS.md nairid generated, once no rules are left.
+func removeGeneratedAgentsMd(agentsMdPath string) error {
+	content, err := readFileAsTargetUser(agentsMdPath)
+	if err != nil {
+		return nil
+	}
+	if !strings.HasPrefix(string(content), generatedRulesHeader) {
+		return nil
+	}
+	log.Info("📋 Removing the AGENTS.md nairid generated at %s", agentsMdPath)
+	if err := removeAllAsTargetUser(agentsMdPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove the generated AGENTS.md: %w", err)
+	}
+	return nil
+}
+
 // ClaudeCodeRulesProcessor handles rules processing for Claude Code
 type ClaudeCodeRulesProcessor struct{}
 
@@ -232,7 +283,7 @@ func (p *ClaudeCodeRulesProcessor) ProcessRules(targetHomeDir string) error {
 
 	if len(ruleFiles) == 0 {
 		log.Info("📋 No rules found in eksecd rules directory")
-		return nil
+		return removeManagedClaudeRules(targetHomeDir)
 	}
 
 	log.Info("📋 Found %d rule file(s) to process", len(ruleFiles))
@@ -282,6 +333,10 @@ func (p *ClaudeCodeRulesProcessor) ProcessRules(targetHomeDir string) error {
 		}
 	}
 
+	if err := writeFileAsTargetUser(filepath.Join(claudeRulesDir, claudeRulesMarker), nil, 0644); err != nil {
+		return fmt.Errorf("failed to mark the rules directory: %w", err)
+	}
+
 	log.Info("✅ Successfully processed %d rule(s) for Claude Code", len(ruleFiles))
 	return nil
 }
@@ -315,7 +370,11 @@ func (p *OpenCodeRulesProcessor) ProcessRules(targetHomeDir string) error {
 
 	if len(ruleFiles) == 0 {
 		log.Info("📋 No rules found in eksecd rules directory")
-		return nil
+		homeDir, err := resolveHomeDir(targetHomeDir)
+		if err != nil {
+			return err
+		}
+		return removeGeneratedAgentsMd(filepath.Join(homeDir, ".config", "opencode", "AGENTS.md"))
 	}
 
 	log.Info("📋 Found %d rule file(s) to process", len(ruleFiles))
@@ -341,8 +400,7 @@ func (p *OpenCodeRulesProcessor) ProcessRules(targetHomeDir string) error {
 
 	// Build AGENTS.md content from all rule files
 	var sb strings.Builder
-	sb.WriteString("# Rules\n\n")
-	sb.WriteString("The following is a list of rules that you need to strictly follow when they are relevant to your task.\n")
+	sb.WriteString(generatedRulesHeader)
 
 	for _, ruleFile := range ruleFiles {
 		title, description, body, err := ReadRuleBody(ruleFile)
@@ -409,7 +467,11 @@ func (p *CodexRulesProcessor) ProcessRules(targetHomeDir string) error {
 
 	if len(ruleFiles) == 0 {
 		log.Info("📋 No rules found in eksecd rules directory")
-		return nil
+		homeDir, err := resolveHomeDir(targetHomeDir)
+		if err != nil {
+			return err
+		}
+		return removeGeneratedAgentsMd(filepath.Join(homeDir, ".codex", "AGENTS.md"))
 	}
 
 	log.Info("📋 Found %d rule file(s) to process", len(ruleFiles))
@@ -435,8 +497,7 @@ func (p *CodexRulesProcessor) ProcessRules(targetHomeDir string) error {
 
 	// Build AGENTS.md content from all rule files
 	var sb strings.Builder
-	sb.WriteString("# Rules\n\n")
-	sb.WriteString("The following is a list of rules that you need to strictly follow when they are relevant to your task.\n")
+	sb.WriteString(generatedRulesHeader)
 
 	for _, ruleFile := range ruleFiles {
 		title, description, body, err := ReadRuleBody(ruleFile)

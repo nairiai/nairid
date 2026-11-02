@@ -18,6 +18,15 @@ type EnvManager struct {
 	ticker   *time.Ticker
 	stopChan chan struct{}
 	hooks    []func()
+
+	// Keys the backend set, each with the value it hid, so a key removed on the backend
+	// gets its local value back instead of lingering.
+	backendKeys map[string]priorValue
+}
+
+type priorValue struct {
+	value string
+	set   bool
 }
 
 func NewEnvManager() (*EnvManager, error) {
@@ -155,6 +164,55 @@ func (em *EnvManager) Set(key, value string) error {
 	}
 
 	return nil
+}
+
+// ApplyBackendVars sets the backend's env vars and drops the ones an earlier call set that the
+// backend no longer has, restoring the value each one hid. An empty vars drops them all.
+func (em *EnvManager) ApplyBackendVars(vars map[string]string) error {
+	em.mu.Lock()
+	defer em.mu.Unlock()
+
+	if em.backendKeys == nil {
+		em.backendKeys = make(map[string]priorValue)
+	}
+
+	for key, prior := range em.backendKeys {
+		if _, kept := vars[key]; kept {
+			continue
+		}
+		delete(em.backendKeys, key)
+		if prior.set {
+			em.envVars[key] = prior.value
+			if err := os.Setenv(key, prior.value); err != nil {
+				return fmt.Errorf("failed to restore environment variable %s: %w", key, err)
+			}
+			continue
+		}
+		delete(em.envVars, key)
+		if err := os.Unsetenv(key); err != nil {
+			return fmt.Errorf("failed to unset environment variable %s: %w", key, err)
+		}
+	}
+
+	for key, value := range vars {
+		if _, owned := em.backendKeys[key]; !owned {
+			em.backendKeys[key] = em.currentValue(key)
+		}
+		em.envVars[key] = value
+		if err := os.Setenv(key, value); err != nil {
+			return fmt.Errorf("failed to set environment variable %s: %w", key, err)
+		}
+	}
+
+	return nil
+}
+
+func (em *EnvManager) currentValue(key string) priorValue {
+	if value, ok := em.envVars[key]; ok {
+		return priorValue{value: value, set: true}
+	}
+	value, ok := os.LookupEnv(key)
+	return priorValue{value: value, set: ok}
 }
 
 func (em *EnvManager) Reload() error {
