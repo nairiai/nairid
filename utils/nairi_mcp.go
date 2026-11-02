@@ -25,8 +25,9 @@ const (
 	// LocalMCPsHeader lists the remote MCP servers a self-hosted agent kept in its own config,
 	// so the gateway does not serve them a second time.
 	LocalMCPsHeader = "X-Nairi-Local-MCPs"
-	// codexNairiStartupTimeoutSec replaces Codex's 10s default, which also covers the first
-	// tools/list: the gateway may take up to 10s to initialize upstreams and 10s to list them.
+	// codexNairiStartupTimeoutSec bounds Codex's MCP initialize and first tools/list. Codex 0.118+
+	// defaults to 30s; older Codex defaults to 10s, so this keeps 30s there. The gateway caps upstream
+	// init and the first list at 3s each, so both answer within about 6s.
 	codexNairiStartupTimeoutSec = 30
 	// Codex 0.147+ drops optional MCP servers not started within 1s of the first tool capture; 10s
 	// covers the gateway's startup with margin. The key exists from 0.151.0; older Codex ignores it.
