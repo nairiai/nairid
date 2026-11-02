@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
@@ -1234,16 +1235,31 @@ func main() {
 		}
 	}()
 
+	shutdownCtx, stopShutdownSignals := newShutdownContext()
+	defer stopShutdownSignals()
+
 	// Start Socket.IO client with backoff retry
-	err = cmdRunner.startSocketIOClientWithRetry(cmdRunner.wsURL, cmdRunner.nairiAPIKey)
+	err = cmdRunner.startSocketIOClientWithRetry(shutdownCtx, cmdRunner.wsURL, cmdRunner.nairiAPIKey)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error starting WebSocket client after retries: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-// startSocketIOClientWithRetry wraps startSocketIOClient with exponential backoff retry logic
-func (cr *CmdRunner) startSocketIOClientWithRetry(serverURLStr, apiKey string) error {
+// shutdownSignals end nairid gracefully: SIGTERM is what docker stop and systemd send. The
+// socket.io engine package catches SIGINT and SIGTERM itself in an init() and only closes the
+// socket, so without our own handler a SIGTERM just made nairid reconnect.
+var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
+
+// newShutdownContext is cancelled by the first shutdown signal, for the whole connection lifetime,
+// including the backoff between connection attempts.
+func newShutdownContext() (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(context.Background(), shutdownSignals...)
+}
+
+// startSocketIOClientWithRetry wraps startSocketIOClient with exponential backoff retry logic.
+// It returns nil once ctx is cancelled.
+func (cr *CmdRunner) startSocketIOClientWithRetry(ctx context.Context, serverURLStr, apiKey string) error {
 	// Configure exponential backoff with unlimited retries
 	expBackoff := backoff.NewExponentialBackOff()
 	expBackoff.InitialInterval = 2 * time.Second
@@ -1255,7 +1271,10 @@ func (cr *CmdRunner) startSocketIOClientWithRetry(serverURLStr, apiKey string) e
 		attempt++
 		log.Info("🔄 Connection attempt %d", attempt)
 
-		err := cr.startSocketIOClient(serverURLStr, apiKey)
+		err := cr.startSocketIOClient(ctx, serverURLStr, apiKey)
+		if ctx.Err() != nil {
+			return backoff.Permanent(ctx.Err())
+		}
 		if err != nil {
 			log.Error("❌ Connection attempt %d failed: %v", attempt, err)
 			return err
@@ -1267,7 +1286,11 @@ func (cr *CmdRunner) startSocketIOClientWithRetry(serverURLStr, apiKey string) e
 		log.Info("⏳ Retrying in %v...", next)
 	}
 
-	err := backoff.RetryNotify(operation, expBackoff, notify)
+	err := backoff.RetryNotify(operation, backoff.WithContext(expBackoff, ctx), notify)
+	if ctx.Err() != nil {
+		log.Info("🔌 Shutdown signal received, stopped connecting")
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("failed to connect after %d attempts: %w", attempt, err)
 	}
@@ -1275,13 +1298,10 @@ func (cr *CmdRunner) startSocketIOClientWithRetry(serverURLStr, apiKey string) e
 	return nil
 }
 
-func (cr *CmdRunner) startSocketIOClient(serverURLStr, apiKey string) error {
+// startSocketIOClient connects and serves until a runtime error, or until ctx is cancelled by a
+// shutdown signal.
+func (cr *CmdRunner) startSocketIOClient(ctx context.Context, serverURLStr, apiKey string) error {
 	log.Info("📋 Starting to connect to Socket.IO server at %s", serverURLStr)
-
-	// Set up global interrupt handling
-	interrupt := make(chan os.Signal, 1)
-	signal.Notify(interrupt, os.Interrupt)
-	defer signal.Stop(interrupt)
 
 	// Set up Socket.IO client options
 	opts := socket.DefaultOptions()
@@ -1432,6 +1452,9 @@ func (cr *CmdRunner) startSocketIOClient(serverURLStr, apiKey string) error {
 	case err := <-connectionError:
 		socketClient.Disconnect()
 		return err
+	case <-ctx.Done():
+		socketClient.Disconnect()
+		return nil
 	case <-time.After(10 * time.Second):
 		socketClient.Disconnect()
 		return fmt.Errorf("connection timeout - server may have rejected authentication")
@@ -1447,10 +1470,10 @@ func (cr *CmdRunner) startSocketIOClient(serverURLStr, apiKey string) error {
 	defer pingCancel()
 	cr.startPingRoutine(pingCtx, socketClient, runtimeErrorChan)
 
-	// Wait for interrupt signal or runtime error
+	// Wait for a shutdown signal or runtime error
 	select {
-	case <-interrupt:
-		log.Info("🔌 Interrupt received, closing Socket.IO connection...")
+	case <-ctx.Done():
+		log.Info("🔌 Shutdown signal received, closing Socket.IO connection...")
 		socketClient.Disconnect()
 		return nil
 	case err := <-runtimeErrorChan:

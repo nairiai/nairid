@@ -13,6 +13,7 @@ require (
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/zishang520/socket.io/clients/socket/v3 v3.0.0-rc.11
+	github.com/zishang520/socket.io/servers/socket/v3 v3.0.0-rc.11
 	github.com/zishang520/socket.io/v3 v3.0.0-rc.11
 )
 
@@ -33,7 +34,6 @@ require (
 	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.0-rc.11 // indirect
 	github.com/zishang520/socket.io/parsers/socket/v3 v3.0.0-rc.11 // indirect
 	github.com/zishang520/socket.io/servers/engine/v3 v3.0.0-rc.11 // indirect
-	github.com/zishang520/socket.io/servers/socket/v3 v3.0.0-rc.11 // indirect
 	golang.org/x/crypto v0.52.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
