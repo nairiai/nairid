@@ -336,27 +336,33 @@ func TestCodexMCPProcessor_GatewayOffRemovesNairidGrace(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			home := writeRemoteMCPConfig(t)
-			if err := tt.on.ProcessMCPConfigs(""); err != nil {
-				t.Fatal(err)
-			}
-			if grace := readCodexConfig(t, home)["mcp_optional_startup_grace_ms"]; grace != int64(10000) {
-				t.Fatalf("gateway on: mcp_optional_startup_grace_ms = %v, want 10000", grace)
-			}
-			if tt.noServers {
-				if err := os.Remove(filepath.Join(home, ".config", "eksecd", "mcp", "private.json")); err != nil {
-					t.Fatal(err)
-				}
-			}
-
-			if err := tt.off.ProcessMCPConfigs(""); err != nil {
-				t.Fatal(err)
-			}
-
-			if grace, ok := readCodexConfig(t, home)["mcp_optional_startup_grace_ms"]; ok {
-				t.Errorf("gateway off: mcp_optional_startup_grace_ms = %v, want none", grace)
-			}
+			assertGatewayOffRemovesGrace(t, tt.on, tt.off, tt.noServers)
 		})
+	}
+}
+
+// assertGatewayOffRemovesGrace writes with the gateway on, then off, and checks the grace is gone.
+func assertGatewayOffRemovesGrace(t *testing.T, on, off *CodexMCPProcessor, noServers bool) {
+	t.Helper()
+	home := writeRemoteMCPConfig(t)
+	if err := on.ProcessMCPConfigs(""); err != nil {
+		t.Fatal(err)
+	}
+	if grace := readCodexConfig(t, home)["mcp_optional_startup_grace_ms"]; grace != int64(10000) {
+		t.Fatalf("gateway on: mcp_optional_startup_grace_ms = %v, want 10000", grace)
+	}
+	if noServers {
+		if err := os.Remove(filepath.Join(home, ".config", "eksecd", "mcp", "private.json")); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := off.ProcessMCPConfigs(""); err != nil {
+		t.Fatal(err)
+	}
+
+	if grace, ok := readCodexConfig(t, home)["mcp_optional_startup_grace_ms"]; ok {
+		t.Errorf("gateway off: mcp_optional_startup_grace_ms = %v, want none", grace)
 	}
 }
 
