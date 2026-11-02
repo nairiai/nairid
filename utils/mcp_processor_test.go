@@ -2,11 +2,8 @@ package utils
 
 import (
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	toml "github.com/pelletier/go-toml/v2"
@@ -547,7 +544,7 @@ func TestClaudeCodeMCPProcessor_NoConfigs(t *testing.T) {
 	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process MCP configs (should succeed with no configs)
-	processor := NewClaudeCodeMCPProcessor(workDir)
+	processor := NewClaudeCodeMCPProcessor(workDir, nil)
 	if err := processor.ProcessMCPConfigs(""); err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -594,7 +591,7 @@ func TestClaudeCodeMCPProcessor_WithConfigs(t *testing.T) {
 	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process MCP configs
-	processor := NewClaudeCodeMCPProcessor(workDir)
+	processor := NewClaudeCodeMCPProcessor(workDir, nil)
 	if err := processor.ProcessMCPConfigs(""); err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -678,7 +675,7 @@ func TestClaudeCodeMCPProcessor_WithMultipleMCPConfigs(t *testing.T) {
 	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process MCP configs
-	processor := NewClaudeCodeMCPProcessor(workDir)
+	processor := NewClaudeCodeMCPProcessor(workDir, nil)
 	if err := processor.ProcessMCPConfigs(""); err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -765,7 +762,7 @@ func TestClaudeCodeMCPProcessor_PreservesExistingConfig(t *testing.T) {
 	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process MCP configs
-	processor := NewClaudeCodeMCPProcessor(workDir)
+	processor := NewClaudeCodeMCPProcessor(workDir, nil)
 	if err := processor.ProcessMCPConfigs(""); err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -813,7 +810,7 @@ func TestOpenCodeMCPProcessor_NoConfigs(t *testing.T) {
 	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process MCP configs (should succeed with no configs)
-	processor := NewOpenCodeMCPProcessor(workDir)
+	processor := NewOpenCodeMCPProcessor(workDir, nil)
 	if err := processor.ProcessMCPConfigs(""); err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -860,7 +857,7 @@ func TestOpenCodeMCPProcessor_WithConfigs(t *testing.T) {
 	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process MCP configs
-	processor := NewOpenCodeMCPProcessor(workDir)
+	processor := NewOpenCodeMCPProcessor(workDir, nil)
 	if err := processor.ProcessMCPConfigs(""); err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -980,7 +977,7 @@ func TestOpenCodeMCPProcessor_WithMultipleMCPConfigs(t *testing.T) {
 	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process MCP configs
-	processor := NewOpenCodeMCPProcessor(workDir)
+	processor := NewOpenCodeMCPProcessor(workDir, nil)
 	if err := processor.ProcessMCPConfigs(""); err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -1072,7 +1069,7 @@ func TestOpenCodeMCPProcessor_PreservesExistingConfig(t *testing.T) {
 	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process MCP configs
-	processor := NewOpenCodeMCPProcessor(workDir)
+	processor := NewOpenCodeMCPProcessor(workDir, nil)
 	if err := processor.ProcessMCPConfigs(""); err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -1149,7 +1146,7 @@ func TestOpenCodeMCPProcessor_LocalServerTransformation(t *testing.T) {
 	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process MCP configs
-	processor := NewOpenCodeMCPProcessor(workDir)
+	processor := NewOpenCodeMCPProcessor(workDir, nil)
 	if err := processor.ProcessMCPConfigs(""); err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -1268,7 +1265,7 @@ func TestOpenCodeMCPProcessor_RemoteServerTransformation(t *testing.T) {
 	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process MCP configs
-	processor := NewOpenCodeMCPProcessor(workDir)
+	processor := NewOpenCodeMCPProcessor(workDir, nil)
 	if err := processor.ProcessMCPConfigs(""); err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -1374,7 +1371,7 @@ func TestOpenCodeMCPProcessor_MixedLocalAndRemoteServers(t *testing.T) {
 	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process MCP configs
-	processor := NewOpenCodeMCPProcessor(workDir)
+	processor := NewOpenCodeMCPProcessor(workDir, nil)
 	if err := processor.ProcessMCPConfigs(""); err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -1465,7 +1462,7 @@ func TestOpenCodeMCPProcessor_LocalServerWithoutEnv(t *testing.T) {
 	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process MCP configs
-	processor := NewOpenCodeMCPProcessor(workDir)
+	processor := NewOpenCodeMCPProcessor(workDir, nil)
 	if err := processor.ProcessMCPConfigs(""); err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -1553,7 +1550,7 @@ func TestOpenCodeMCPProcessor_RemoteServerWithoutHeaders(t *testing.T) {
 	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Process MCP configs
-	processor := NewOpenCodeMCPProcessor(workDir)
+	processor := NewOpenCodeMCPProcessor(workDir, nil)
 	if err := processor.ProcessMCPConfigs(""); err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -1610,7 +1607,7 @@ func TestCodexMCPProcessor_NoConfigs(t *testing.T) {
 	_ = os.Setenv("HOME", tempDir)
 	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
-	processor := NewCodexMCPProcessor()
+	processor := NewCodexMCPProcessor(nil)
 	if err := processor.ProcessMCPConfigs(""); err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -1679,7 +1676,7 @@ func TestCodexMCPProcessor_WithConfigs(t *testing.T) {
 	_ = os.Setenv("HOME", tempDir)
 	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
-	processor := NewCodexMCPProcessor()
+	processor := NewCodexMCPProcessor(nil)
 	if err := processor.ProcessMCPConfigs(""); err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -1748,7 +1745,7 @@ func TestCodexMCPProcessor_RemoteServer(t *testing.T) {
 	_ = os.Setenv("HOME", tempDir)
 	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
-	processor := NewCodexMCPProcessor()
+	processor := NewCodexMCPProcessor(nil)
 	if err := processor.ProcessMCPConfigs(""); err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -1809,7 +1806,7 @@ func TestCodexMCPProcessor_PreservesExistingConfig(t *testing.T) {
 	_ = os.Setenv("HOME", tempDir)
 	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
-	processor := NewCodexMCPProcessor()
+	processor := NewCodexMCPProcessor(nil)
 	if err := processor.ProcessMCPConfigs(""); err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -1835,87 +1832,6 @@ func TestCodexMCPProcessor_PreservesExistingConfig(t *testing.T) {
 	}
 }
 
-func TestCodexProxiedMCPProcessor_Success(t *testing.T) {
-	servers := []MCPProxyServerInfo{
-		{Name: "github", URL: "/mcp/github"},
-		{Name: "postgres", URL: "/mcp/postgres"},
-	}
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(servers)
-	}))
-	defer ts.Close()
-
-	tempDir := t.TempDir()
-	processor := NewCodexProxiedMCPProcessor(ts.URL)
-
-	if err := processor.ProcessMCPConfigs(tempDir); err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
-	}
-
-	content, err := os.ReadFile(filepath.Join(tempDir, ".codex", "config.toml"))
-	if err != nil {
-		t.Fatalf("Failed to read config.toml: %v", err)
-	}
-
-	var config map[string]interface{}
-	if err := toml.Unmarshal(content, &config); err != nil {
-		t.Fatalf("Failed to parse config.toml: %v", err)
-	}
-
-	mcpServers, ok := config["mcp_servers"].(map[string]interface{})
-	if !ok {
-		t.Fatal("Expected mcp_servers key in config")
-	}
-
-	if len(mcpServers) != 2 {
-		t.Errorf("Expected 2 MCP servers, got %d", len(mcpServers))
-	}
-
-	githubServer, ok := mcpServers["github"].(map[string]interface{})
-	if !ok {
-		t.Fatal("Expected github server in config")
-	}
-
-	expectedURL := ts.URL + "/mcp/github"
-	if githubServer["url"] != expectedURL {
-		t.Errorf("Expected URL %s, got %s", expectedURL, githubServer["url"])
-	}
-
-	policy, ok := config["shell_environment_policy"].(map[string]interface{})
-	if !ok {
-		t.Fatal("Expected shell_environment_policy to exist")
-	}
-	assertCodexShellInheritsAll(t, policy)
-}
-
-func TestCodexProxiedMCPProcessor_EmptyServers(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte("[]"))
-	}))
-	defer ts.Close()
-
-	tempDir := t.TempDir()
-	processor := NewCodexProxiedMCPProcessor(ts.URL)
-
-	if err := processor.ProcessMCPConfigs(tempDir); err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
-	}
-
-	// config.toml should still be created with shell_environment_policy
-	content, err := os.ReadFile(filepath.Join(tempDir, ".codex", "config.toml"))
-	if err != nil {
-		t.Fatalf("Expected config.toml to exist, got error: %v", err)
-	}
-
-	configStr := string(content)
-	if !strings.Contains(configStr, "ignore_default_excludes") {
-		t.Error("Expected config.toml to contain shell_environment_policy even with no servers")
-	}
-}
-
 // Test NoOpMCPProcessor
 
 func TestNoOpMCPProcessor(t *testing.T) {
@@ -1924,216 +1840,3 @@ func TestNoOpMCPProcessor(t *testing.T) {
 		t.Fatalf("Expected no error from NoOp processor, got: %v", err)
 	}
 }
-
-// Test FetchMCPProxyServers
-
-func TestFetchMCPProxyServers_Success(t *testing.T) {
-	servers := []MCPProxyServerInfo{
-		{Name: "github", URL: "/mcp/github"},
-		{Name: "postgres", URL: "/mcp/postgres"},
-	}
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/servers" {
-			t.Errorf("Expected path /servers, got %s", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(servers)
-	}))
-	defer ts.Close()
-
-	result, err := FetchMCPProxyServers(ts.URL)
-	if err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
-	}
-
-	if len(result) != 2 {
-		t.Fatalf("Expected 2 servers, got %d", len(result))
-	}
-
-	if result[0].Name != "github" || result[0].URL != "/mcp/github" {
-		t.Errorf("Unexpected first server: %+v", result[0])
-	}
-
-	if result[1].Name != "postgres" || result[1].URL != "/mcp/postgres" {
-		t.Errorf("Unexpected second server: %+v", result[1])
-	}
-}
-
-func TestFetchMCPProxyServers_ServerError(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte("internal error"))
-	}))
-	defer ts.Close()
-
-	_, err := FetchMCPProxyServers(ts.URL)
-	if err == nil {
-		t.Fatal("Expected error for server error response")
-	}
-}
-
-func TestFetchMCPProxyServers_EmptyList(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte("[]"))
-	}))
-	defer ts.Close()
-
-	result, err := FetchMCPProxyServers(ts.URL)
-	if err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
-	}
-
-	if len(result) != 0 {
-		t.Errorf("Expected 0 servers, got %d", len(result))
-	}
-}
-
-// Test ClaudeCodeProxiedMCPProcessor
-
-func TestClaudeCodeProxiedMCPProcessor_Success(t *testing.T) {
-	servers := []MCPProxyServerInfo{
-		{Name: "github", URL: "/mcp/github"},
-		{Name: "postgres", URL: "/mcp/postgres"},
-	}
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(servers)
-	}))
-	defer ts.Close()
-
-	tempDir := t.TempDir()
-	processor := NewClaudeCodeProxiedMCPProcessor(ts.URL)
-
-	if err := processor.ProcessMCPConfigs(tempDir); err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
-	}
-
-	// Read and verify .claude.json
-	content, err := os.ReadFile(filepath.Join(tempDir, ".claude.json"))
-	if err != nil {
-		t.Fatalf("Failed to read .claude.json: %v", err)
-	}
-
-	var config map[string]interface{}
-	if err := json.Unmarshal(content, &config); err != nil {
-		t.Fatalf("Failed to parse .claude.json: %v", err)
-	}
-
-	mcpServers, ok := config["mcpServers"].(map[string]interface{})
-	if !ok {
-		t.Fatal("Expected mcpServers key in config")
-	}
-
-	if len(mcpServers) != 2 {
-		t.Errorf("Expected 2 MCP servers, got %d", len(mcpServers))
-	}
-
-	githubServer, ok := mcpServers["github"].(map[string]interface{})
-	if !ok {
-		t.Fatal("Expected github server in config")
-	}
-
-	expectedURL := ts.URL + "/mcp/github"
-	if githubServer["url"] != expectedURL {
-		t.Errorf("Expected URL %s, got %s", expectedURL, githubServer["url"])
-	}
-}
-
-func TestClaudeCodeProxiedMCPProcessor_EmptyServers(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte("[]"))
-	}))
-	defer ts.Close()
-
-	tempDir := t.TempDir()
-	processor := NewClaudeCodeProxiedMCPProcessor(ts.URL)
-
-	if err := processor.ProcessMCPConfigs(tempDir); err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
-	}
-
-	// .claude.json should not be created when there are no servers
-	if _, err := os.Stat(filepath.Join(tempDir, ".claude.json")); !os.IsNotExist(err) {
-		t.Error("Expected .claude.json to not exist when no servers available")
-	}
-}
-
-// Test OpenCodeProxiedMCPProcessor
-
-func TestOpenCodeProxiedMCPProcessor_Success(t *testing.T) {
-	servers := []MCPProxyServerInfo{
-		{Name: "github", URL: "/mcp/github"},
-	}
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(servers)
-	}))
-	defer ts.Close()
-
-	tempDir := t.TempDir()
-	processor := NewOpenCodeProxiedMCPProcessor(ts.URL)
-
-	if err := processor.ProcessMCPConfigs(tempDir); err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
-	}
-
-	// Read and verify opencode.json
-	content, err := os.ReadFile(filepath.Join(tempDir, ".config", "opencode", "opencode.json"))
-	if err != nil {
-		t.Fatalf("Failed to read opencode.json: %v", err)
-	}
-
-	var config map[string]interface{}
-	if err := json.Unmarshal(content, &config); err != nil {
-		t.Fatalf("Failed to parse opencode.json: %v", err)
-	}
-
-	mcpSection, ok := config["mcp"].(map[string]interface{})
-	if !ok {
-		t.Fatal("Expected mcp key in config")
-	}
-
-	githubServer, ok := mcpSection["github"].(map[string]interface{})
-	if !ok {
-		t.Fatal("Expected github server in mcp config")
-	}
-
-	if githubServer["type"] != "remote" {
-		t.Errorf("Expected type 'remote', got %s", githubServer["type"])
-	}
-
-	expectedURL := ts.URL + "/mcp/github"
-	if githubServer["url"] != expectedURL {
-		t.Errorf("Expected URL %s, got %s", expectedURL, githubServer["url"])
-	}
-
-	if githubServer["enabled"] != true {
-		t.Errorf("Expected enabled to be true")
-	}
-}
-
-func TestOpenCodeProxiedMCPProcessor_EmptyServers(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte("[]"))
-	}))
-	defer ts.Close()
-
-	tempDir := t.TempDir()
-	processor := NewOpenCodeProxiedMCPProcessor(ts.URL)
-
-	if err := processor.ProcessMCPConfigs(tempDir); err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
-	}
-
-	// opencode.json should not be created when there are no servers
-	if _, err := os.Stat(filepath.Join(tempDir, ".config", "opencode", "opencode.json")); !os.IsNotExist(err) {
-		t.Error("Expected opencode.json to not exist when no servers available")
-	}
-}
-

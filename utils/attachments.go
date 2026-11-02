@@ -310,9 +310,9 @@ func ExpandHomeDir(path string) (string, error) {
 	return path, nil
 }
 
-// FetchAndStoreArtifact downloads an artifact file and saves it to the specified location
-// The location path may contain ~ which will be expanded to the user's home directory
-func FetchAndStoreArtifact(client *clients.AgentsApiClient, attachmentID string, location string) error {
+// FetchAndStoreArtifact saves the attachment at location, expanding ~ to the user's home.
+// With stdioOnly, it filters MCP downloads before remote credentials reach disk.
+func FetchAndStoreArtifact(client *clients.AgentsApiClient, attachmentID string, location string, stdioOnly bool) error {
 	// Expand ~ in location path
 	expandedPath, err := ExpandHomeDir(location)
 	if err != nil {
@@ -339,6 +339,13 @@ func FetchAndStoreArtifact(client *clients.AgentsApiClient, attachmentID string,
 	// Check decoded content is not empty
 	if len(content) == 0 {
 		return fmt.Errorf("decoded artifact content is empty for ID %s", attachmentID)
+	}
+
+	if stdioOnly && isMCPConfigPath(expandedPath) {
+		content, err = stdioOnlyMCPConfig(content)
+		if err != nil {
+			return fmt.Errorf("failed to drop remote servers from MCP config %s: %w", location, err)
+		}
 	}
 
 	// Create parent directory if it doesn't exist

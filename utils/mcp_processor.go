@@ -5,13 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"nairid/core/log"
 
@@ -223,16 +220,7 @@ func MergeMCPConfigs() (map[string]interface{}, error) {
 
 		// Merge servers from this file into the main map
 		for serverName, serverConfig := range fileConfig.MCPServers {
-			// Handle duplicate server names by adding numeric suffix
-			finalName := serverName
-			suffix := 1
-			for {
-				if _, exists := mergedServers[finalName]; !exists {
-					break
-				}
-				suffix++
-				finalName = fmt.Sprintf("%s-%d", serverName, suffix)
-			}
+			finalName := uniqueServerName(mergedServers, serverName)
 
 			if finalName != serverName {
 				log.Info("🔌 Duplicate server name '%s' detected, using '%s' instead", serverName, finalName)
@@ -245,12 +233,26 @@ func MergeMCPConfigs() (map[string]interface{}, error) {
 	return mergedServers, nil
 }
 
-// ClaudeCodeMCPProcessor handles MCP config processing for Claude Code
-type ClaudeCodeMCPProcessor struct{}
+// uniqueServerName adds a numeric suffix (e.g. "server-2") when the name is taken.
+func uniqueServerName(servers map[string]interface{}, name string) string {
+	finalName := name
+	for suffix := 2; ; suffix++ {
+		if _, exists := servers[finalName]; !exists {
+			return finalName
+		}
+		finalName = fmt.Sprintf("%s-%d", name, suffix)
+	}
+}
 
-// NewClaudeCodeMCPProcessor creates a new Claude Code MCP processor
-func NewClaudeCodeMCPProcessor(workDir string) *ClaudeCodeMCPProcessor {
-	return &ClaudeCodeMCPProcessor{}
+// ClaudeCodeMCPProcessor handles MCP config processing for Claude Code
+type ClaudeCodeMCPProcessor struct {
+	nairi     *NairiMCP
+	stdioOnly bool
+}
+
+// NewClaudeCodeMCPProcessor creates a new Claude Code MCP processor. nairi may be nil.
+func NewClaudeCodeMCPProcessor(workDir string, nairi *NairiMCP) *ClaudeCodeMCPProcessor {
+	return &ClaudeCodeMCPProcessor{nairi: nairi}
 }
 
 // ProcessMCPConfigs implements MCPProcessor for Claude Code
@@ -260,13 +262,12 @@ func NewClaudeCodeMCPProcessor(workDir string) *ClaudeCodeMCPProcessor {
 func (p *ClaudeCodeMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 	log.Info("🔌 Processing MCP configs for Claude Code agent")
 
-	// Get merged MCP server configs
-	mcpServers, err := MergeMCPConfigs()
+	mcpServers, err := agentMCPServers(p.nairi, p.stdioOnly)
 	if err != nil {
-		return fmt.Errorf("failed to merge MCP configs: %w", err)
+		return err
 	}
 
-	if len(mcpServers) == 0 {
+	if len(mcpServers) == 0 && !p.stdioOnly {
 		log.Info("🔌 No MCP configs found in eksecd MCP directory")
 		return nil
 	}
@@ -311,7 +312,7 @@ func (p *ClaudeCodeMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 
 	log.Info("🔌 Updating .claude.json at: %s", claudeConfigPath)
 
-	if err := writeFileAsTargetUser(claudeConfigPath, configJSON, 0644); err != nil {
+	if err := replaceFileAsTargetUser(claudeConfigPath, configJSON, 0644); err != nil {
 		return fmt.Errorf("failed to write .claude.json: %w", err)
 	}
 
@@ -321,13 +322,16 @@ func (p *ClaudeCodeMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 
 // OpenCodeMCPProcessor handles MCP config processing for OpenCode
 type OpenCodeMCPProcessor struct {
-	workDir string
+	workDir   string
+	nairi     *NairiMCP
+	stdioOnly bool
 }
 
-// NewOpenCodeMCPProcessor creates a new OpenCode MCP processor
-func NewOpenCodeMCPProcessor(workDir string) *OpenCodeMCPProcessor {
+// NewOpenCodeMCPProcessor creates a new OpenCode MCP processor. nairi may be nil.
+func NewOpenCodeMCPProcessor(workDir string, nairi *NairiMCP) *OpenCodeMCPProcessor {
 	return &OpenCodeMCPProcessor{
 		workDir: workDir,
+		nairi:   nairi,
 	}
 }
 
@@ -339,13 +343,12 @@ func NewOpenCodeMCPProcessor(workDir string) *OpenCodeMCPProcessor {
 func (p *OpenCodeMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 	log.Info("🔌 Processing MCP configs for OpenCode agent")
 
-	// Get merged MCP server configs
-	mcpServers, err := MergeMCPConfigs()
+	mcpServers, err := agentMCPServers(p.nairi, p.stdioOnly)
 	if err != nil {
-		return fmt.Errorf("failed to merge MCP configs: %w", err)
+		return err
 	}
 
-	if len(mcpServers) == 0 {
+	if len(mcpServers) == 0 && !p.stdioOnly {
 		log.Info("🔌 No MCP configs found in eksecd MCP directory")
 		return nil
 	}
@@ -404,6 +407,12 @@ func (p *OpenCodeMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 		opencodeMcpServers[serverName] = opencodeConfig
 	}
 
+	// Without this, one gateway 401 makes OpenCode mark the entry needs_auth for the session.
+	nairiEntry, isNairi := opencodeMcpServers[NairiMCPServerName].(map[string]interface{})
+	if isNairi && p.nairi != nil {
+		nairiEntry["oauth"] = false
+	}
+
 	// Determine home directory for OpenCode config
 	homeDir := targetHomeDir
 	if homeDir == "" {
@@ -448,7 +457,7 @@ func (p *OpenCodeMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 
 	log.Info("🔌 Updating opencode.json at: %s", opencodeConfigPath)
 
-	if err := writeFileAsTargetUser(opencodeConfigPath, configJSON, 0644); err != nil {
+	if err := replaceFileAsTargetUser(opencodeConfigPath, configJSON, 0644); err != nil {
 		return fmt.Errorf("failed to write opencode.json: %w", err)
 	}
 
@@ -466,12 +475,42 @@ func codexShellEnvironmentPolicy() map[string]interface{} {
 	}
 }
 
-// CodexMCPProcessor handles MCP config processing for Codex
-type CodexMCPProcessor struct{}
+// withOptionalMCPStartupGrace sets how long Codex waits for MCP servers before the first turn
+// while the gateway is on, and removes nairid's value once it is off. Any other value is the
+// customer's and stays.
+func withOptionalMCPStartupGrace(config map[string]interface{}, gatewayOn bool) {
+	grace, set := config[codexOptionalMCPStartupGraceKey]
+	if gatewayOn && !set {
+		config[codexOptionalMCPStartupGraceKey] = codexOptionalMCPStartupGraceMs
+	}
+	if !gatewayOn && set && isNairidStartupGrace(grace) {
+		delete(config, codexOptionalMCPStartupGraceKey)
+	}
+}
 
-// NewCodexMCPProcessor creates a new Codex MCP processor
-func NewCodexMCPProcessor() *CodexMCPProcessor {
-	return &CodexMCPProcessor{}
+// isNairidStartupGrace reports whether a grace equals the one nairid writes. TOML gives int64 or
+// float64; nairid's own write is an int until it is read back.
+func isNairidStartupGrace(grace interface{}) bool {
+	switch n := grace.(type) {
+	case int:
+		return n == codexOptionalMCPStartupGraceMs
+	case int64:
+		return n == codexOptionalMCPStartupGraceMs
+	case float64:
+		return n == codexOptionalMCPStartupGraceMs
+	}
+	return false
+}
+
+// CodexMCPProcessor handles MCP config processing for Codex
+type CodexMCPProcessor struct {
+	nairi     *NairiMCP
+	stdioOnly bool
+}
+
+// NewCodexMCPProcessor creates a new Codex MCP processor. nairi may be nil.
+func NewCodexMCPProcessor(nairi *NairiMCP) *CodexMCPProcessor {
+	return &CodexMCPProcessor{nairi: nairi}
 }
 
 // ProcessMCPConfigs merges the MCP configs into ~/.codex/config.toml under targetHomeDir
@@ -479,10 +518,9 @@ func NewCodexMCPProcessor() *CodexMCPProcessor {
 func (p *CodexMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 	log.Info("🔌 Processing MCP configs for Codex agent")
 
-	// Get merged MCP server configs
-	mcpServers, err := MergeMCPConfigs()
+	mcpServers, err := agentMCPServers(p.nairi, p.stdioOnly)
 	if err != nil {
-		return fmt.Errorf("failed to merge MCP configs: %w", err)
+		return err
 	}
 
 	// Determine home directory for Codex config
@@ -516,7 +554,11 @@ func (p *CodexMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 	}
 
 	existingConfig["shell_environment_policy"] = codexShellEnvironmentPolicy()
+	if p.stdioOnly {
+		delete(existingConfig, "mcp_servers")
+	}
 
+	gatewayOn := false
 	if len(mcpServers) == 0 {
 		log.Info("🔌 No MCP configs found, writing config with shell_environment_policy only")
 	} else {
@@ -567,8 +609,16 @@ func (p *CodexMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 			codexMCPServers[serverName] = codexServerConfig
 		}
 
+		// With the gateway on, a customer server named "nairi" was renamed, so this is our entry.
+		nairiEntry, isNairi := codexMCPServers[NairiMCPServerName].(map[string]interface{})
+		if isNairi && p.nairi != nil {
+			nairiEntry["startup_timeout_sec"] = codexNairiStartupTimeoutSec
+			gatewayOn = true
+		}
+
 		existingConfig["mcp_servers"] = codexMCPServers
 	}
+	withOptionalMCPStartupGrace(existingConfig, gatewayOn)
 
 	configTOML, err := toml.Marshal(existingConfig)
 	if err != nil {
@@ -577,7 +627,7 @@ func (p *CodexMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 
 	log.Info("🔌 Updating config.toml at: %s", codexConfigPath)
 
-	if err := writeFileAsTargetUser(codexConfigPath, configTOML, 0644); err != nil {
+	if err := replaceFileAsTargetUser(codexConfigPath, configTOML, 0644); err != nil {
 		return fmt.Errorf("failed to write config.toml: %w", err)
 	}
 
@@ -585,83 +635,21 @@ func (p *CodexMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 	return nil
 }
 
-// CodexProxiedMCPProcessor handles MCP config processing for Codex
-// when using an MCP proxy. Writes HTTP-type configs pointing to the MCP proxy.
-type CodexProxiedMCPProcessor struct {
-	mcpProxyURL string
-}
-
-// NewCodexProxiedMCPProcessor creates a new proxied Codex MCP processor
-func NewCodexProxiedMCPProcessor(mcpProxyURL string) *CodexProxiedMCPProcessor {
-	return &CodexProxiedMCPProcessor{mcpProxyURL: mcpProxyURL}
-}
-
-// ProcessMCPConfigs fetches server list from MCP proxy and writes URL-based configs to config.toml
-func (p *CodexProxiedMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
-	log.Info("🔌 Processing MCP configs via MCP proxy for Codex agent")
-
-	servers, err := FetchMCPProxyServers(p.mcpProxyURL)
-	if err != nil {
-		return fmt.Errorf("failed to fetch MCP proxy servers: %w", err)
+// NewStdioOnlyMCPProcessor creates a processor for agentType that writes only the stdio servers of
+// the downloaded configs, plus the gateway entry when nairi is set, replacing the MCP servers an
+// earlier run wrote. Managed agents use it.
+func NewStdioOnlyMCPProcessor(agentType string, nairi *NairiMCP) (MCPProcessor, error) {
+	switch agentType {
+	case "claude":
+		return &ClaudeCodeMCPProcessor{nairi: nairi, stdioOnly: true}, nil
+	case "opencode":
+		return &OpenCodeMCPProcessor{nairi: nairi, stdioOnly: true}, nil
+	case "codex":
+		return &CodexMCPProcessor{nairi: nairi, stdioOnly: true}, nil
+	case "cursor":
+		return NewNoOpMCPProcessor(), nil
 	}
-
-	// Determine home directory
-	homeDir := targetHomeDir
-	if homeDir == "" {
-		var err error
-		homeDir, err = os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("failed to get home directory: %w", err)
-		}
-	}
-
-	codexConfigDir := filepath.Join(homeDir, ".codex")
-	codexConfigPath := filepath.Join(codexConfigDir, "config.toml")
-
-	if err := mkdirAllAsTargetUser(codexConfigDir); err != nil {
-		return fmt.Errorf("failed to create Codex config directory: %w", err)
-	}
-
-	// Read existing config if it exists (read-modify-write)
-	existingConfig := make(map[string]interface{})
-	if content, err := readFileAsTargetUser(codexConfigPath); err == nil {
-		if err := toml.Unmarshal(content, &existingConfig); err != nil {
-			log.Info("⚠️  Failed to parse existing config.toml, creating new config: %v", err)
-			existingConfig = make(map[string]interface{})
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("failed to read existing config.toml: %w", err)
-	}
-
-	existingConfig["shell_environment_policy"] = codexShellEnvironmentPolicy()
-
-	if len(servers) == 0 {
-		log.Info("🔌 No MCP servers available from proxy, writing config with shell_environment_policy only")
-	} else {
-		log.Info("🔌 Found %d MCP server(s) from proxy", len(servers))
-
-		codexMCPServers := make(map[string]interface{})
-		for _, server := range servers {
-			codexMCPServers[server.Name] = map[string]interface{}{
-				"url":     p.mcpProxyURL + server.URL,
-				"enabled": true,
-			}
-		}
-
-		existingConfig["mcp_servers"] = codexMCPServers
-	}
-
-	configTOML, err := toml.Marshal(existingConfig)
-	if err != nil {
-		return fmt.Errorf("failed to marshal config.toml: %w", err)
-	}
-
-	if err := writeFileAsTargetUser(codexConfigPath, configTOML, 0644); err != nil {
-		return fmt.Errorf("failed to write config.toml: %w", err)
-	}
-
-	log.Info("✅ Successfully configured %d proxied MCP server(s) for Codex", len(servers))
-	return nil
+	return nil, fmt.Errorf("unknown agent type: %s", agentType)
 }
 
 // NoOpMCPProcessor is a no-op implementation for agents that don't support MCP configs
@@ -677,186 +665,3 @@ func (p *NoOpMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 	log.Info("🔌 MCP config processing not supported for this agent type")
 	return nil
 }
-
-// MCPProxyServerInfo represents a server exposed by the MCP proxy
-type MCPProxyServerInfo struct {
-	Name string `json:"name"`
-	URL  string `json:"url"`
-}
-
-// FetchMCPProxyServers fetches the list of available MCP servers from the proxy's /servers endpoint
-func FetchMCPProxyServers(mcpProxyURL string) ([]MCPProxyServerInfo, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
-
-	resp, err := client.Get(mcpProxyURL + "/servers")
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch MCP proxy servers: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("MCP proxy returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var servers []MCPProxyServerInfo
-	if err := json.NewDecoder(resp.Body).Decode(&servers); err != nil {
-		return nil, fmt.Errorf("failed to decode MCP proxy servers response: %w", err)
-	}
-
-	return servers, nil
-}
-
-// ClaudeCodeProxiedMCPProcessor handles MCP config processing for Claude Code
-// when using an MCP proxy. Instead of writing local stdio configs, it writes
-// URL-based configs pointing to the MCP proxy.
-type ClaudeCodeProxiedMCPProcessor struct {
-	mcpProxyURL string
-}
-
-// NewClaudeCodeProxiedMCPProcessor creates a new proxied Claude Code MCP processor
-func NewClaudeCodeProxiedMCPProcessor(mcpProxyURL string) *ClaudeCodeProxiedMCPProcessor {
-	return &ClaudeCodeProxiedMCPProcessor{mcpProxyURL: mcpProxyURL}
-}
-
-// ProcessMCPConfigs fetches server list from MCP proxy and writes URL-based configs to .claude.json
-func (p *ClaudeCodeProxiedMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
-	log.Info("🔌 Processing MCP configs via MCP proxy for Claude Code agent")
-
-	servers, err := FetchMCPProxyServers(p.mcpProxyURL)
-	if err != nil {
-		return fmt.Errorf("failed to fetch MCP proxy servers: %w", err)
-	}
-
-	if len(servers) == 0 {
-		log.Info("🔌 No MCP servers available from proxy")
-		return nil
-	}
-
-	log.Info("🔌 Found %d MCP server(s) from proxy", len(servers))
-
-	mcpServers := make(map[string]interface{})
-	for _, server := range servers {
-		mcpServers[server.Name] = map[string]interface{}{
-			"type": "http",
-			"url":  p.mcpProxyURL + server.URL,
-		}
-	}
-
-	homeDir := targetHomeDir
-	if homeDir == "" {
-		var err error
-		homeDir, err = os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("failed to get home directory: %w", err)
-		}
-	}
-
-	claudeConfigPath := filepath.Join(homeDir, ".claude.json")
-
-	var existingConfig map[string]interface{}
-	if content, err := readFileAsTargetUser(claudeConfigPath); err == nil {
-		if err := json.Unmarshal(content, &existingConfig); err != nil {
-			log.Info("⚠️  Failed to parse existing .claude.json, creating new config: %v", err)
-			existingConfig = make(map[string]interface{})
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("failed to read existing .claude.json: %w", err)
-	} else {
-		existingConfig = make(map[string]interface{})
-	}
-
-	existingConfig["mcpServers"] = mcpServers
-
-	configJSON, err := json.MarshalIndent(existingConfig, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal .claude.json: %w", err)
-	}
-
-	if err := writeFileAsTargetUser(claudeConfigPath, configJSON, 0644); err != nil {
-		return fmt.Errorf("failed to write .claude.json: %w", err)
-	}
-
-	log.Info("✅ Successfully configured %d proxied MCP server(s) for Claude Code", len(mcpServers))
-	return nil
-}
-
-// OpenCodeProxiedMCPProcessor handles MCP config processing for OpenCode
-// when using an MCP proxy. Writes remote-type configs pointing to the MCP proxy.
-type OpenCodeProxiedMCPProcessor struct {
-	mcpProxyURL string
-}
-
-// NewOpenCodeProxiedMCPProcessor creates a new proxied OpenCode MCP processor
-func NewOpenCodeProxiedMCPProcessor(mcpProxyURL string) *OpenCodeProxiedMCPProcessor {
-	return &OpenCodeProxiedMCPProcessor{mcpProxyURL: mcpProxyURL}
-}
-
-// ProcessMCPConfigs fetches server list from MCP proxy and writes remote-type configs to opencode.json
-func (p *OpenCodeProxiedMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
-	log.Info("🔌 Processing MCP configs via MCP proxy for OpenCode agent")
-
-	servers, err := FetchMCPProxyServers(p.mcpProxyURL)
-	if err != nil {
-		return fmt.Errorf("failed to fetch MCP proxy servers: %w", err)
-	}
-
-	if len(servers) == 0 {
-		log.Info("🔌 No MCP servers available from proxy")
-		return nil
-	}
-
-	log.Info("🔌 Found %d MCP server(s) from proxy", len(servers))
-
-	opencodeMcpServers := make(map[string]interface{})
-	for _, server := range servers {
-		opencodeMcpServers[server.Name] = map[string]interface{}{
-			"type":    "remote",
-			"url":     p.mcpProxyURL + server.URL,
-			"enabled": true,
-		}
-	}
-
-	homeDir := targetHomeDir
-	if homeDir == "" {
-		var err error
-		homeDir, err = os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("failed to get home directory: %w", err)
-		}
-	}
-
-	opencodeConfigDir := filepath.Join(homeDir, ".config", "opencode")
-	opencodeConfigPath := filepath.Join(opencodeConfigDir, "opencode.json")
-
-	if err := mkdirAllAsTargetUser(opencodeConfigDir); err != nil {
-		return fmt.Errorf("failed to create OpenCode config directory: %w", err)
-	}
-
-	var existingConfig map[string]interface{}
-	if content, err := readFileAsTargetUser(opencodeConfigPath); err == nil {
-		if err := json.Unmarshal(content, &existingConfig); err != nil {
-			log.Info("⚠️  Failed to parse existing opencode.json, creating new config: %v", err)
-			existingConfig = make(map[string]interface{})
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("failed to read existing opencode.json: %w", err)
-	} else {
-		existingConfig = make(map[string]interface{})
-	}
-
-	existingConfig["mcp"] = opencodeMcpServers
-
-	configJSON, err := json.MarshalIndent(existingConfig, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal opencode.json: %w", err)
-	}
-
-	if err := writeFileAsTargetUser(opencodeConfigPath, configJSON, 0644); err != nil {
-		return fmt.Errorf("failed to write opencode.json: %w", err)
-	}
-
-	log.Info("✅ Successfully configured %d proxied MCP server(s) for OpenCode", len(opencodeMcpServers))
-	return nil
-}
-

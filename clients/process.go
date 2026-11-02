@@ -4,7 +4,6 @@ package clients
 import (
 	"context"
 	"log"
-	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -41,7 +40,7 @@ var BlockedEnvVars = map[string]bool{
 	"CCAGENT_WS_API_URL":   true, // Legacy env var
 	"AGENT_EXEC_USER":      true,
 	"AGENT_HTTP_PROXY":     true, // This is for nairid to read, not for agents
-	"AGENT_MCP_PROXY":      true, // This is for nairid to read, not for agents
+	"AGENT_MCP_PROXY":      true, // Set by older deployments; never meant for agents
 }
 
 // SessionTimeout returns the per-CLI-session timeout used to bound a single
@@ -103,14 +102,6 @@ func SessionTimeoutOr(perCall time.Duration) time.Duration {
 // Returns empty string if not configured (self-hosted mode).
 func AgentExecUser() string {
 	return os.Getenv("AGENT_EXEC_USER")
-}
-
-// AgentMCPProxy returns the MCP proxy URL for proxying MCP server connections.
-// When set, nairid configures agents to use HTTP URLs pointing to the MCP proxy
-// instead of spawning local stdio MCP server processes.
-// Returns empty string if not configured.
-func AgentMCPProxy() string {
-	return os.Getenv("AGENT_MCP_PROXY")
 }
 
 // AgentHTTPProxy returns the HTTP proxy URL that agent processes should use.
@@ -241,8 +232,6 @@ func UpdateHomeForUser(env []string, username string) []string {
 // InjectProxyEnv adds HTTP_PROXY and HTTPS_PROXY to the environment if AGENT_HTTP_PROXY is set.
 // This ensures agent processes route their traffic through the secret proxy while the
 // nairid process itself does not use the proxy (allowing it to reach the backend).
-// When AGENT_MCP_PROXY is also set, it adds the MCP proxy hostname to NO_PROXY so that
-// agent processes can reach the MCP proxy directly without going through the secret proxy.
 func InjectProxyEnv(env []string) []string {
 	proxyURL := AgentHTTPProxy()
 	if proxyURL == "" {
@@ -282,19 +271,8 @@ func InjectProxyEnv(env []string) []string {
 	// to start"). Excluding loopback is inert for agents that do not use a local
 	// server (OpenCode v1, Claude, Codex), so this is safe for both OpenCode v1 and
 	// v2 without any version detection.
-	//
-	// When an MCP proxy is configured its hostname is added too, so agent processes
-	// bypass the HTTP proxy for MCP connections: the secret proxy runs in a separate
-	// container and cannot resolve the MCP proxy's internal hostname
-	// (mcp-proxy.internal), causing 502 errors if MCP traffic is routed through it.
 	if !hasNoProxy {
-		noProxyHosts := []string{"localhost", "127.0.0.1", "::1"}
-		if mcpProxyURL := AgentMCPProxy(); mcpProxyURL != "" {
-			if mcpHost := extractHost(mcpProxyURL); mcpHost != "" {
-				noProxyHosts = append(noProxyHosts, mcpHost)
-			}
-		}
-		noProxy := strings.Join(noProxyHosts, ",")
+		noProxy := "localhost,127.0.0.1,::1"
 		env = append(env, "NO_PROXY="+noProxy)
 		env = append(env, "no_proxy="+noProxy)
 	}
@@ -303,12 +281,3 @@ func InjectProxyEnv(env []string) []string {
 }
 
 // configureProcessGroup is defined in process_unix.go and process_windows.go
-
-// extractHost extracts the hostname (without port) from a URL string.
-func extractHost(rawURL string) string {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return ""
-	}
-	return parsed.Hostname()
-}

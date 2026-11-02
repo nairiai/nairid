@@ -3,10 +3,12 @@ package clients
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +16,13 @@ import (
 
 	"nairid/models"
 )
+
+// NairidVersionHeader tells the backend this nairid reaches remote MCP servers through the Nairi
+// agent MCP gateway, so MCP configs come without them.
+const NairidVersionHeader = "X-Nairid-Version"
+
+// NairiAgentMCPGatewayPath is the backend's agent MCP gateway endpoint.
+const NairiAgentMCPGatewayPath = "/api/agents/mcp"
 
 // AttachmentResponse represents the API response for fetching an attachment
 type AttachmentResponse struct {
@@ -44,10 +53,11 @@ type TokenResponse struct {
 
 // AgentsApiClient handles API requests to the Claude Control agents API
 type AgentsApiClient struct {
-	apiKey  string
-	baseURL string
-	agentID string
-	client  *http.Client
+	apiKey          string
+	baseURL         string
+	agentID         string
+	client          *http.Client
+	agentMCPGateway string // nairid version, sent once the agent uses the agent MCP gateway
 }
 
 // NewAgentsApiClient creates a new agents API client
@@ -68,6 +78,144 @@ func (c *AgentsApiClient) IsSelfHosted() bool {
 	return strings.HasPrefix(c.apiKey, "nairid_") || strings.HasPrefix(c.apiKey, "eksecd_") || strings.HasPrefix(c.apiKey, "ccagent_")
 }
 
+// UseAgentMCPGateway makes MCP config downloads leave out the servers the Nairi agent MCP
+// gateway serves.
+func (c *AgentsApiClient) UseAgentMCPGateway(nairidVersion string) {
+	c.agentMCPGateway = nairidVersion
+}
+
+// MCPKeyResponse is the API response for an agent's key to the agent MCP gateway
+type MCPKeyResponse struct {
+	Key string `json:"key"`
+}
+
+// ErrAgentMCPUnreachable is a FetchMCPKey or ProbeAgentMCPGateway request that got no response.
+var ErrAgentMCPUnreachable = errors.New("agent MCP request failed")
+
+// AgentMCPStatusError is a non-2xx answer to FetchMCPKey or ProbeAgentMCPGateway.
+type AgentMCPStatusError struct {
+	Status int
+	Body   string
+}
+
+func (e *AgentMCPStatusError) Error() string {
+	return fmt.Sprintf("API returned status %d: %s", e.Status, e.Body)
+}
+
+// AgentMCPStatus is the HTTP status of an AgentMCPStatusError in err, or 0.
+func AgentMCPStatus(err error) int {
+	var statusErr *AgentMCPStatusError
+	if !errors.As(err, &statusErr) {
+		return 0
+	}
+	return statusErr.Status
+}
+
+// IsAgentMCPRouteNotFound is a 404 from the backend's router, a backend without the gateway.
+// An edge 404 or the gateway's own JSON-RPC 404 has another body.
+func IsAgentMCPRouteNotFound(err error) bool {
+	var statusErr *AgentMCPStatusError
+	if !errors.As(err, &statusErr) || statusErr.Status != http.StatusNotFound {
+		return false
+	}
+	var body struct {
+		Error *string `json:"error"`
+	}
+	return json.Unmarshal([]byte(statusErr.Body), &body) == nil && body.Error != nil
+}
+
+// IsManagedAgentMCPKey reports whether a FetchMCPKey answer is for a managed agent: a secret
+// proxy placeholder, or the 400 older backends refuse a managed agent with. Other 400s, such as
+// an unknown agent, say nothing about it.
+func IsManagedAgentMCPKey(key string, err error) bool {
+	if strings.HasPrefix(key, "CCASECRET_") {
+		return true
+	}
+	var statusErr *AgentMCPStatusError
+	if !errors.As(err, &statusErr) || statusErr.Status != http.StatusBadRequest {
+		return false
+	}
+	var body struct {
+		Error string `json:"error"`
+	}
+	return json.Unmarshal([]byte(statusErr.Body), &body) == nil &&
+		body.Error == "managed agents get their MCP key from the secret proxy"
+}
+
+func agentMCPStatusError(resp *http.Response) error {
+	bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return &AgentMCPStatusError{Status: resp.StatusCode, Body: string(bodyBytes)}
+}
+
+// FetchMCPKey fetches the agent's key for the Nairi agent MCP gateway: the key itself for a
+// self-hosted agent, a placeholder its secret proxy fills for a managed one. Older backends
+// answer 404, and backends without managed support answer 400 for managed agents.
+func (c *AgentsApiClient) FetchMCPKey() (string, error) {
+	req, err := http.NewRequest("GET", c.baseURL+"/api/agents/mcp-key", nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-AGENT-ID", c.agentID)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", ErrAgentMCPUnreachable, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", agentMCPStatusError(resp)
+	}
+
+	var keyResp MCPKeyResponse
+	if err := json.NewDecoder(resp.Body).Decode(&keyResp); err != nil {
+		return "", fmt.Errorf("failed to decode response: %w", err)
+	}
+	if keyResp.Key == "" {
+		return "", fmt.Errorf("API returned an empty MCP key")
+	}
+	return keyResp.Key, nil
+}
+
+// ProbeAgentMCPGateway sends the gateway an MCP ping with key, to confirm it is there before
+// MCP configs come without the servers it serves. With proxyURL the ping goes through that proxy,
+// as the agent CLI's requests do.
+func (c *AgentsApiClient) ProbeAgentMCPGateway(key, proxyURL string) error {
+	body := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`)
+	req, err := http.NewRequest("POST", c.baseURL+NairiAgentMCPGatewayPath, body)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Content-Type", "application/json")
+	if c.agentID != "" {
+		req.Header.Set("X-AGENT-ID", c.agentID)
+	}
+
+	client := c.client
+	if proxyURL != "" {
+		proxy, err := url.Parse(proxyURL)
+		if err != nil {
+			return fmt.Errorf("invalid proxy URL: %w", err)
+		}
+		client = &http.Client{Timeout: c.client.Timeout, Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrAgentMCPUnreachable, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	return agentMCPStatusError(resp)
+}
+
 // FetchAttachment fetches an attachment by ID from the Claude Control API
 func (c *AgentsApiClient) FetchAttachment(attachmentID string) (*AttachmentResponse, error) {
 	url := fmt.Sprintf("%s/api/agents/attachments/%s", c.baseURL, attachmentID)
@@ -80,6 +228,9 @@ func (c *AgentsApiClient) FetchAttachment(attachmentID string) (*AttachmentRespo
 	// Add Bearer token authentication header
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
 	req.Header.Set("Accept", "application/json")
+	if c.agentMCPGateway != "" {
+		req.Header.Set(NairidVersionHeader, c.agentMCPGateway)
+	}
 
 	resp, err := c.client.Do(req)
 	if err != nil {
