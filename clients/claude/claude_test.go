@@ -30,3 +30,28 @@ func TestAppendOptionArgs(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildPermissionArgs(t *testing.T) {
+	allow := func() []string { return []string{"mcp__github", "mcp__nairi"} }
+	none := func() []string { return nil }
+	tests := []struct {
+		name         string
+		mode         string
+		allowedTools func() []string
+		want         []string
+	}{
+		{"bypass ignores allow rules", "bypassPermissions", allow, []string{"--dangerously-skip-permissions"}},
+		{"acceptEdits allows the MCP servers", "acceptEdits", allow,
+			[]string{"--permission-mode", "acceptEdits", "--allowedTools", "mcp__github mcp__nairi"}},
+		{"no servers omits the flag", "acceptEdits", none, []string{"--permission-mode", "acceptEdits"}},
+		{"nil provider omits the flag", "acceptEdits", nil, []string{"--permission-mode", "acceptEdits"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := NewClaudeClient(tt.mode, tt.allowedTools).buildPermissionArgs()
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

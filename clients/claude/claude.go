@@ -14,11 +14,15 @@ import (
 
 type ClaudeClient struct {
 	permissionMode string
+	// allowedTools returns the tools to allow outside bypass mode, read at each launch so it
+	// follows MCP config changes. May be nil.
+	allowedTools func() []string
 }
 
-func NewClaudeClient(permissionMode string) *ClaudeClient {
+func NewClaudeClient(permissionMode string, allowedTools func() []string) *ClaudeClient {
 	return &ClaudeClient{
 		permissionMode: permissionMode,
+		allowedTools:   allowedTools,
 	}
 }
 
@@ -123,7 +127,14 @@ func (c *ClaudeClient) buildPermissionArgs() []string {
 	if c.permissionMode == "bypassPermissions" {
 		return []string{"--dangerously-skip-permissions"}
 	}
-	return []string{"--permission-mode", c.permissionMode}
+	args := []string{"--permission-mode", c.permissionMode}
+	if c.allowedTools == nil {
+		return args
+	}
+	if allowed := c.allowedTools(); len(allowed) > 0 {
+		args = append(args, "--allowedTools", strings.Join(allowed, " "))
+	}
+	return args
 }
 
 // handleCommandError converts a clients.CommandError to a core.ErrClaudeCommandErr,

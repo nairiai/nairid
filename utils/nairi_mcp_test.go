@@ -676,3 +676,42 @@ func TestFetchAndStoreArtifact_StdioOnlyFiltersMCPConfigs(t *testing.T) {
 		t.Errorf("a file outside the MCP directory changed: %s", other)
 	}
 }
+
+func TestClaudeMCPAllowRules(t *testing.T) {
+	home := writeRemoteMCPConfig(t)
+	cfg := `{"mcpServers":{"my.tools-v2":{"command":"tools"},"nairi":{"command":"nairi-tools"}}}`
+	mcpDir := filepath.Join(home, ".config", "eksecd", "mcp")
+	if err := os.WriteFile(filepath.Join(mcpDir, "local.json"), []byte(cfg), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ClaudeMCPAllowRules(testNairiMCP(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"mcp__my_tools-v2", "mcp__nairi", "mcp__nairi-2", "mcp__private"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+
+	got, err = ClaudeMCPAllowRules(nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = []string{"mcp__my_tools-v2", "mcp__nairi"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("stdio only: got %v, want %v", got, want)
+	}
+}
+
+func TestClaudeMCPAllowRules_NoServers(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	got, err := ClaudeMCPAllowRules(nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected no rules, got %v", got)
+	}
+}

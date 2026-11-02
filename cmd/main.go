@@ -403,6 +403,19 @@ func (c *agentMCPConfig) writeMCPConfigs() error {
 	return nil
 }
 
+// claudeAllowRules returns an allow rule per MCP server in the agent CLI's config. Under mu, so a
+// launch never reads the MCP directory mid-download.
+func (c *agentMCPConfig) claudeAllowRules() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	rules, err := utils.ClaudeMCPAllowRules(c.setup.nairi, c.setup.stdioOnly)
+	if err != nil {
+		log.Warn("🔌 Failed to list MCP servers for Claude allow rules: %v", err)
+		return nil
+	}
+	return rules
+}
+
 // reprobeGateway tries the gateway again every agentMCPReprobeInterval until ctx ends. Without it,
 // a backend blip, a host reboot or a stale secret proxy at startup kept a managed agent off the
 // gateway until a restart. Once on it, each tick checks the CLI did not drop the gateway entry.
@@ -756,7 +769,9 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 	}
 
 	// Create the appropriate CLI agent service (now with all dependencies available)
-	cliAgent, err := createCLIAgent(agentType, permissionMode, model, logDir, workDir, agentsApiClient, envManager)
+	cliAgent, err := createCLIAgent(
+		agentType, permissionMode, model, logDir, workDir, agentsApiClient, envManager, mcpConfig.claudeAllowRules,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create CLI agent: %w", err)
 	}
@@ -958,6 +973,7 @@ func createCLIAgent(
 	agentType, permissionMode, model, logDir, workDir string,
 	agentsApiClient *clients.AgentsApiClient,
 	envManager *env.EnvManager,
+	claudeAllowedTools func() []string,
 ) (services.CLIAgent, error) {
 	// Apply default models when not specified
 	if model == "" {
@@ -972,7 +988,7 @@ func createCLIAgent(
 
 	switch agentType {
 	case "claude":
-		claudeClient := claudeclient.NewClaudeClient(permissionMode)
+		claudeClient := claudeclient.NewClaudeClient(permissionMode, claudeAllowedTools)
 		return claudeservice.NewClaudeService(claudeClient, logDir, model, agentsApiClient, envManager), nil
 	case "cursor":
 		cursorClient := cursorclient.NewCursorClient()
