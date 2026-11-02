@@ -1,3 +1,19 @@
+## [v0.0.129] - 2026-11-02
+
+### Features
+
+- Self-hosted agents refresh their config without a restart ([#246](https://github.com/nairiai/nairid/pull/246))
+  - New `refresh_config_v1` message re-applies env vars and re-downloads rules, MCP config, skills and OpenCode permissions
+  - Removed items go too: env vars get their local value back; the last rule or MCP server is cleared only where nairid deployed it
+  - An agent off the MCP gateway tries it again first; running turns keep their CLI, new turns read the new config
+- nairid sends `X-Nairid-Version` in the Socket.IO handshake ([#247](https://github.com/nairiai/nairid/pull/247)), so the backend only sends refreshes to versions that handle them
+
+### Bugfixes
+
+- nairid stops gracefully on SIGTERM, not only on SIGINT ([#243](https://github.com/nairiai/nairid/pull/243)), so `docker stop` and systemd no longer hard-kill it
+- Codex runs pass `-c features.apps=false -c features.plugins=false` ([#244](https://github.com/nairiai/nairid/pull/244)), so they no longer load the user's ChatGPT apps and plugins
+- Self-hosted Claude in `acceptEdits` mode gets an `--allowedTools` rule per configured MCP server ([#245](https://github.com/nairiai/nairid/pull/245)), so gateway and attached MCP calls are no longer denied
+
 ## [v0.0.128] - 2026-11-02
 
 ### Features
