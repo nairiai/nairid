@@ -83,6 +83,7 @@ const (
 	MessageTypeAgentProgress             = "agent_progress_v1"
 	MessageTypeStopTurn                  = "stop_turn_v1"
 	MessageTypeTurnStopped               = "turn_stopped_v1"
+	MessageTypeRefreshConfig             = "refresh_config_v1"
 )
 
 type BaseMessage struct {

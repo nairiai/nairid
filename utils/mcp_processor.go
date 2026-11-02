@@ -267,26 +267,19 @@ func (p *ClaudeCodeMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 		return err
 	}
 
+	homeDir, err := resolveHomeDir(targetHomeDir)
+	if err != nil {
+		return err
+	}
+	claudeConfigPath := filepath.Join(homeDir, ".claude.json")
+
 	if len(mcpServers) == 0 && !p.stdioOnly {
 		log.Info("🔌 No MCP configs found in eksecd MCP directory")
-		return nil
+		return clearDeployedJSONMCP(claudeConfigPath, "mcpServers")
 	}
 
 	log.Info("🔌 Found %d MCP server(s) to configure", len(mcpServers))
-
-	// Determine home directory for Claude Code config
-	homeDir := targetHomeDir
-	if homeDir == "" {
-		var err error
-		homeDir, err = os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("failed to get home directory: %w", err)
-		}
-	}
-
 	log.Info("🔌 Deploying MCP configs to home directory: %s", homeDir)
-
-	claudeConfigPath := filepath.Join(homeDir, ".claude.json")
 
 	// Read existing config if it exists
 	var existingConfig map[string]interface{}
@@ -314,6 +307,9 @@ func (p *ClaudeCodeMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 
 	if err := replaceFileAsTargetUser(claudeConfigPath, configJSON, 0644); err != nil {
 		return fmt.Errorf("failed to write .claude.json: %w", err)
+	}
+	if err := recordMCPDeployed(claudeConfigPath); err != nil {
+		return fmt.Errorf("failed to record the MCP deployment: %w", err)
 	}
 
 	log.Info("✅ Successfully configured %d MCP server(s) for Claude Code", len(mcpServers))
@@ -350,7 +346,11 @@ func (p *OpenCodeMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 
 	if len(mcpServers) == 0 && !p.stdioOnly {
 		log.Info("🔌 No MCP configs found in eksecd MCP directory")
-		return nil
+		homeDir, err := resolveHomeDir(targetHomeDir)
+		if err != nil {
+			return err
+		}
+		return clearDeployedJSONMCP(filepath.Join(homeDir, ".config", "opencode", "opencode.json"), "mcp")
 	}
 
 	log.Info("🔌 Found %d MCP server(s) to configure", len(mcpServers))
@@ -460,6 +460,9 @@ func (p *OpenCodeMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 	if err := replaceFileAsTargetUser(opencodeConfigPath, configJSON, 0644); err != nil {
 		return fmt.Errorf("failed to write opencode.json: %w", err)
 	}
+	if err := recordMCPDeployed(opencodeConfigPath); err != nil {
+		return fmt.Errorf("failed to record the MCP deployment: %w", err)
+	}
 
 	log.Info("✅ Successfully configured %d MCP server(s) for OpenCode", len(opencodeMcpServers))
 	return nil
@@ -558,6 +561,12 @@ func (p *CodexMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 		delete(existingConfig, "mcp_servers")
 	}
 
+	clearedDeployed := false
+	if len(mcpServers) == 0 && mcpWasDeployed(codexConfigPath) {
+		delete(existingConfig, "mcp_servers")
+		clearedDeployed = true
+	}
+
 	gatewayOn := false
 	if len(mcpServers) == 0 {
 		log.Info("🔌 No MCP configs found, writing config with shell_environment_policy only")
@@ -629,6 +638,16 @@ func (p *CodexMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 
 	if err := replaceFileAsTargetUser(codexConfigPath, configTOML, 0644); err != nil {
 		return fmt.Errorf("failed to write config.toml: %w", err)
+	}
+	if clearedDeployed {
+		if err := forgetMCPDeployed(codexConfigPath); err != nil {
+			return fmt.Errorf("failed to record the MCP deployment: %w", err)
+		}
+	}
+	if len(mcpServers) > 0 {
+		if err := recordMCPDeployed(codexConfigPath); err != nil {
+			return fmt.Errorf("failed to record the MCP deployment: %w", err)
+		}
 	}
 
 	log.Info("✅ Successfully configured %d MCP server(s) for Codex", len(mcpServers))
