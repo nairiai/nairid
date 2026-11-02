@@ -1,3 +1,15 @@
+## [v0.0.128] - 2026-11-02
+
+### Features
+
+- Agents reach remote MCP servers through the Nairi agent MCP gateway ([#242](https://github.com/nairiai/nairid/pull/242))
+  - Each agent config gets one `nairi` HTTP entry pointing at the backend's `/api/agents/mcp` gateway, which fans out to the agent's remote and Composio MCP servers; stdio servers still run in the sandbox
+  - Managed agents authenticate with the `CCASECRET_NAIRI_MCP_KEY` placeholder through the secret proxy; if the gateway is unreachable they run stdio-only and re-probe every 5 minutes
+  - Self-hosted agents fetch a real MCP key from `/api/agents/mcp-key`; on any gateway failure, and for private-network servers, remote servers stay local
+  - Requests carry `X-Nairid-Version`, so the backend serves gateway-shaped configs; managed agents drop remote servers and Composio wrappers at download
+  - Codex gateway runs set `mcp_optional_startup_grace_ms = 10000`; a customer server named `nairi` becomes `nairi-2`
+  - mcproxy support is removed from nairid
+
 ## [v0.0.127] - 2026-11-01
 
 ### Bugfixes
