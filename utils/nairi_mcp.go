@@ -130,6 +130,32 @@ func agentMCPServers(nairi *NairiMCP, stdioOnly bool) (map[string]interface{}, e
 	return withNairiMCP(servers, nairi), nil
 }
 
+// ClaudeMCPAllowRules returns a Claude permission rule per MCP server nairid writes, so a job in
+// acceptEdits mode can call their tools without a prompt nobody answers.
+func ClaudeMCPAllowRules(nairi *NairiMCP, stdioOnly bool) ([]string, error) {
+	servers, err := agentMCPServers(nairi, stdioOnly)
+	if err != nil {
+		return nil, err
+	}
+	rules := make([]string, 0, len(servers))
+	for name := range servers {
+		rules = append(rules, "mcp__"+claudeToolServerName(name))
+	}
+	sort.Strings(rules)
+	return rules, nil
+}
+
+// claudeToolServerName matches how Claude Code names a server inside tool names: a rule with the
+// raw name (e.g. "my.server") never matches its tools.
+func claudeToolServerName(name string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '_' || r == '-' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			return r
+		}
+		return '_'
+	}, name)
+}
+
 // withoutRemoteServers drops the remote servers. A backend from before the gateway ignores
 // nairid's version and still sends Composio's mcp-remote wrapper with the platform key.
 func withoutRemoteServers(servers map[string]interface{}) map[string]interface{} {
