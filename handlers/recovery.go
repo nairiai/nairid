@@ -132,7 +132,7 @@ func RecoverJobs(
 		}
 
 		// Route through dispatcher for per-job sequential processing
-		dispatcher.Dispatch(msg)
+		dispatcher.DispatchRecovered(msg)
 
 		recoveredJobsCount++
 	}
@@ -222,7 +222,7 @@ func RecoverJobs(
 			}
 
 			// Route through dispatcher for per-job sequential processing
-			dispatcher.Dispatch(msg)
+			dispatcher.DispatchRecovered(msg)
 
 			recoveredQueuedCount++
 		}

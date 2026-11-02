@@ -56,12 +56,23 @@ func NewJobDispatcher(
 // Dispatch routes a message to the appropriate per-job channel.
 // If no channel exists for the job, it creates one and starts a worker goroutine.
 func (d *JobDispatcher) Dispatch(msg models.BaseMessage) {
+	d.dispatch(msg, false)
+}
+
+// DispatchRecovered re-runs a message restored from disk after a restart. Its id was marked
+// seen when it first arrived, so the duplicate check would drop it; it stays marked so a
+// redelivery of the same message is still skipped.
+func (d *JobDispatcher) DispatchRecovered(msg models.BaseMessage) {
+	d.dispatch(msg, true)
+}
+
+func (d *JobDispatcher) dispatch(msg models.BaseMessage, recovered bool) {
 	// Deduplicate messages by ProcessedMessageID
 	processedMsgID := d.extractProcessedMessageID(msg)
 	if processedMsgID != "" {
 		d.mutex.Lock()
 		d.maybeCleanupSeenMessages()
-		if _, seen := d.seenMessages[processedMsgID]; seen {
+		if _, seen := d.seenMessages[processedMsgID]; seen && !recovered {
 			d.mutex.Unlock()
 			log.Info("🔁 Duplicate message %s, skipping", processedMsgID)
 			return
