@@ -14,7 +14,10 @@ import (
 
 func TestBuildBaseArgs_Effort(t *testing.T) {
 	c := NewCodexClient("bypassPermissions", "")
-	execArgs := []string{"--search", "exec", "--dangerously-bypass-approvals-and-sandbox", "--json", "--skip-git-repo-check"}
+	execArgs := []string{
+		"-c", "features.apps=false", "-c", "features.plugins=false",
+		"--search", "exec", "--dangerously-bypass-approvals-and-sandbox", "--json", "--skip-git-repo-check",
+	}
 
 	tests := []struct {
 		name    string
@@ -31,6 +34,18 @@ func TestBuildBaseArgs_Effort(t *testing.T) {
 			got := c.buildBaseArgs(tt.options)
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildBaseArgs_DisablesPersonalToolSourcesInEveryMode(t *testing.T) {
+	want := []string{"-C", "/work", "-c", "features.apps=false", "-c", "features.plugins=false", "--search", "exec"}
+	for _, mode := range []string{"bypassPermissions", "default"} {
+		t.Run(mode, func(t *testing.T) {
+			got := NewCodexClient(mode, "/work").buildBaseArgs(&clients.CodexOptions{Sandbox: "read-only"})
+			if !reflect.DeepEqual(got[:len(want)], want) {
+				t.Fatalf("got %v, want prefix %v", got, want)
 			}
 		})
 	}

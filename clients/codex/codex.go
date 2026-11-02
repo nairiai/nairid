@@ -10,6 +10,9 @@ import (
 	"nairid/core/log"
 )
 
+// -c rather than --disable: Codex ignores an unknown features.<x> key but errors on --disable <x>.
+var personalToolSourceOverrides = []string{"-c", "features.apps=false", "-c", "features.plugins=false"}
+
 type CodexClient struct {
 	permissionMode string
 	workDir        string
@@ -124,6 +127,10 @@ func (c *CodexClient) buildBaseArgs(options *clients.CodexOptions) []string {
 	if options != nil && options.Effort != "" {
 		args = append(args, "-c", "model_reasoning_effort="+options.Effort)
 	}
+
+	// A ChatGPT login otherwise adds the user's connected apps (codex_apps) and account plugins
+	// (e.g. codex-security) as tools; the agent must only see the MCP servers nairid configured.
+	args = append(args, personalToolSourceOverrides...)
 
 	// Web search - always enabled
 	args = append(args, "--search")
