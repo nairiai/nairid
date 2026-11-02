@@ -53,8 +53,8 @@ type CmdRunner struct {
 	agentsApiClient *clients.AgentsApiClient
 	mcpConfig       *agentMCPConfig
 	// configRefreshMu runs one refresh at a time, so a slow env response can't overwrite a newer one.
-	configRefreshMu sync.Mutex
-	wsURL           string
+	configRefreshMu   sync.Mutex
+	wsURL             string
 	nairiAPIKey       string
 	instanceNamespace string // per-instance namespace for path isolation
 	dirLock           *utils.DirLock
@@ -1354,6 +1354,18 @@ func (cr *CmdRunner) startSocketIOClientWithRetry(ctx context.Context, serverURL
 	return nil
 }
 
+// socketHandshakeHeaders authenticates the connection. The version tells the backend this nairid
+// handles refresh_config_v1, so it stops asking older ones to refresh.
+func socketHandshakeHeaders(apiKey, ccagentID, repoIdentifier, agentID string) map[string][]string {
+	return map[string][]string{
+		"X-CCAGENT-API-KEY":         {apiKey},
+		"X-CCAGENT-ID":              {ccagentID},
+		"X-CCAGENT-REPO":            {repoIdentifier},
+		"X-AGENT-ID":                {agentID},
+		clients.NairidVersionHeader: {core.GetVersion()},
+	}
+}
+
 // startSocketIOClient connects and serves until a runtime error, or until ctx is cancelled by a
 // shutdown signal.
 func (cr *CmdRunner) startSocketIOClient(ctx context.Context, serverURLStr, apiKey string) error {
@@ -1387,13 +1399,7 @@ func (cr *CmdRunner) startSocketIOClient(ctx context.Context, serverURLStr, apiK
 		log.Info("📋 Using NAIRI_AGENT_ID from environment: %s", agentID)
 	}
 
-	// Set authentication headers
-	opts.SetExtraHeaders(map[string][]string{
-		"X-CCAGENT-API-KEY": {apiKey},
-		"X-CCAGENT-ID":      {cr.agentID},
-		"X-CCAGENT-REPO":    {repoIdentifier},
-		"X-AGENT-ID":        {agentID},
-	})
+	opts.SetExtraHeaders(socketHandshakeHeaders(apiKey, cr.agentID, repoIdentifier, agentID))
 
 	manager := socket.NewManager(serverURLStr, opts)
 	socketClient := manager.Socket("/", opts)
