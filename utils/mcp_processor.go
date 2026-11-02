@@ -475,13 +475,31 @@ func codexShellEnvironmentPolicy() map[string]interface{} {
 	}
 }
 
-// withOptionalMCPStartupGrace sets how long Codex waits for MCP servers before the first turn,
-// unless the customer set it.
-func withOptionalMCPStartupGrace(config map[string]interface{}) {
-	if _, set := config[codexOptionalMCPStartupGraceKey]; set {
-		return
+// withOptionalMCPStartupGrace sets how long Codex waits for MCP servers before the first turn
+// while the gateway is on, and removes nairid's value once it is off. Any other value is the
+// customer's and stays.
+func withOptionalMCPStartupGrace(config map[string]interface{}, gatewayOn bool) {
+	grace, set := config[codexOptionalMCPStartupGraceKey]
+	if gatewayOn && !set {
+		config[codexOptionalMCPStartupGraceKey] = codexOptionalMCPStartupGraceMs
 	}
-	config[codexOptionalMCPStartupGraceKey] = codexOptionalMCPStartupGraceMs
+	if !gatewayOn && set && isNairidStartupGrace(grace) {
+		delete(config, codexOptionalMCPStartupGraceKey)
+	}
+}
+
+// isNairidStartupGrace reports whether a grace equals the one nairid writes. TOML gives int64 or
+// float64; nairid's own write is an int until it is read back.
+func isNairidStartupGrace(grace interface{}) bool {
+	switch n := grace.(type) {
+	case int:
+		return n == codexOptionalMCPStartupGraceMs
+	case int64:
+		return n == codexOptionalMCPStartupGraceMs
+	case float64:
+		return n == codexOptionalMCPStartupGraceMs
+	}
+	return false
 }
 
 // CodexMCPProcessor handles MCP config processing for Codex
@@ -540,6 +558,7 @@ func (p *CodexMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 		delete(existingConfig, "mcp_servers")
 	}
 
+	gatewayOn := false
 	if len(mcpServers) == 0 {
 		log.Info("🔌 No MCP configs found, writing config with shell_environment_policy only")
 	} else {
@@ -594,11 +613,12 @@ func (p *CodexMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 		nairiEntry, isNairi := codexMCPServers[NairiMCPServerName].(map[string]interface{})
 		if isNairi && p.nairi != nil {
 			nairiEntry["startup_timeout_sec"] = codexNairiStartupTimeoutSec
-			withOptionalMCPStartupGrace(existingConfig)
+			gatewayOn = true
 		}
 
 		existingConfig["mcp_servers"] = codexMCPServers
 	}
+	withOptionalMCPStartupGrace(existingConfig, gatewayOn)
 
 	configTOML, err := toml.Marshal(existingConfig)
 	if err != nil {

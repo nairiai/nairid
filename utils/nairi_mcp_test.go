@@ -304,6 +304,135 @@ func TestCodexMCPProcessor_GatewayWriteKeepsSettingsAndIsStable(t *testing.T) {
 	}
 }
 
+// Once the gateway is off, every write path removes the grace nairid wrote: on a self-hosted
+// agent it would also slow the customer's own Codex.
+func TestCodexMCPProcessor_GatewayOffRemovesNairidGrace(t *testing.T) {
+	tests := []struct {
+		name      string
+		on, off   *CodexMCPProcessor
+		noServers bool // the off run finds no downloaded MCP configs
+	}{
+		{
+			name: "self-hosted, gateway unreachable",
+			on:   &CodexMCPProcessor{nairi: testNairiMCP()},
+			off:  &CodexMCPProcessor{},
+		},
+		{
+			name:      "self-hosted, no MCP servers",
+			on:        &CodexMCPProcessor{nairi: testNairiMCP()},
+			off:       &CodexMCPProcessor{},
+			noServers: true,
+		},
+		{
+			name: "managed, failing closed",
+			on:   &CodexMCPProcessor{nairi: testNairiMCP(), stdioOnly: true},
+			off:  &CodexMCPProcessor{stdioOnly: true},
+		},
+		{
+			name: "self-hosted gateway, then managed failing closed",
+			on:   &CodexMCPProcessor{nairi: testNairiMCP()},
+			off:  &CodexMCPProcessor{stdioOnly: true},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := writeRemoteMCPConfig(t)
+			if err := tt.on.ProcessMCPConfigs(""); err != nil {
+				t.Fatal(err)
+			}
+			if grace := readCodexConfig(t, home)["mcp_optional_startup_grace_ms"]; grace != int64(10000) {
+				t.Fatalf("gateway on: mcp_optional_startup_grace_ms = %v, want 10000", grace)
+			}
+			if tt.noServers {
+				if err := os.Remove(filepath.Join(home, ".config", "eksecd", "mcp", "private.json")); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if err := tt.off.ProcessMCPConfigs(""); err != nil {
+				t.Fatal(err)
+			}
+
+			if grace, ok := readCodexConfig(t, home)["mcp_optional_startup_grace_ms"]; ok {
+				t.Errorf("gateway off: mcp_optional_startup_grace_ms = %v, want none", grace)
+			}
+		})
+	}
+}
+
+// A grace the customer set stays through gateway on and off runs.
+func TestCodexMCPProcessor_CustomerGraceSurvivesGatewayOnAndOff(t *testing.T) {
+	home := writeRemoteMCPConfig(t)
+	writeCodexConfig(t, home, "mcp_optional_startup_grace_ms = 15000\n")
+	runs := []*CodexMCPProcessor{
+		{},
+		{nairi: testNairiMCP()},
+		{},
+		{nairi: testNairiMCP(), stdioOnly: true},
+		{stdioOnly: true},
+	}
+	for i, p := range runs {
+		if err := p.ProcessMCPConfigs(""); err != nil {
+			t.Fatal(err)
+		}
+		if grace := readCodexConfig(t, home)["mcp_optional_startup_grace_ms"]; grace != int64(15000) {
+			t.Errorf("run %d, gateway on %t: grace = %v, want 15000", i, p.nairi != nil, grace)
+		}
+	}
+}
+
+// Turning the gateway on and off again gives back the config from before, and turning it on
+// again sets the grace again.
+func TestCodexMCPProcessor_GatewayOffOnOffIsIdempotent(t *testing.T) {
+	home := writeRemoteMCPConfig(t)
+	writeCodexConfig(t, home, "model = \"gpt-5-codex\"\n")
+	configPath := filepath.Join(home, ".codex", "config.toml")
+	var written [][]byte
+	for _, nairi := range []*NairiMCP{nil, testNairiMCP(), nil, testNairiMCP()} {
+		if err := NewCodexMCPProcessor(nairi).ProcessMCPConfigs(""); err != nil {
+			t.Fatal(err)
+		}
+		content, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		written = append(written, content)
+	}
+
+	if !bytes.Equal(written[0], written[2]) {
+		t.Errorf("off, on, off changed config.toml:\n%s\nthen\n%s", written[0], written[2])
+	}
+	if !bytes.Equal(written[1], written[3]) {
+		t.Errorf("on, off, on changed config.toml:\n%s\nthen\n%s", written[1], written[3])
+	}
+	if grace := readCodexConfig(t, home)["mcp_optional_startup_grace_ms"]; grace != int64(10000) {
+		t.Errorf("gateway on again: mcp_optional_startup_grace_ms = %v, want 10000", grace)
+	}
+}
+
+// With the gateway off, only a value equal to nairid's is removed, whatever numeric type it has.
+func TestWithOptionalMCPStartupGrace_GatewayOffMatchesNairidValueOnly(t *testing.T) {
+	tests := []struct {
+		grace interface{}
+		kept  bool
+	}{
+		{grace: 10000},
+		{grace: int64(10000)},
+		{grace: float64(10000)},
+		{grace: int64(15000), kept: true},
+		{grace: int64(0), kept: true},
+		{grace: 10000.5, kept: true},
+		{grace: "10000", kept: true},
+	}
+	for _, tt := range tests {
+		config := map[string]interface{}{codexOptionalMCPStartupGraceKey: tt.grace}
+		withOptionalMCPStartupGrace(config, false)
+		if _, ok := config[codexOptionalMCPStartupGraceKey]; ok != tt.kept {
+			t.Errorf("%v (%T): kept = %t, want %t", tt.grace, tt.grace, ok, tt.kept)
+		}
+	}
+}
+
 func writeCodexConfig(t *testing.T, home, content string) {
 	t.Helper()
 	if content == "" {
