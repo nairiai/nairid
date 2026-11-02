@@ -346,8 +346,6 @@ func TestSetupAgentMCP_Managed(t *testing.T) {
 
 func runSetupAgentMCPCase(t *testing.T, tt setupAgentMCPCase) {
 	t.Setenv("AGENT_HTTP_PROXY", "")
-	// Older hosts still set it; nairid no longer falls back to mcproxy.
-	t.Setenv("AGENT_MCP_PROXY", "http://mcp-proxy.internal:8082")
 	slept := recordRetrySleeps(t)
 	backend := &fakeBackend{keyReplies: tt.keyReplies, probeReplies: tt.probeReplies}
 	ts := backend.serve(t)

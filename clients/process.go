@@ -40,7 +40,6 @@ var BlockedEnvVars = map[string]bool{
 	"CCAGENT_WS_API_URL":   true, // Legacy env var
 	"AGENT_EXEC_USER":      true,
 	"AGENT_HTTP_PROXY":     true, // This is for nairid to read, not for agents
-	"AGENT_MCP_PROXY":      true, // Set by older deployments; never meant for agents
 }
 
 // SessionTimeout returns the per-CLI-session timeout used to bound a single
