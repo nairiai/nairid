@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	toml "github.com/pelletier/go-toml/v2"
 
@@ -229,4 +230,36 @@ func TestFetchAndApplyEnvVars_DropsWhatTheBackendRemoved(t *testing.T) {
 
 	apply(`[]`)
 	assertEnv("REFRESH_TEST_LOCAL", "mine", true)
+}
+
+// A refresh holds its lock across the env fetch, so a slow older refresh can't apply its stale
+// env snapshot over a newer one.
+func TestRefreshConfig_FetchesEnvUnderTheRefreshLock(t *testing.T) {
+	backend := &fakeBackend{envVars: `[{"key":"REFRESH_TEST_LOCKED","value":"new"}]`}
+	cfg := agentRun{agentType: "claude", keyReplies: []reply{selfHostedKeyReply}, backend: backend}.start(t)
+	t.Setenv("NAIRI_CONFIG_DIR", t.TempDir())
+	t.Setenv("REFRESH_TEST_LOCKED", "")
+	_ = os.Unsetenv("REFRESH_TEST_LOCKED")
+	envManager, err := env.NewEnvManager()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cr := &CmdRunner{agentsApiClient: cfg.client, envManager: envManager, mcpConfig: cfg}
+
+	cr.configRefreshMu.Lock()
+	done := make(chan struct{})
+	go func() {
+		cr.refreshConfig()
+		close(done)
+	}()
+	time.Sleep(100 * time.Millisecond)
+	if _, set := os.LookupEnv("REFRESH_TEST_LOCKED"); set {
+		t.Fatal("refresh applied env vars while another refresh held the lock")
+	}
+	cr.configRefreshMu.Unlock()
+	<-done
+
+	if got := os.Getenv("REFRESH_TEST_LOCKED"); got != "new" {
+		t.Errorf("REFRESH_TEST_LOCKED = %q after the refresh, want new", got)
+	}
 }

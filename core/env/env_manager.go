@@ -181,16 +181,8 @@ func (em *EnvManager) ApplyBackendVars(vars map[string]string) error {
 			continue
 		}
 		delete(em.backendKeys, key)
-		if prior.set {
-			em.envVars[key] = prior.value
-			if err := os.Setenv(key, prior.value); err != nil {
-				return fmt.Errorf("failed to restore environment variable %s: %w", key, err)
-			}
-			continue
-		}
-		delete(em.envVars, key)
-		if err := os.Unsetenv(key); err != nil {
-			return fmt.Errorf("failed to unset environment variable %s: %w", key, err)
+		if err := em.restore(key, prior); err != nil {
+			return err
 		}
 	}
 
@@ -204,6 +196,22 @@ func (em *EnvManager) ApplyBackendVars(vars map[string]string) error {
 		}
 	}
 
+	return nil
+}
+
+// restore puts back the value a backend var hid, or unsets the key if it had none. Caller holds mu.
+func (em *EnvManager) restore(key string, prior priorValue) error {
+	if !prior.set {
+		delete(em.envVars, key)
+		if err := os.Unsetenv(key); err != nil {
+			return fmt.Errorf("failed to unset environment variable %s: %w", key, err)
+		}
+		return nil
+	}
+	em.envVars[key] = prior.value
+	if err := os.Setenv(key, prior.value); err != nil {
+		return fmt.Errorf("failed to restore environment variable %s: %w", key, err)
+	}
 	return nil
 }
 

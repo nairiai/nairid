@@ -52,6 +52,8 @@ type CmdRunner struct {
 	agentID         string
 	agentsApiClient *clients.AgentsApiClient
 	mcpConfig       *agentMCPConfig
+	// configRefreshMu runs one refresh at a time, so a slow env response can't overwrite a newer one.
+	configRefreshMu sync.Mutex
 	wsURL           string
 	nairiAPIKey       string
 	instanceNamespace string // per-instance namespace for path isolation
@@ -1298,6 +1300,8 @@ func newShutdownContext() (context.Context, context.CancelFunc) {
 // refreshConfig applies the env vars, rules, MCP servers and skills the backend has now, sent when
 // the agent's config changes in Nairi.
 func (cr *CmdRunner) refreshConfig() {
+	cr.configRefreshMu.Lock()
+	defer cr.configRefreshMu.Unlock()
 	log.Info("🔄 Refreshing the agent config")
 	if err := fetchAndApplyEnvVars(cr.agentsApiClient, cr.envManager); err != nil {
 		log.Warn("🔄 Failed to refresh env vars: %v", err)

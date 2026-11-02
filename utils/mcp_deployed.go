@@ -31,7 +31,14 @@ func readMCPDeployed() []string {
 	if err != nil {
 		return nil
 	}
-	return strings.Fields(string(content))
+	// One path per line: a home directory can contain spaces.
+	var paths []string
+	for _, line := range strings.Split(string(content), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			paths = append(paths, line)
+		}
+	}
+	return paths
 }
 
 func writeMCPDeployed(configPaths []string) error {
