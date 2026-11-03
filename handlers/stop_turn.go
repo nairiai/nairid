@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"nairid/clients"
@@ -177,6 +178,7 @@ func (mh *MessageHandler) runTurn(jobID, processedMessageID string, handle func(
 	if _, stopped := core.IsTurnStopped(err); stopped {
 		log.Info("🛑 Answering the stop of job %s: stopped", jobID)
 		mh.sendTurnStopped(jobID, processedMessageID, models.TurnStopOutcomeStopped)
+		mh.finishMessage(processedMessageID)
 		return
 	}
 	if stopPressed {
@@ -185,14 +187,43 @@ func (mh *MessageHandler) runTurn(jobID, processedMessageID string, handle func(
 		log.Info("🛑 Answering the stop of job %s: not running (%v)", jobID, err)
 		mh.sendTurnStopped(jobID, processedMessageID, models.TurnStopOutcomeNotRunning)
 	}
-	if err == nil {
+	if err != nil && IsShuttingDown() {
+		// Most likely the CLI was killed with us; recovery reruns the turn after the restart.
+		log.Info("🔌 Turn of job %s ended during shutdown (%v), leaving it for recovery", jobID, err)
 		return
 	}
-	mh.failInProgressJob(jobID, processedMessageID)
-	if sendErr := mh.sendErrorMessage(err, processedMessageID, jobID); sendErr != nil {
-		log.Error("Failed to send error message: %v", sendErr)
+	if err != nil {
+		mh.failInProgressJob(jobID, processedMessageID)
+		if sendErr := mh.sendErrorMessage(err, processedMessageID, jobID); sendErr != nil {
+			log.Error("Failed to send error message: %v", sendErr)
+		}
+	}
+	mh.finishMessage(processedMessageID)
+}
+
+// finishMessage runs once per turn, whatever its outcome. Done is written before the ack, so
+// if the ack fails the poller acks the redelivery instead of rerunning it.
+func (mh *MessageHandler) finishMessage(processedMessageID string) {
+	if processedMessageID == "" {
+		return
+	}
+	if err := mh.appState.FinishMessage(processedMessageID, time.Now()); err != nil {
+		log.Error("❌ Failed to record message %s as handled: %v", processedMessageID, err)
+	}
+	if mh.agentsApiClient == nil {
+		return
+	}
+	if err := mh.agentsApiClient.AckMessage(processedMessageID); err != nil {
+		log.Warn("⚠️ Failed to ack message %s: %v", processedMessageID, err)
 	}
 }
+
+var shuttingDown atomic.Bool
+
+// MarkShuttingDown is called on SIGTERM or SIGINT, before anything is torn down.
+func MarkShuttingDown() { shuttingDown.Store(true) }
+
+func IsShuttingDown() bool { return shuttingDown.Load() }
 
 // A turn that errors after marking its job in progress would otherwise keep the job's
 // processor, and its worker slot, until the next message or the 25h idle sweep.

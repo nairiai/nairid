@@ -878,6 +878,7 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 	// Initialize ConnectionState and MessageSender
 	connectionState := handlers.NewConnectionState()
 	messageSender := handlers.NewMessageSender(connectionState, agentsApiClient)
+	messageSender.SetOutbox(appState)
 
 	gitUseCase := usecases.NewGitUseCase(gitClient, cliAgent, appState)
 	gitUseCase.SetNamespace(instanceNamespace)
@@ -1277,6 +1278,11 @@ func main() {
 
 	shutdownCtx, stopShutdownSignals := newShutdownContext()
 	defer stopShutdownSignals()
+	go func() {
+		<-shutdownCtx.Done()
+		// A turn that errors from here on was cut by the shutdown; recovery reruns it.
+		handlers.MarkShuttingDown()
+	}()
 
 	// Start Socket.IO client with backoff retry
 	err = cmdRunner.startSocketIOClientWithRetry(shutdownCtx, cmdRunner.wsURL, cmdRunner.nairiAPIKey)

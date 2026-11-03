@@ -62,6 +62,7 @@ func RecoverJobs(
 			} else {
 				removedJobsCount++
 			}
+			messageHandler.notifyNotResumed(jobData)
 			continue
 		}
 
@@ -76,6 +77,7 @@ func RecoverJobs(
 					} else {
 						removedJobsCount++
 					}
+					messageHandler.notifyNotResumed(jobData)
 					continue
 				}
 			} else {
@@ -92,6 +94,7 @@ func RecoverJobs(
 					} else {
 						removedJobsCount++
 					}
+					messageHandler.notifyNotResumed(jobData)
 					continue
 				}
 			}
@@ -132,7 +135,7 @@ func RecoverJobs(
 		}
 
 		// Route through dispatcher for per-job sequential processing
-		dispatcher.DispatchRecovered(msg)
+		dispatcher.Dispatch(msg)
 
 		recoveredJobsCount++
 	}
@@ -147,7 +150,25 @@ func RecoverJobs(
 		})
 
 		for _, queuedMsg := range allQueuedMessages {
-			// Skip messages for non-existent jobs (orphaned — job was removed by idle check)
+			if appState.IsMessageDone(queuedMsg.ProcessedMessageID) {
+				log.Info("🗑️ Removing queued message %s, its turn already finished", queuedMsg.ProcessedMessageID)
+				if err := appState.RemoveQueuedMessage(queuedMsg.ProcessedMessageID); err != nil {
+					log.Error("❌ Failed to remove queued message %s: %v", queuedMsg.ProcessedMessageID, err)
+				}
+				removedQueuedCount++
+				continue
+			}
+			if len(queuedMsg.Payload) > 0 {
+				if recoverQueuedMessage(appState, dispatcher, queuedMsg, now) {
+					recoveredQueuedCount++
+				} else {
+					removedQueuedCount++
+				}
+				continue
+			}
+
+			// Entries written before the payload was stored lack mode and history, so they
+			// keep the old rules. Skip messages for non-existent jobs (orphaned — job was removed by idle check)
 			jobData, exists := appState.GetJobData(queuedMsg.JobID)
 			if !exists {
 				log.Info("🗑️ Removing orphaned queued message %s (job %s no longer exists)", queuedMsg.ProcessedMessageID, queuedMsg.JobID)
@@ -222,7 +243,7 @@ func RecoverJobs(
 			}
 
 			// Route through dispatcher for per-job sequential processing
-			dispatcher.DispatchRecovered(msg)
+			dispatcher.Dispatch(msg)
 
 			recoveredQueuedCount++
 		}
@@ -283,20 +304,98 @@ func RestoreAppState(statePath string) (*models.AppState, string, error) {
 		}
 	}
 
-	// Restore seen messages for deduplication if state was loaded
-	if loadedState.Loaded && loadedState.SeenMessages != nil {
-		restoredCount := 0
-		for msgID, seenAt := range loadedState.SeenMessages {
-			if err := appState.MarkMessageSeen(msgID, seenAt); err != nil {
-				log.Warn("⚠️ Failed to restore seen message %s: %v", msgID, err)
+	if loadedState.Loaded {
+		done := make(map[string]time.Time, len(loadedState.DoneMessages)+len(loadedState.SeenMessages))
+		for msgID, doneAt := range loadedState.DoneMessages {
+			done[msgID] = doneAt
+		}
+		// Older versions only recorded "seen". A seen message still queued, or still the turn of
+		// an in-progress job, is unfinished and recovery runs it; the rest count as done from now.
+		unfinished := make(map[string]bool)
+		for _, jobData := range loadedState.Jobs {
+			if jobData.Status == models.JobStatusInProgress && jobData.ProcessedMessageID != "" {
+				unfinished[jobData.ProcessedMessageID] = true
+			}
+		}
+		for msgID := range loadedState.SeenMessages {
+			if _, queued := loadedState.QueuedMessages[msgID]; queued || unfinished[msgID] {
 				continue
 			}
-			restoredCount++
+			if _, exists := done[msgID]; !exists {
+				done[msgID] = time.Now()
+			}
 		}
-		if restoredCount > 0 {
-			log.Info("📥 Restored %d seen messages for deduplication", restoredCount)
+		if len(done) > 0 {
+			if err := appState.RestoreDoneMessages(done); err != nil {
+				log.Warn("⚠️ Failed to restore done messages: %v", err)
+			}
+			log.Info("📥 Restored %d handled messages for deduplication", len(done))
+		}
+		for _, outboxMsg := range loadedState.Outbox {
+			if err := appState.AddOutboxMessage(*outboxMsg); err != nil {
+				log.Warn("⚠️ Failed to restore unsent reply %s: %v", outboxMsg.ID, err)
+			}
+		}
+		if len(loadedState.Outbox) > 0 {
+			log.Info("📥 Restored %d unsent replies", len(loadedState.Outbox))
 		}
 	}
 
 	return appState, agentID, nil
+}
+
+// recoverQueuedMessage replays a queued message with its full payload. It is dropped only
+// when its job is running it already or it is over a day old.
+func recoverQueuedMessage(
+	appState *models.AppState,
+	dispatcher *JobDispatcher,
+	queuedMsg models.QueuedMessage,
+	now time.Time,
+) bool {
+	jobData, exists := appState.GetJobData(queuedMsg.JobID)
+	if exists && jobData.ProcessedMessageID == queuedMsg.ProcessedMessageID {
+		// In progress: Phase 1 reruns it. Completed or failed: its turn ended.
+		log.Info("🔄 Queued message %s is the job's own message, removing from queue", queuedMsg.ProcessedMessageID)
+		if err := appState.RemoveQueuedMessage(queuedMsg.ProcessedMessageID); err != nil {
+			log.Error("❌ Failed to remove queued message %s: %v", queuedMsg.ProcessedMessageID, err)
+		}
+		return false
+	}
+
+	msgAge := now.Sub(queuedMsg.QueuedAt)
+	if msgAge > 24*time.Hour {
+		log.Warn("🗑️ Removing stale queued message %s (age: %v)", queuedMsg.ProcessedMessageID, msgAge)
+		if err := appState.RemoveQueuedMessage(queuedMsg.ProcessedMessageID); err != nil {
+			log.Error("❌ Failed to remove stale queued message %s: %v", queuedMsg.ProcessedMessageID, err)
+		}
+		return false
+	}
+
+	if !exists && queuedMsg.MessageType == models.MessageTypeUserMessage {
+		// Started over here it would lose the job's mode; the poller offers it with the job.
+		log.Info("🔄 Leaving queued reply %s for the poller, job %s is not known here", queuedMsg.ProcessedMessageID, queuedMsg.JobID)
+		return true
+	}
+
+	// A start for a job that is not known yet creates it.
+	log.Info("🔄 Recovering queued %s %s for job %s (age: %v, job known: %v)",
+		queuedMsg.MessageType, queuedMsg.ProcessedMessageID, queuedMsg.JobID, msgAge, exists)
+	dispatcher.Dispatch(models.BaseMessage{
+		ID:      core.NewID("msg"),
+		Type:    queuedMsg.MessageType,
+		Payload: queuedMsg.Payload,
+	})
+	return true
+}
+
+// notifyNotResumed tells the user their in-progress turn is gone instead of leaving them waiting.
+func (mh *MessageHandler) notifyNotResumed(jobData models.JobData) {
+	if jobData.ProcessedMessageID == "" {
+		return
+	}
+	text := "The agent restarted and could not resume this conversation. Please send your message again."
+	if err := mh.sendSystemMessage(text, jobData.ProcessedMessageID, jobData.JobID); err != nil {
+		log.Warn("⚠️ Failed to tell job %s it was not resumed: %v", jobData.JobID, err)
+	}
+	mh.finishMessage(jobData.ProcessedMessageID)
 }

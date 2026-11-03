@@ -490,16 +490,8 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 	}
 	log.Info("💾 Persisted final job state with completed status")
 
-	// Ack the message on the backend so the HTTP poller won't re-fetch it.
-	// This is done AFTER processing to ensure crash safety.
-	if err := mh.agentsApiClient.AckMessage(payload.ProcessedMessageID); err != nil {
-		log.Warn("⚠️ Failed to ack message %s: %v", payload.ProcessedMessageID, err)
-	}
-
-	// Clean up all queued messages for this job to prevent replay on restart
-	if err := mh.appState.RemoveQueuedMessagesForJob(payload.JobID); err != nil {
-		log.Warn("⚠️ Failed to clean up queued messages for job %s: %v", payload.JobID, err)
-	}
+	// runTurn acks the message and takes it off the recovery queue. Follow-ups waiting behind
+	// this turn stay queued so a restart still runs them.
 
 	// Add delay to ensure git activity message comes after assistant message
 	time.Sleep(200 * time.Millisecond)
@@ -891,16 +883,8 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 	}
 	log.Info("💾 Persisted final job state with completed status")
 
-	// Ack the message on the backend so the HTTP poller won't re-fetch it.
-	// This is done AFTER processing to ensure crash safety.
-	if err := mh.agentsApiClient.AckMessage(payload.ProcessedMessageID); err != nil {
-		log.Warn("⚠️ Failed to ack message %s: %v", payload.ProcessedMessageID, err)
-	}
-
-	// Clean up all queued messages for this job to prevent replay on restart
-	if err := mh.appState.RemoveQueuedMessagesForJob(payload.JobID); err != nil {
-		log.Warn("⚠️ Failed to clean up queued messages for job %s: %v", payload.JobID, err)
-	}
+	// runTurn acks the message and takes it off the recovery queue. Follow-ups waiting behind
+	// this turn stay queued so a restart still runs them.
 
 	// Add delay to ensure git activity message comes after assistant message
 	time.Sleep(200 * time.Millisecond)
@@ -1264,7 +1248,10 @@ func unmarshalPayload(payload any, target any) error {
 
 // PersistQueuedMessage extracts payload from message and persists it to queue for crash recovery
 func (mh *MessageHandler) PersistQueuedMessage(msg models.BaseMessage) error {
-	// Extract payload based on message type and persist directly
+	rawPayload, err := json.Marshal(msg.Payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal %s payload: %w", msg.Type, err)
+	}
 	if msg.Type == models.MessageTypeStartConversation {
 		var payload models.StartConversationPayload
 		if err := unmarshalPayload(msg.Payload, &payload); err != nil {
@@ -1278,6 +1265,7 @@ func (mh *MessageHandler) PersistQueuedMessage(msg models.BaseMessage) error {
 			Message:            payload.Message,
 			MessageLink:        payload.MessageLink,
 			QueuedAt:           time.Now(),
+			Payload:            rawPayload,
 		}
 		if err := mh.appState.AddQueuedMessage(queuedMsg); err != nil {
 			return fmt.Errorf("failed to persist queued message %s: %w", payload.ProcessedMessageID, err)
@@ -1300,6 +1288,7 @@ func (mh *MessageHandler) PersistQueuedMessage(msg models.BaseMessage) error {
 			Message:            payload.Message,
 			MessageLink:        payload.MessageLink,
 			QueuedAt:           time.Now(),
+			Payload:            rawPayload,
 		}
 		if err := mh.appState.AddQueuedMessage(queuedMsg); err != nil {
 			return fmt.Errorf("failed to persist queued message %s: %w", payload.ProcessedMessageID, err)

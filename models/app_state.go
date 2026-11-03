@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 )
@@ -56,6 +57,18 @@ type QueuedMessage struct {
 	Message            string    `json:"message"`              // User's message text
 	MessageLink        string    `json:"message_link"`         // Link to original chat message
 	QueuedAt           time.Time `json:"queued_at"`            // When queued (for ordering)
+	// The whole message payload, so recovery replays mode, attachments and history too.
+	// Empty in entries written before it was added.
+	Payload json.RawMessage `json:"payload,omitempty"`
+}
+
+// OutboxMessage is a reply that has not reached the backend yet. It is kept until a send
+// succeeds, so a restart or a backend outage delays it instead of losing it.
+type OutboxMessage struct {
+	ID       string          `json:"id"`
+	Event    string          `json:"event"`
+	Data     json.RawMessage `json:"data"`
+	QueuedAt time.Time       `json:"queued_at"`
 }
 
 // PersistedState represents the state that gets persisted to disk
@@ -63,7 +76,11 @@ type PersistedState struct {
 	AgentID        string                    `json:"agent_id"`
 	Jobs           map[string]*JobData       `json:"jobs"`
 	QueuedMessages map[string]*QueuedMessage `json:"queued_messages"` // Key: ProcessedMessageID
-	SeenMessages   map[string]time.Time      `json:"seen_messages"`   // ProcessedMessageID → first seen time (for deduplication)
+	// Written by versions before done_messages; read once to migrate, never written.
+	SeenMessages map[string]time.Time `json:"seen_messages,omitempty"`
+	// ProcessedMessageID → when its turn finished. Redeliveries of these are acked, not rerun.
+	DoneMessages map[string]time.Time      `json:"done_messages,omitempty"`
+	Outbox       map[string]*OutboxMessage `json:"outbox,omitempty"`
 }
 
 // LoadedState represents the result of loading persisted state from disk
@@ -72,6 +89,8 @@ type LoadedState struct {
 	Jobs           map[string]*JobData
 	QueuedMessages map[string]*QueuedMessage
 	SeenMessages   map[string]time.Time
+	DoneMessages   map[string]time.Time
+	Outbox         map[string]*OutboxMessage
 	Loaded         bool // Indicates whether state was successfully loaded from disk
 }
 
@@ -80,7 +99,8 @@ type AppState struct {
 	agentID        string
 	jobs           map[string]*JobData
 	queuedMessages map[string]*QueuedMessage
-	seenMessages   map[string]time.Time // ProcessedMessageID → first seen time (for deduplication)
+	doneMessages   map[string]time.Time
+	outbox         map[string]*OutboxMessage
 	statePath      string
 	repoContext    *RepositoryContext
 	mutex          sync.RWMutex
@@ -92,7 +112,8 @@ func NewAppState(agentID string, statePath string) *AppState {
 		agentID:        agentID,
 		jobs:           make(map[string]*JobData),
 		queuedMessages: make(map[string]*QueuedMessage),
-		seenMessages:   make(map[string]time.Time),
+		doneMessages:   make(map[string]time.Time),
+		outbox:         make(map[string]*OutboxMessage),
 		statePath:      statePath,
 		repoContext:    &RepositoryContext{}, // Initialize with empty context
 	}
@@ -283,16 +304,19 @@ func (a *AppState) GetAllQueuedMessages() []QueuedMessage {
 			Message:            msg.Message,
 			MessageLink:        msg.MessageLink,
 			QueuedAt:           msg.QueuedAt,
+			Payload:            msg.Payload,
 		})
 	}
 	return result
 }
 
-// MarkMessageSeen records a ProcessedMessageID as seen for deduplication and persists state
-func (a *AppState) MarkMessageSeen(processedMessageID string, seenAt time.Time) error {
+// FinishMessage records that the message's turn is over and takes it off the recovery
+// queue, in one write so a crash cannot leave it queued but done, or gone but not done.
+func (a *AppState) FinishMessage(processedMessageID string, at time.Time) error {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
-	a.seenMessages[processedMessageID] = seenAt
+	a.doneMessages[processedMessageID] = at
+	delete(a.queuedMessages, processedMessageID)
 
 	if err := a.persistStateLocked(); err != nil {
 		return fmt.Errorf("failed to persist state: %w", err)
@@ -301,24 +325,43 @@ func (a *AppState) MarkMessageSeen(processedMessageID string, seenAt time.Time) 
 	return nil
 }
 
-// IsMessageSeen checks if a ProcessedMessageID has already been seen
-func (a *AppState) IsMessageSeen(processedMessageID string) (time.Time, bool) {
-	a.mutex.RLock()
-	defer a.mutex.RUnlock()
-	seenAt, exists := a.seenMessages[processedMessageID]
-	return seenAt, exists
+// RestoreDoneMessages loads done messages from disk in one write.
+func (a *AppState) RestoreDoneMessages(done map[string]time.Time) error {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+	for msgID, doneAt := range done {
+		a.doneMessages[msgID] = doneAt
+	}
+
+	if err := a.persistStateLocked(); err != nil {
+		return fmt.Errorf("failed to persist state: %w", err)
+	}
+
+	return nil
 }
 
-// CleanupSeenMessages removes entries older than the given cutoff and persists state
-func (a *AppState) CleanupSeenMessages(cutoff time.Time) error {
+func (a *AppState) IsMessageDone(processedMessageID string) bool {
+	a.mutex.RLock()
+	defer a.mutex.RUnlock()
+	_, done := a.doneMessages[processedMessageID]
+	return done
+}
+
+// CleanupDoneMessages forgets messages finished before cutoff and persists state
+func (a *AppState) CleanupDoneMessages(cutoff time.Time) error {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 
-	for msgID, seenAt := range a.seenMessages {
-		if seenAt.Before(cutoff) {
-			delete(a.seenMessages, msgID)
+	removed := 0
+	for msgID, doneAt := range a.doneMessages {
+		if doneAt.Before(cutoff) {
+			delete(a.doneMessages, msgID)
+			removed++
 		}
 	}
+	if removed == 0 {
+		return nil
+	}
 
 	if err := a.persistStateLocked(); err != nil {
 		return fmt.Errorf("failed to persist state: %w", err)
@@ -327,14 +370,42 @@ func (a *AppState) CleanupSeenMessages(cutoff time.Time) error {
 	return nil
 }
 
-// GetAllSeenMessages returns a copy of all seen messages
-func (a *AppState) GetAllSeenMessages() map[string]time.Time {
+func (a *AppState) AddOutboxMessage(msg OutboxMessage) error {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+	a.outbox[msg.ID] = &msg
+
+	if err := a.persistStateLocked(); err != nil {
+		return fmt.Errorf("failed to persist state: %w", err)
+	}
+
+	return nil
+}
+
+func (a *AppState) RemoveOutboxMessage(id string) error {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+	if _, exists := a.outbox[id]; !exists {
+		return nil
+	}
+	delete(a.outbox, id)
+
+	if err := a.persistStateLocked(); err != nil {
+		return fmt.Errorf("failed to persist state: %w", err)
+	}
+
+	return nil
+}
+
+// GetAllOutboxMessages returns the unsent replies, oldest first
+func (a *AppState) GetAllOutboxMessages() []OutboxMessage {
 	a.mutex.RLock()
 	defer a.mutex.RUnlock()
-	result := make(map[string]time.Time, len(a.seenMessages))
-	for msgID, seenAt := range a.seenMessages {
-		result[msgID] = seenAt
+	result := make([]OutboxMessage, 0, len(a.outbox))
+	for _, msg := range a.outbox {
+		result = append(result, *msg)
 	}
+	sort.Slice(result, func(i, j int) bool { return result[i].QueuedAt.Before(result[j].QueuedAt) })
 	return result
 }
 
@@ -350,7 +421,8 @@ func (a *AppState) persistStateLocked() error {
 		AgentID:        a.agentID,
 		Jobs:           a.jobs,
 		QueuedMessages: a.queuedMessages,
-		SeenMessages:   a.seenMessages,
+		DoneMessages:   a.doneMessages,
+		Outbox:         a.outbox,
 	}
 
 	// Marshal to JSON with pretty printing
@@ -409,6 +481,8 @@ func LoadState(statePath string) (*LoadedState, error) {
 		Jobs:           state.Jobs,
 		QueuedMessages: state.QueuedMessages,
 		SeenMessages:   state.SeenMessages,
+		DoneMessages:   state.DoneMessages,
+		Outbox:         state.Outbox,
 		Loaded:         true,
 	}, nil
 }
