@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -10,42 +12,38 @@ import (
 	"nairid/models"
 )
 
-// A message that arrived just before a restart is persisted both as job state and as seen.
-// Recovery must still run it instead of dropping it as a duplicate.
-func TestRecoverJobs_RunsMessagesAlreadyMarkedSeen(t *testing.T) {
-	appState := models.NewAppState("agent", filepath.Join(t.TempDir(), "state.json"))
+// A message that arrived just before an upgrade from a version that tracked "seen" is
+// persisted both as job state and as seen. Recovery must still run it, not drop it as done.
+func TestRecoverJobs_RunsMessagesSeenByOlderVersion(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
 	now := time.Now()
-	if err := appState.UpdateJobData("j1", models.JobData{
-		JobID:              "j1",
-		ClaudeSessionID:    "sess_1",
-		LastMessage:        "hello",
-		ProcessedMessageID: "cmsg_1",
-		Status:             models.JobStatusInProgress,
-		UpdatedAt:          now,
-	}); err != nil {
+	legacy := map[string]any{
+		"agent_id": "agent",
+		"jobs": map[string]models.JobData{
+			"j1": {JobID: "j1", ClaudeSessionID: "sess_1", LastMessage: "hello", ProcessedMessageID: "cmsg_1", Status: models.JobStatusInProgress, UpdatedAt: now},
+			"j2": {JobID: "j2", ProcessedMessageID: "cmsg_2", Status: models.JobStatusInProgress, UpdatedAt: now},
+			"j3": {JobID: "j3", ProcessedMessageID: "cmsg_0", Status: models.JobStatusCompleted, UpdatedAt: now},
+		},
+		"queued_messages": map[string]models.QueuedMessage{
+			"cmsg_3": {ProcessedMessageID: "cmsg_3", JobID: "j2", MessageType: models.MessageTypeUserMessage, Message: "and again", QueuedAt: now},
+		},
+		"seen_messages": map[string]time.Time{
+			"cmsg_0": now.Add(-time.Hour), "cmsg_1": now.Add(-time.Minute), "cmsg_2": now.Add(-time.Minute), "cmsg_3": now.Add(-time.Minute),
+		},
+	}
+	raw, err := json.Marshal(legacy)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := appState.UpdateJobData("j2", models.JobData{
-		JobID:              "j2",
-		ProcessedMessageID: "cmsg_2",
-		Status:             models.JobStatusInProgress,
-		UpdatedAt:          now,
-	}); err != nil {
+	if err := os.WriteFile(statePath, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := appState.AddQueuedMessage(models.QueuedMessage{
-		ProcessedMessageID: "cmsg_3",
-		JobID:              "j2",
-		MessageType:        models.MessageTypeUserMessage,
-		Message:            "and again",
-		QueuedAt:           now,
-	}); err != nil {
+	appState, _, err := RestoreAppState(statePath)
+	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"cmsg_1", "cmsg_2", "cmsg_3"} {
-		if err := appState.MarkMessageSeen(id, now.Add(-time.Minute)); err != nil {
-			t.Fatal(err)
-		}
+	if !appState.IsMessageDone("cmsg_0") {
+		t.Error("a seen message of a finished job should migrate to done")
 	}
 
 	wp := workerpool.New(1)

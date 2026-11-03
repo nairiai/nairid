@@ -96,3 +96,38 @@ func TestSetJobPullRequestIDDoesNotRecreateRemovedJob(t *testing.T) {
 		t.Error("removed job was recreated")
 	}
 }
+
+// A crash after any write during a restore must leave a file that still holds every part.
+func TestRestore_WritesTheWholeSnapshotOnce(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	now := time.Now()
+	var writes []*LoadedState
+	afterPersist = func(path string) {
+		loaded, err := LoadState(path)
+		if err != nil {
+			t.Errorf("load after write: %v", err)
+			return
+		}
+		writes = append(writes, loaded)
+	}
+	t.Cleanup(func() { afterPersist = nil })
+
+	state := NewAppState("agent", statePath)
+	err := state.Restore(
+		map[string]*JobData{"j1": {JobID: "j1", Status: JobStatusCompleted}, "j2": {JobID: "j2", Status: JobStatusCompleted}},
+		map[string]*QueuedMessage{"cmsg_q": {ProcessedMessageID: "cmsg_q", JobID: "j1", QueuedAt: now}},
+		map[string]time.Time{"cmsg_done": now},
+		map[string]*OutboxMessage{"msg_1": {ID: "msg_1", Event: "cc_message", Data: []byte(`{}`), QueuedAt: now}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(writes) != 1 {
+		t.Fatalf("restore wrote the state %d times, want once", len(writes))
+	}
+	got := writes[0]
+	if len(got.Jobs) != 2 || len(got.QueuedMessages) != 1 || len(got.DoneMessages) != 1 || len(got.Outbox) != 1 {
+		t.Errorf("written state is missing parts: %d jobs, %d queued, %d done, %d unsent", len(got.Jobs), len(got.QueuedMessages), len(got.DoneMessages), len(got.Outbox))
+	}
+}

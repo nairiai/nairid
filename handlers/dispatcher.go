@@ -12,79 +12,61 @@ import (
 )
 
 const (
-	// seenMessageTTL is how long we remember message IDs for deduplication
-	seenMessageTTL = 60 * time.Minute
-	// cleanupInterval is how often we run cleanup of old seen messages
+	// doneMessageTTL outlives the backend's redelivery window (1h from creation) with margin.
+	doneMessageTTL = 2 * time.Hour
+	// cleanupInterval is how often we forget old done messages
 	cleanupInterval = 10 * time.Minute
 )
 
 // JobDispatcher routes messages to per-job channels to ensure sequential processing
 // for the same job while allowing different jobs to process in parallel.
 type JobDispatcher struct {
-	activeJobs   map[string]chan models.BaseMessage
-	seenMessages map[string]time.Time // ProcessedMessageID → first seen time
-	lastCleanup  time.Time
-	mutex        sync.Mutex
-	handler      *MessageHandler
-	workerPool   *workerpool.WorkerPool
-	appState     *models.AppState
+	activeJobs map[string]chan models.BaseMessage
+	// Messages dispatched in this process whose turn has not finished. Kept in memory only:
+	// after a restart they are not done, so recovery or the poller runs them again.
+	inFlight    map[string]time.Time
+	lastCleanup time.Time
+	mutex       sync.Mutex
+	handler     *MessageHandler
+	workerPool  *workerpool.WorkerPool
+	appState    *models.AppState
 }
 
 // NewJobDispatcher creates a new JobDispatcher instance.
-// It restores previously seen messages from app state for crash-resilient deduplication.
 func NewJobDispatcher(
 	handler *MessageHandler,
 	workerPool *workerpool.WorkerPool,
 	appState *models.AppState,
 ) *JobDispatcher {
-	// Restore seen messages from persisted state
-	seenMessages := appState.GetAllSeenMessages()
-	if seenMessages == nil {
-		seenMessages = make(map[string]time.Time)
-	}
-
 	return &JobDispatcher{
-		activeJobs:   make(map[string]chan models.BaseMessage),
-		seenMessages: seenMessages,
-		lastCleanup:  time.Now(),
-		handler:      handler,
-		workerPool:   workerPool,
-		appState:     appState,
+		activeJobs:  make(map[string]chan models.BaseMessage),
+		inFlight:    make(map[string]time.Time),
+		lastCleanup: time.Now(),
+		handler:     handler,
+		workerPool:  workerPool,
+		appState:    appState,
 	}
 }
 
 // Dispatch routes a message to the appropriate per-job channel.
 // If no channel exists for the job, it creates one and starts a worker goroutine.
+// A message whose turn already finished, or that is already queued or running, is skipped.
 func (d *JobDispatcher) Dispatch(msg models.BaseMessage) {
-	d.dispatch(msg, false)
-}
-
-// DispatchRecovered re-runs a message restored from disk after a restart. Its id was marked
-// seen when it first arrived, so the duplicate check would drop it; it stays marked so a
-// redelivery of the same message is still skipped.
-func (d *JobDispatcher) DispatchRecovered(msg models.BaseMessage) {
-	d.dispatch(msg, true)
-}
-
-func (d *JobDispatcher) dispatch(msg models.BaseMessage, recovered bool) {
-	// Deduplicate messages by ProcessedMessageID
 	processedMsgID := d.extractProcessedMessageID(msg)
 	if processedMsgID != "" {
+		d.maybeCleanupDoneMessages()
+		if d.appState.IsMessageDone(processedMsgID) {
+			log.Info("🔁 Message %s already handled, skipping", processedMsgID)
+			return
+		}
 		d.mutex.Lock()
-		d.maybeCleanupSeenMessages()
-		if _, seen := d.seenMessages[processedMsgID]; seen && !recovered {
+		if _, running := d.inFlight[processedMsgID]; running {
 			d.mutex.Unlock()
 			log.Info("🔁 Duplicate message %s, skipping", processedMsgID)
 			return
 		}
-		now := time.Now()
-		d.seenMessages[processedMsgID] = now
+		d.inFlight[processedMsgID] = time.Now()
 		d.mutex.Unlock()
-
-		// Persist to app state (outside mutex to avoid holding it during disk I/O)
-		if err := d.appState.MarkMessageSeen(processedMsgID, now); err != nil {
-			log.Warn("⚠️ Failed to persist seen message %s: %v", processedMsgID, err)
-		}
 	}
 
 	jobID := d.extractJobID(msg)
@@ -109,7 +91,9 @@ func (d *JobDispatcher) dispatch(msg models.BaseMessage, recovered bool) {
 	case ch <- msg:
 		log.Info("📥 Queued message to job %s channel", jobID)
 	default:
-		log.Error("❌ Job %s channel is full, dropping message", jobID)
+		// Not acked, so the poller offers it again once the job has room.
+		delete(d.inFlight, processedMsgID)
+		log.Error("❌ Job %s channel is full, message %s left for the next poll", jobID, processedMsgID)
 	}
 	d.mutex.Unlock()
 
@@ -129,6 +113,7 @@ func (d *JobDispatcher) processJobMessages(jobID string, ch chan models.BaseMess
 	for msg := range ch {
 		log.Info("🔧 Processing message for job %s", jobID)
 		d.handler.HandleMessage(msg)
+		d.ForgetMessage(d.extractProcessedMessageID(msg))
 
 		// Check if job was removed from AppState
 		jobData, exists := d.appState.GetJobData(jobID)
@@ -178,18 +163,27 @@ func (d *JobDispatcher) closeLocked(jobID string, ch chan models.BaseMessage) {
 	log.Info("🧹 Cleaned up channel for job %s", jobID)
 }
 
-// IsMessageSeen checks if a ProcessedMessageID has already been seen (dispatched).
-func (d *JobDispatcher) IsMessageSeen(processedMsgID string) bool {
-	d.mutex.Lock()
-	defer d.mutex.Unlock()
-	_, seen := d.seenMessages[processedMsgID]
-	return seen
+// IsMessageDone reports whether the message's turn already finished.
+func (d *JobDispatcher) IsMessageDone(processedMsgID string) bool {
+	return d.appState.IsMessageDone(processedMsgID)
 }
 
-func (d *JobDispatcher) ForgetMessage(processedMsgID string) {
+// IsMessageInFlight reports whether the message is queued or running in this process.
+func (d *JobDispatcher) IsMessageInFlight(processedMsgID string) bool {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
-	delete(d.seenMessages, processedMsgID)
+	_, running := d.inFlight[processedMsgID]
+	return running
+}
+
+// ForgetMessage clears the in-flight mark, so a later delivery of the message can run it.
+func (d *JobDispatcher) ForgetMessage(processedMsgID string) {
+	if processedMsgID == "" {
+		return
+	}
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	delete(d.inFlight, processedMsgID)
 }
 
 // EvictJob forcefully removes a job from the dispatcher, closing its channel
@@ -220,6 +214,8 @@ func (d *JobDispatcher) DropQueuedMessages(jobID string) []models.BaseMessage {
 			if !open {
 				return dropped
 			}
+			// The backend ended it; a later delivery of the same id must be able to run.
+			d.ForgetMessage(d.extractProcessedMessageID(msg))
 			dropped = append(dropped, msg)
 		default:
 			return dropped
@@ -288,25 +284,17 @@ func (d *JobDispatcher) extractProcessedMessageID(msg models.BaseMessage) string
 	}
 }
 
-// maybeCleanupSeenMessages removes old entries from seenMessages if enough time has passed.
-// Must be called with mutex held.
-func (d *JobDispatcher) maybeCleanupSeenMessages() {
+func (d *JobDispatcher) maybeCleanupDoneMessages() {
+	d.mutex.Lock()
 	now := time.Now()
 	if now.Sub(d.lastCleanup) < cleanupInterval {
+		d.mutex.Unlock()
 		return
 	}
-
 	d.lastCleanup = now
-	cutoff := now.Add(-seenMessageTTL)
-	for msgID, seenAt := range d.seenMessages {
-		if seenAt.Before(cutoff) {
-			delete(d.seenMessages, msgID)
-		}
-	}
-	log.Info("🧹 Cleaned up seen messages, %d remaining", len(d.seenMessages))
+	d.mutex.Unlock()
 
-	// Sync cleanup to persisted state (best-effort, don't block on errors)
-	if err := d.appState.CleanupSeenMessages(cutoff); err != nil {
-		log.Warn("⚠️ Failed to persist seen messages cleanup: %v", err)
+	if err := d.appState.CleanupDoneMessages(now.Add(-doneMessageTTL)); err != nil {
+		log.Warn("⚠️ Failed to persist done messages cleanup: %v", err)
 	}
 }

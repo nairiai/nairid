@@ -27,10 +27,10 @@ func createTestAppStateNoPath() *models.AppState {
 
 // mockMessageHandler tracks calls to HandleMessage for testing
 type mockMessageHandler struct {
-	mu             sync.Mutex
-	handledMsgs    []models.BaseMessage
-	handleDelay    time.Duration
-	onHandleMsg    func(msg models.BaseMessage)
+	mu          sync.Mutex
+	handledMsgs []models.BaseMessage
+	handleDelay time.Duration
+	onHandleMsg func(msg models.BaseMessage)
 }
 
 func (m *mockMessageHandler) HandleMessage(msg models.BaseMessage) {
@@ -65,12 +65,12 @@ func newTestableDispatcher(poolSize int, appState *models.AppState) *testableDis
 
 	// Create dispatcher with nil handler (we'll intercept calls)
 	dispatcher := &JobDispatcher{
-		activeJobs:   make(map[string]chan models.BaseMessage),
-		seenMessages: make(map[string]time.Time),
-		lastCleanup:  time.Now(),
-		handler:      nil, // Will be set via wrapper
-		workerPool:   wp,
-		appState:     appState,
+		activeJobs:  make(map[string]chan models.BaseMessage),
+		inFlight:    make(map[string]time.Time),
+		lastCleanup: time.Now(),
+		handler:     nil, // Will be set via wrapper
+		workerPool:  wp,
+		appState:    appState,
 	}
 
 	return &testableDispatcher{
@@ -741,43 +741,33 @@ func TestDispatcher_DifferentMessagesNotDeduplicated(t *testing.T) {
 	}
 }
 
-func TestDispatcher_SeenMessageCleanup(t *testing.T) {
+func TestDispatcher_DoneMessageCleanup(t *testing.T) {
 	appState := createTestAppState(t)
 	wp := workerpool.New(2)
 	defer wp.StopWait()
 
 	dispatcher := NewJobDispatcher(nil, wp, appState)
-
 	ch := make(chan models.BaseMessage, 100)
-	dispatcher.mutex.Lock()
 	dispatcher.activeJobs["job-cleanup"] = ch
-	dispatcher.mutex.Unlock()
 
-	// Add a message to seenMessages with an old timestamp
-	dispatcher.mutex.Lock()
-	dispatcher.seenMessages["old-msg-id"] = time.Now().Add(-90 * time.Minute)
-	dispatcher.lastCleanup = time.Now().Add(-15 * time.Minute) // Force cleanup to run (older than 10min interval)
-	dispatcher.mutex.Unlock()
-
-	// Dispatch a new message to trigger cleanup
-	msg := createTestMessageWithProcessedID(
-		models.MessageTypeUserMessage,
-		"job-cleanup",
-		"new-msg-id",
-	)
-	dispatcher.Dispatch(msg)
-
-	// Old message should be cleaned up, new message should exist
-	dispatcher.mutex.Lock()
-	_, oldExists := dispatcher.seenMessages["old-msg-id"]
-	_, newExists := dispatcher.seenMessages["new-msg-id"]
-	dispatcher.mutex.Unlock()
-
-	if oldExists {
-		t.Error("Expected old message to be cleaned up")
+	if err := appState.FinishMessage("old-msg-id", time.Now().Add(-3*time.Hour)); err != nil {
+		t.Fatal(err)
 	}
-	if !newExists {
-		t.Error("Expected new message to exist in seenMessages")
+	if err := appState.FinishMessage("recent-msg-id", time.Now().Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	dispatcher.lastCleanup = time.Now().Add(-15 * time.Minute)
+
+	dispatcher.Dispatch(createTestMessageWithProcessedID(models.MessageTypeUserMessage, "job-cleanup", "new-msg-id"))
+
+	if appState.IsMessageDone("old-msg-id") {
+		t.Error("expected a done message older than the TTL to be cleaned up")
+	}
+	if !appState.IsMessageDone("recent-msg-id") {
+		t.Error("expected a recent done message to be kept")
+	}
+	if !dispatcher.IsMessageInFlight("new-msg-id") {
+		t.Error("expected the dispatched message to be in flight")
 	}
 }
 
@@ -787,94 +777,84 @@ func TestDispatcher_EmptyProcessedMessageID(t *testing.T) {
 	defer wp.StopWait()
 
 	dispatcher := NewJobDispatcher(nil, wp, appState)
-
 	ch := make(chan models.BaseMessage, 100)
-	dispatcher.mutex.Lock()
 	dispatcher.activeJobs["job-empty"] = ch
-	dispatcher.mutex.Unlock()
 
-	// Dispatch messages without ProcessedMessageID (empty string)
-	msg1 := createTestMessageWithProcessedID(
-		models.MessageTypeUserMessage,
-		"job-empty",
-		"", // empty ProcessedMessageID
-	)
-	msg2 := createTestMessageWithProcessedID(
-		models.MessageTypeUserMessage,
-		"job-empty",
-		"", // also empty
-	)
+	dispatcher.Dispatch(createTestMessageWithProcessedID(models.MessageTypeUserMessage, "job-empty", ""))
+	dispatcher.Dispatch(createTestMessageWithProcessedID(models.MessageTypeUserMessage, "job-empty", ""))
 
-	dispatcher.Dispatch(msg1)
-	dispatcher.Dispatch(msg2)
-
-	// Both should be processed (no dedup for empty IDs)
 	if len(ch) != 2 {
 		t.Errorf("Expected 2 messages (empty IDs not deduplicated), got %d", len(ch))
 	}
-
-	// seenMessages should not contain empty string
-	dispatcher.mutex.Lock()
-	_, exists := dispatcher.seenMessages[""]
-	dispatcher.mutex.Unlock()
-
-	if exists {
-		t.Error("Empty ProcessedMessageID should not be stored in seenMessages")
+	if dispatcher.IsMessageInFlight("") {
+		t.Error("Empty ProcessedMessageID should not be tracked as in flight")
 	}
 }
 
-func TestDispatcher_SeenMessagesSurviveRestart(t *testing.T) {
-	tmpDir := t.TempDir()
-	statePath := filepath.Join(tmpDir, "test_state.json")
+// Only a finished message is a duplicate after a restart. One that was merely dispatched
+// must run again, since its turn never finished.
+func TestDispatcher_OnlyDoneMessagesSurviveRestart(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "test_state.json")
 	appState := models.NewAppState("test-agent", statePath)
 	wp := workerpool.New(2)
 	defer wp.StopWait()
 
 	dispatcher := NewJobDispatcher(nil, wp, appState)
-
 	ch := make(chan models.BaseMessage, 100)
-	dispatcher.mutex.Lock()
 	dispatcher.activeJobs["job-persist"] = ch
-	dispatcher.mutex.Unlock()
 
-	msg := createTestMessageWithProcessedID(
-		models.MessageTypeStartConversation,
-		"job-persist",
-		"persist-msg-001",
-	)
-	dispatcher.Dispatch(msg)
-
-	if len(ch) != 1 {
-		t.Fatalf("Expected 1 message in channel, got %d", len(ch))
+	finished := createTestMessageWithProcessedID(models.MessageTypeStartConversation, "job-persist", "persist-msg-001")
+	unfinished := createTestMessageWithProcessedID(models.MessageTypeUserMessage, "job-persist", "persist-msg-002")
+	dispatcher.Dispatch(finished)
+	dispatcher.Dispatch(unfinished)
+	if len(ch) != 2 {
+		t.Fatalf("Expected 2 messages in channel, got %d", len(ch))
+	}
+	if err := appState.FinishMessage("persist-msg-001", time.Now()); err != nil {
+		t.Fatal(err)
 	}
 
-	appState2 := models.NewAppState("test-agent", statePath)
-	loadedState, err := models.LoadState(statePath)
+	appState2, _, err := RestoreAppState(statePath)
 	if err != nil {
-		t.Fatalf("Failed to load state: %v", err)
+		t.Fatal(err)
 	}
-	if loadedState.SeenMessages == nil {
-		t.Fatal("Expected seen messages in loaded state, got nil")
-	}
-	for msgID, seenAt := range loadedState.SeenMessages {
-		if err := appState2.MarkMessageSeen(msgID, seenAt); err != nil {
-			t.Fatalf("Failed to restore seen message: %v", err)
-		}
-	}
-
 	wp2 := workerpool.New(2)
 	defer wp2.StopWait()
 	dispatcher2 := NewJobDispatcher(nil, wp2, appState2)
-
 	ch2 := make(chan models.BaseMessage, 100)
-	dispatcher2.mutex.Lock()
 	dispatcher2.activeJobs["job-persist"] = ch2
-	dispatcher2.mutex.Unlock()
 
-	dispatcher2.Dispatch(msg)
+	dispatcher2.Dispatch(finished)
+	dispatcher2.Dispatch(unfinished)
 
-	if len(ch2) != 0 {
-		t.Errorf("Expected 0 messages after restart (duplicate should be filtered), got %d", len(ch2))
+	if len(ch2) != 1 {
+		t.Fatalf("Expected only the unfinished message after restart, got %d", len(ch2))
+	}
+	if got := dispatcher2.extractProcessedMessageID(<-ch2); got != "persist-msg-002" {
+		t.Errorf("redispatched %q, want persist-msg-002", got)
+	}
+}
+
+// A full job channel used to drop the message. It must stay deliverable by the next poll.
+func TestDispatcher_FullChannelLeavesMessageForNextPoll(t *testing.T) {
+	appState := createTestAppState(t)
+	wp := workerpool.New(1)
+	defer wp.StopWait()
+
+	dispatcher := NewJobDispatcher(nil, wp, appState)
+	ch := make(chan models.BaseMessage, 1)
+	ch <- createTestMessageWithProcessedID(models.MessageTypeUserMessage, "job-full", "filler")
+	dispatcher.activeJobs["job-full"] = ch
+
+	dispatcher.Dispatch(createTestMessageWithProcessedID(models.MessageTypeUserMessage, "job-full", "overflow"))
+
+	if dispatcher.IsMessageInFlight("overflow") {
+		t.Fatal("a message that did not fit must not stay in flight, or the next poll skips it")
+	}
+	<-ch
+	dispatcher.Dispatch(createTestMessageWithProcessedID(models.MessageTypeUserMessage, "job-full", "overflow"))
+	if len(ch) != 1 {
+		t.Errorf("redelivery after the channel drained: %d messages, want 1", len(ch))
 	}
 }
 

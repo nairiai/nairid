@@ -131,12 +131,17 @@ func (mp *MessagePoller) pollAndDispatch() {
 			// Extract ProcessedMessageID to check if already seen/processed
 			processedMsgID := mp.extractProcessedMessageID(msg)
 
-			// If already seen (processed via WS or previous poll), just ack and skip
-			if processedMsgID != "" && mp.dispatcher.IsMessageSeen(processedMsgID) {
-				log.Info("📡 MessagePoller: Message %s already seen, acking only", msg.ID)
+			// Its turn finished but the ack did not land: ack again, do not rerun.
+			if processedMsgID != "" && mp.dispatcher.IsMessageDone(processedMsgID) {
+				log.Info("📡 MessagePoller: Message %s already handled, acking only", msg.ID)
 				if err := mp.apiClient.AckMessage(msg.ID); err != nil {
-					log.Warn("📡 MessagePoller: Failed to ack seen message %s: %v", msg.ID, err)
+					log.Warn("📡 MessagePoller: Failed to ack handled message %s: %v", msg.ID, err)
 				}
+				continue
+			}
+			// Queued or running here: it gets acked when its turn ends.
+			if processedMsgID != "" && mp.dispatcher.IsMessageInFlight(processedMsgID) {
+				log.Info("📡 MessagePoller: Message %s already queued or running, skipping", msg.ID)
 				continue
 			}
 
@@ -187,10 +192,11 @@ func (mp *MessagePoller) pollAndDispatch() {
 				}
 			}
 
-			// Dispatch without persisting to local queue — the poller will re-fetch
-			// unacked messages on the next poll if the agent crashes before processing.
-			// NOT calling PersistQueuedMessage here prevents stale queued messages from
-			// accumulating in state.json (which caused the message replay bug).
+			// Persisted so a restart replays it even after the backend stops offering it
+			// (1h after creation). Every turn outcome takes it off the queue again.
+			if err := mp.messageHandler.PersistQueuedMessage(baseMsg); err != nil {
+				log.Warn("📡 MessagePoller: Failed to persist message %s: %v", msg.ID, err)
+			}
 			mp.dispatcher.Dispatch(baseMsg)
 			log.Info("📡 MessagePoller: Dispatched message %s (type=%s)", msg.ID, baseMsg.Type)
 
