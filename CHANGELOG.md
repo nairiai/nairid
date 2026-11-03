@@ -1,3 +1,13 @@
+## [v0.0.132] - 2026-11-03
+
+### Bugfixes
+
+- Messages and replies survive a restart: delayed, never dropped ([#251](https://github.com/nairiai/nairid/pull/251))
+  - A message is marked handled only when its turn ends, so one cut by a restart or redeploy is picked up again instead of skipped
+  - Follow-ups queued behind a turn stay queued when that turn ends, and recovery replays them with their full payload
+  - Replies are saved to disk before they are sent and resent after a restart or a backend outage until the backend accepts them
+  - A failed turn is acked once instead of being redelivered for an hour
+
 ## [v0.0.131] - 2026-11-03
 
 ### Bugfixes
