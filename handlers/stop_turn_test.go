@@ -479,3 +479,25 @@ func TestFailedTurn_LeavesAFinishedJobAsItIs(t *testing.T) {
 		t.Errorf("job after a late failure = %q, want completed", job.Status)
 	}
 }
+
+func TestFailedTurn_LeavesANewerTurnOfTheJobRunning(t *testing.T) {
+	f := newStopFixture(t)
+	f.mustHandle(t, startMessage("0"))
+
+	// The old turn was evicted on a CLI error, and a reply started a new turn before it unwound.
+	f.handler.runTurn("j1", "cmsg_1", func(ctx context.Context) error {
+		job, _ := f.handler.appState.GetJobData("j1")
+		newer := *job
+		newer.Status = models.JobStatusInProgress
+		newer.ProcessedMessageID = "cmsg_2"
+		if err := f.handler.appState.UpdateJobData("j1", newer); err != nil {
+			t.Fatalf("persist newer turn: %v", err)
+		}
+		return errors.New("error starting claude session")
+	})
+
+	job, _ := f.handler.appState.GetJobData("j1")
+	if job.Status != models.JobStatusInProgress || job.ProcessedMessageID != "cmsg_2" {
+		t.Errorf("newer turn = status %q message %q, want in_progress / cmsg_2", job.Status, job.ProcessedMessageID)
+	}
+}
