@@ -1,3 +1,11 @@
+## [v0.0.131] - 2026-11-03
+
+### Bugfixes
+
+- A turn that errors no longer holds the agent's worker slot ([#250](https://github.com/nairiai/nairid/pull/250))
+  - If a turn failed after its job was marked in progress (for example an attachment fetch or an auto-commit step), the job's processor stayed open until the next message or the idle sweep, so other threads waited behind it
+  - The job is now marked failed when its turn errors, unless a newer turn of the same job has taken over
+
 ## [v0.0.130] - 2026-11-03
 
 ### Bugfixes
