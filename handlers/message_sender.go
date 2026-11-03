@@ -65,6 +65,8 @@ type MessageSender struct {
 	wsTried       map[string]bool
 	failures      map[string]int
 	retryAt       map[string]time.Time
+	rejected      map[string]bool
+	kick          chan struct{}
 	done          chan struct{}
 }
 
@@ -88,6 +90,8 @@ func NewMessageSender(connectionState *ConnectionState, apiClient *clients.Agent
 		wsTried:         make(map[string]bool),
 		failures:        make(map[string]int),
 		retryAt:         make(map[string]time.Time),
+		rejected:        make(map[string]bool),
+		kick:            make(chan struct{}, 1),
 		done:            make(chan struct{}),
 	}
 }
@@ -104,6 +108,8 @@ func newMessageSenderForTest(connectionState *ConnectionState, apiClient httpSub
 		wsTried:         make(map[string]bool),
 		failures:        make(map[string]int),
 		retryAt:         make(map[string]time.Time),
+		rejected:        make(map[string]bool),
+		kick:            make(chan struct{}, 1),
 		done:            make(chan struct{}),
 	}
 }
@@ -160,6 +166,8 @@ func (ms *MessageSender) runOutboxRetrier() {
 			return
 		case <-ticker.C:
 			ms.resendOutbox()
+		case <-ms.kick:
+			ms.resendOutbox()
 		}
 	}
 }
@@ -174,9 +182,21 @@ func (ms *MessageSender) send(msg OutgoingMessage) {
 		ms.sendHTTPWithRetry(msg)
 		return
 	}
-	// Older replies of the same job go first, so a job's replies keep their order.
-	ms.resendOlderForJob(msg.outboxID)
+	if ms.waitsBehindOlder(msg.outboxID) {
+		// The retrier sends it after its job's older replies, so this loop never waits on them.
+		log.Info("📤 MessageSender: Outbox message %s waits for older replies of its job", msg.outboxID)
+		ms.settleOutbox(msg.outboxID, false)
+		ms.kickRetrier()
+		return
+	}
 	ms.deliverFromOutbox(msg)
+}
+
+func (ms *MessageSender) kickRetrier() {
+	select {
+	case ms.kick <- struct{}{}:
+	default:
+	}
 }
 
 // deliverFromOutbox submits an outbox reply over HTTP only: a WS emit is not acknowledged
@@ -186,14 +206,19 @@ func (ms *MessageSender) deliverFromOutbox(msg OutgoingMessage) {
 }
 
 // deliverOnce makes a single attempt, so a pass over many failing replies stays short.
-func (ms *MessageSender) deliverOnce(msg OutgoingMessage) {
-	ms.settleAttempt(msg, ms.submitHTTPOnce(msg))
+func (ms *MessageSender) deliverOnce(msg OutgoingMessage) bool {
+	err := ms.submitHTTPOnce(msg)
+	ms.settleAttempt(msg, err)
+	return err == nil
 }
 
 func (ms *MessageSender) settleAttempt(msg OutgoingMessage, err error) {
 	var rejected *clients.StatusError
 	if errors.As(err, &rejected) && rejected.Permanent() {
 		log.Error("❌ MessageSender: Backend rejected outbox message %s, keeping it: %v", msg.outboxID, err)
+		ms.pendingMu.Lock()
+		ms.rejected[msg.outboxID] = true
+		ms.pendingMu.Unlock()
 		ms.emitRejectedOnce(msg)
 	}
 	if err != nil {
@@ -290,55 +315,75 @@ func (ms *MessageSender) settleOutbox(id string, delivered bool) {
 		delete(ms.wsTried, id)
 		delete(ms.failures, id)
 		delete(ms.retryAt, id)
+		delete(ms.rejected, id)
 	}
 	ms.pendingMu.Unlock()
 }
 
-// resendOutbox retries every persisted reply that is due and not already on its way.
+// resendOutbox retries persisted replies in queue order. A job's later replies wait until
+// its earlier ones are delivered, so a completion never overtakes the reply before it.
 func (ms *MessageSender) resendOutbox() {
 	if ms.outbox == nil {
 		return
 	}
+	blocked := make(map[string]bool)
 	for _, entry := range ms.outbox.GetAllOutboxMessages() {
-		ms.resendEntry(entry)
+		jobID := outboxJobID(entry.Data)
+		if jobID != "" && blocked[jobID] {
+			continue
+		}
+		if !ms.resendEntry(entry) && !ms.isRejected(entry.ID) {
+			blocked[jobID] = true
+		}
 	}
 }
 
-// resendOlderForJob retries the due replies of the same job that were queued before this one.
-func (ms *MessageSender) resendOlderForJob(id string) {
+// waitsBehindOlder reports whether an earlier reply of the same job is still undelivered.
+// One the backend refused for good does not hold its job back.
+func (ms *MessageSender) waitsBehindOlder(id string) bool {
 	if ms.outbox == nil {
-		return
+		return false
 	}
 	entries := ms.outbox.GetAllOutboxMessages()
-	var current *models.OutboxMessage
-	for i := range entries {
-		if entries[i].ID == id {
-			current = &entries[i]
-		}
-	}
-	if current == nil {
-		return
-	}
-	jobID := outboxJobID(current.Data)
+	jobID := ""
 	for _, entry := range entries {
-		if entry.ID != id && jobID != "" && outboxJobID(entry.Data) == jobID && entry.QueuedAt.Before(current.QueuedAt) {
-			ms.resendEntry(entry)
+		if entry.ID == id {
+			jobID = outboxJobID(entry.Data)
 		}
 	}
+	if jobID == "" {
+		return false
+	}
+	for _, entry := range entries {
+		if entry.ID == id {
+			return false
+		}
+		if outboxJobID(entry.Data) == jobID && !ms.isRejected(entry.ID) {
+			return true
+		}
+	}
+	return false
 }
 
-func (ms *MessageSender) resendEntry(entry models.OutboxMessage) {
+func (ms *MessageSender) isRejected(id string) bool {
+	ms.pendingMu.Lock()
+	defer ms.pendingMu.Unlock()
+	return ms.rejected[id]
+}
+
+// resendEntry makes one attempt at a due entry nobody else is sending. Reports whether it left the outbox.
+func (ms *MessageSender) resendEntry(entry models.OutboxMessage) bool {
 	if !ms.retryDue(entry.ID) || !ms.markPending(entry.ID) {
-		return
+		return false
 	}
 	var data models.BaseMessage
 	if err := json.Unmarshal(entry.Data, &data); err != nil {
 		log.Error("❌ MessageSender: Dropping unreadable outbox message %s: %v", entry.ID, err)
 		ms.settleOutbox(entry.ID, true)
-		return
+		return true
 	}
 	log.Info("📤 MessageSender: Resending outbox message %s (queued %s)", entry.ID, entry.QueuedAt.Format(time.RFC3339))
-	ms.deliverOnce(OutgoingMessage{Event: entry.Event, Data: data, outboxID: entry.ID})
+	return ms.deliverOnce(OutgoingMessage{Event: entry.Event, Data: data, outboxID: entry.ID})
 }
 
 func outboxJobID(raw json.RawMessage) string {
