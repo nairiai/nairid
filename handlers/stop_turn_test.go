@@ -429,3 +429,75 @@ func TestStopTurn_AnswersNotRunningWhenTheTurnFinishedFirst(t *testing.T) {
 		t.Errorf("turn_stopped = %+v, want not_running for cmsg_1", stop)
 	}
 }
+
+func TestFailedTurn_FreesTheOnlyWorkerSlot(t *testing.T) {
+	f := newStopFixture(t)
+	pool := workerpool.New(1)
+	dispatcher := NewJobDispatcher(f.handler, pool, f.handler.appState)
+	f.handler.SetJobEvictor(dispatcher)
+	// Evicting first lets a stuck worker exit, so a failing run ends instead of hanging in Stop.
+	defer func() { dispatcher.EvictJob("j1"); pool.Stop() }()
+
+	// The attachment fetch fails after the job is marked in progress.
+	failing := startMessage("0")
+	payload := failing.Payload.(models.StartConversationPayload)
+	payload.Attachments = []models.MessageAttachment{{AttachmentID: "att_missing"}}
+	failing.Payload = payload
+	dispatcher.Dispatch(failing)
+
+	other := startMessage("5")
+	otherPayload := other.Payload.(models.StartConversationPayload)
+	otherPayload.JobID = "j2"
+	other.Payload = otherPayload
+	dispatcher.Dispatch(other)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for !answered(f.outbox, "cmsg_5") {
+		if time.Now().After(deadline) {
+			t.Fatal("the second thread waited behind the failed turn")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if job, _ := f.handler.appState.GetJobData("j1"); job.Status != models.JobStatusFailed {
+		t.Errorf("failed turn left job j1 %q, want failed", job.Status)
+	}
+	if got := waitFor(t, f.outbox, models.MessageTypeSystemMessage); len(got) != 1 {
+		t.Errorf("the failure must reach the user once, sent %+v", got)
+	}
+}
+
+func TestFailedTurn_LeavesAFinishedJobAsItIs(t *testing.T) {
+	f := newStopFixture(t)
+	f.mustHandle(t, startMessage("0"))
+
+	// The PR footer fails after the job was saved as completed.
+	f.handler.runTurn("j1", "cmsg_1", func(ctx context.Context) error {
+		return errors.New("pr footer failed")
+	})
+
+	if job, _ := f.handler.appState.GetJobData("j1"); job.Status != models.JobStatusCompleted {
+		t.Errorf("job after a late failure = %q, want completed", job.Status)
+	}
+}
+
+func TestFailedTurn_LeavesANewerTurnOfTheJobRunning(t *testing.T) {
+	f := newStopFixture(t)
+	f.mustHandle(t, startMessage("0"))
+
+	// The old turn was evicted on a CLI error, and a reply started a new turn before it unwound.
+	f.handler.runTurn("j1", "cmsg_1", func(ctx context.Context) error {
+		job, _ := f.handler.appState.GetJobData("j1")
+		newer := *job
+		newer.Status = models.JobStatusInProgress
+		newer.ProcessedMessageID = "cmsg_2"
+		if err := f.handler.appState.UpdateJobData("j1", newer); err != nil {
+			t.Fatalf("persist newer turn: %v", err)
+		}
+		return errors.New("error starting claude session")
+	})
+
+	job, _ := f.handler.appState.GetJobData("j1")
+	if job.Status != models.JobStatusInProgress || job.ProcessedMessageID != "cmsg_2" {
+		t.Errorf("newer turn = status %q message %q, want in_progress / cmsg_2", job.Status, job.ProcessedMessageID)
+	}
+}

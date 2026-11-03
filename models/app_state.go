@@ -161,6 +161,25 @@ func (a *AppState) SetJobPullRequestID(jobID string, prID string) (bool, error) 
 }
 
 // GetJobData retrieves job data for a given JobID
+// FailJobIfInProgress marks the job failed only while it is still in progress for this message,
+// so an old turn unwinding after a newer one took the job cannot fail the newer one.
+func (a *AppState) FailJobIfInProgress(jobID, processedMessageID string) (bool, error) {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+	data, exists := a.jobs[jobID]
+	if !exists || data.Status != JobStatusInProgress || data.ProcessedMessageID != processedMessageID {
+		return false, nil
+	}
+	data.Status = JobStatusFailed
+	data.UpdatedAt = time.Now()
+
+	if err := a.persistStateLocked(); err != nil {
+		return true, fmt.Errorf("failed to persist state: %w", err)
+	}
+
+	return true, nil
+}
+
 func (a *AppState) GetJobData(jobID string) (*JobData, bool) {
 	a.mutex.RLock()
 	defer a.mutex.RUnlock()
