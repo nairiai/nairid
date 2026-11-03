@@ -65,7 +65,6 @@ type MessageSender struct {
 	wsTried       map[string]bool
 	failures      map[string]int
 	retryAt       map[string]time.Time
-	rejected      map[string]bool
 	kick          chan struct{}
 	done          chan struct{}
 }
@@ -90,7 +89,6 @@ func NewMessageSender(connectionState *ConnectionState, apiClient *clients.Agent
 		wsTried:         make(map[string]bool),
 		failures:        make(map[string]int),
 		retryAt:         make(map[string]time.Time),
-		rejected:        make(map[string]bool),
 		kick:            make(chan struct{}, 1),
 		done:            make(chan struct{}),
 	}
@@ -108,7 +106,6 @@ func newMessageSenderForTest(connectionState *ConnectionState, apiClient httpSub
 		wsTried:         make(map[string]bool),
 		failures:        make(map[string]int),
 		retryAt:         make(map[string]time.Time),
-		rejected:        make(map[string]bool),
 		kick:            make(chan struct{}, 1),
 		done:            make(chan struct{}),
 	}
@@ -216,9 +213,6 @@ func (ms *MessageSender) settleAttempt(msg OutgoingMessage, err error) {
 	var rejected *clients.StatusError
 	if errors.As(err, &rejected) && rejected.Permanent() {
 		log.Error("❌ MessageSender: Backend rejected outbox message %s, keeping it: %v", msg.outboxID, err)
-		ms.pendingMu.Lock()
-		ms.rejected[msg.outboxID] = true
-		ms.pendingMu.Unlock()
 		ms.emitRejectedOnce(msg)
 	}
 	if err != nil {
@@ -315,7 +309,6 @@ func (ms *MessageSender) settleOutbox(id string, delivered bool) {
 		delete(ms.wsTried, id)
 		delete(ms.failures, id)
 		delete(ms.retryAt, id)
-		delete(ms.rejected, id)
 	}
 	ms.pendingMu.Unlock()
 }
@@ -332,14 +325,14 @@ func (ms *MessageSender) resendOutbox() {
 		if jobID != "" && blocked[jobID] {
 			continue
 		}
-		if !ms.resendEntry(entry) && !ms.isRejected(entry.ID) {
+		if !ms.resendEntry(entry) {
 			blocked[jobID] = true
 		}
 	}
 }
 
 // waitsBehindOlder reports whether an earlier reply of the same job is still undelivered.
-// One the backend refused for good does not hold its job back.
+// A refused one holds its job back too: a completion sent past it would close the job and lose it.
 func (ms *MessageSender) waitsBehindOlder(id string) bool {
 	if ms.outbox == nil {
 		return false
@@ -358,17 +351,11 @@ func (ms *MessageSender) waitsBehindOlder(id string) bool {
 		if entry.ID == id {
 			return false
 		}
-		if outboxJobID(entry.Data) == jobID && !ms.isRejected(entry.ID) {
+		if outboxJobID(entry.Data) == jobID {
 			return true
 		}
 	}
 	return false
-}
-
-func (ms *MessageSender) isRejected(id string) bool {
-	ms.pendingMu.Lock()
-	defer ms.pendingMu.Unlock()
-	return ms.rejected[id]
 }
 
 // resendEntry makes one attempt at a due entry nobody else is sending. Reports whether it left the outbox.

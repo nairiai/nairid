@@ -3,11 +3,13 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
+	"nairid/clients"
 	"nairid/models"
 )
 
@@ -239,5 +241,54 @@ func TestMessageSender_SlowBacklogDoesNotBlockOtherJobs(t *testing.T) {
 	got := fmt.Sprint(api.acceptedIDs())
 	if want := "[msg_fresh_b msg_old1 msg_old2 msg_fresh_a]"; got != want {
 		t.Errorf("accepted %s, want %s", got, want)
+	}
+}
+
+// switchHTTP refuses the listed messages with a given status until accepting is set.
+type switchHTTP struct {
+	mu        sync.Mutex
+	refuse    map[string]int
+	accepting bool
+	accepted  []string
+}
+
+func (h *switchHTTP) SubmitMessage(msg models.BaseMessage) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if code, ok := h.refuse[msg.ID]; ok && !h.accepting {
+		return &clients.StatusError{Code: code, Body: "refused"}
+	}
+	h.accepted = append(h.accepted, msg.ID)
+	return nil
+}
+
+func (h *switchHTTP) acceptedIDs() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]string(nil), h.accepted...)
+}
+
+// A reply the backend refused, say with a 404 mid-rollout, still holds back its job's completion.
+func TestMessageSender_CompletionWaitsForRefusedReply(t *testing.T) {
+	api := &switchHTTP{refuse: map[string]int{"msg_reply": http.StatusNotFound}}
+	ms, appState := newOutboxSender(t, api)
+	addOld(t, appState, "msg_reply", "job_a", time.Minute)
+	ms.resendOutbox()
+
+	done := models.BaseMessage{ID: "msg_done", Type: models.MessageTypeJobComplete, Payload: models.JobCompletePayload{JobID: "job_a"}}
+	ms.send(OutgoingMessage{Event: "cc_message", Data: done, outboxID: ms.persistToOutbox("cc_message", done)})
+	if got := api.acceptedIDs(); len(got) != 0 {
+		t.Fatalf("accepted %v while the refused reply was undelivered", got)
+	}
+
+	api.mu.Lock()
+	api.accepting = true
+	api.mu.Unlock()
+	ms.pendingMu.Lock()
+	delete(ms.retryAt, "msg_reply")
+	ms.pendingMu.Unlock()
+	ms.resendOutbox()
+	if got := fmt.Sprint(api.acceptedIDs()); got != "[msg_reply msg_done]" {
+		t.Errorf("accepted %s, want [msg_reply msg_done]", got)
 	}
 }
