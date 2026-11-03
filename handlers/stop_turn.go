@@ -188,9 +188,27 @@ func (mh *MessageHandler) runTurn(jobID, processedMessageID string, handle func(
 	if err == nil {
 		return
 	}
+	mh.failInProgressJob(jobID)
 	if sendErr := mh.sendErrorMessage(err, processedMessageID, jobID); sendErr != nil {
 		log.Error("Failed to send error message: %v", sendErr)
 	}
+}
+
+// A turn that errors after marking its job in progress would otherwise keep the job's
+// processor, and its worker slot, until the next message or the 25h idle sweep.
+func (mh *MessageHandler) failInProgressJob(jobID string) {
+	jobData, exists := mh.appState.GetJobData(jobID)
+	if !exists || jobData.Status != models.JobStatusInProgress {
+		return
+	}
+	failed := *jobData
+	failed.Status = models.JobStatusFailed
+	failed.UpdatedAt = time.Now()
+	if err := mh.appState.UpdateJobData(jobID, failed); err != nil {
+		log.Error("❌ Failed to mark job %s as failed: %v", jobID, err)
+		return
+	}
+	log.Info("💾 Marked job %s as failed after its turn errored", jobID)
 }
 
 func (mh *MessageHandler) sendTurnStopped(jobID, processedMessageID, outcome string) {
