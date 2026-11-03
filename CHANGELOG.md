@@ -1,3 +1,15 @@
+## [v0.0.130] - 2026-11-03
+
+### Bugfixes
+
+- Job recovery after a restart works again ([#249](https://github.com/nairiai/nairid/pull/249))
+  - Since dedup state is saved to disk, recovery dropped in-flight jobs and queued messages as already seen, so they never got a reply
+  - Recovery now skips only the seen check; the id stays marked seen, so a redelivery of the same message is still deduped
+
+### Chores
+
+- Removed the last `AGENT_MCP_PROXY` references ([#248](https://github.com/nairiai/nairid/pull/248))
+
 ## [v0.0.129] - 2026-11-02
 
 ### Features
