@@ -1,3 +1,11 @@
+## [v0.0.133] - 2026-11-03
+
+### Bugfixes
+
+- A reply the backend keeps refusing no longer stalls the agent's new turns ([#252](https://github.com/nairiai/nairid/pull/252))
+  - Saved replies are retried on their own, with backoff from 1 minute up to 10 minutes, so new replies never wait on them
+  - A job's replies still reach the backend in order, so a job is never marked done before its last reply arrives
+
 ## [v0.0.132] - 2026-11-03
 
 ### Bugfixes
