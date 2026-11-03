@@ -2,6 +2,9 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
@@ -29,10 +32,7 @@ type outboxStore interface {
 	GetAllOutboxMessages() []models.OutboxMessage
 }
 
-const (
-	outboxRetryInterval = 60 * time.Second
-	outboxMaxAge        = 24 * time.Hour
-)
+const outboxRetryInterval = 60 * time.Second
 
 // httpSubmitter sends messages via the HTTP API (for testability).
 type httpSubmitter interface {
@@ -152,8 +152,28 @@ func (ms *MessageSender) send(msg OutgoingMessage) {
 		ms.sendWSWithRetry(msg)
 		return
 	}
-	delivered := ms.sendHTTPWithRetry(msg)
-	ms.settleOutbox(msg.outboxID, delivered)
+	if msg.outboxID == "" {
+		ms.sendHTTPWithRetry(msg)
+		return
+	}
+	// Older replies that failed earlier go first, so a job's replies keep their order.
+	ms.resendOutbox()
+	ms.deliverFromOutbox(msg)
+}
+
+// deliverFromOutbox submits an outbox reply over HTTP only: a WS emit is not acknowledged
+// by the backend, so it cannot prove delivery. A failed reply stays for the next resend.
+func (ms *MessageSender) deliverFromOutbox(msg OutgoingMessage) {
+	err := ms.submitHTTPWithRetry(msg)
+	var rejected *clients.StatusError
+	if errors.As(err, &rejected) && rejected.Permanent() {
+		log.Error("❌ MessageSender: Backend rejected outbox message %s for good, dropping it: %v", msg.outboxID, err)
+		err = nil
+	}
+	if err != nil {
+		log.Warn("⚠️ MessageSender: Outbox message %s not delivered, retrying in %s: %v", msg.outboxID, outboxRetryInterval, err)
+	}
+	ms.settleOutbox(msg.outboxID, err == nil)
 }
 
 // persistToOutbox stores the message before it is queued. Returns "" when there is no outbox or the write failed.
@@ -176,6 +196,8 @@ func (ms *MessageSender) persistToOutbox(event string, data any) string {
 	entry := models.OutboxMessage{ID: id, Event: event, Data: raw, QueuedAt: time.Now()}
 	if err := ms.outbox.AddOutboxMessage(entry); err != nil {
 		log.Warn("⚠️ MessageSender: Failed to persist message %s to outbox: %v", id, err)
+		ms.settleOutbox(id, false)
+		return ""
 	}
 	return id
 }
@@ -215,13 +237,13 @@ func (ms *MessageSender) resendOutbox() {
 			continue
 		}
 		var data models.BaseMessage
-		if err := json.Unmarshal(entry.Data, &data); err != nil || time.Since(entry.QueuedAt) > outboxMaxAge {
-			log.Error("❌ MessageSender: Dropping outbox message %s (queued %s, err: %v)", entry.ID, entry.QueuedAt.Format(time.RFC3339), err)
+		if err := json.Unmarshal(entry.Data, &data); err != nil {
+			log.Error("❌ MessageSender: Dropping unreadable outbox message %s: %v", entry.ID, err)
 			ms.settleOutbox(entry.ID, true)
 			continue
 		}
-		log.Info("📤 MessageSender: Resending outbox message %s", entry.ID)
-		ms.send(OutgoingMessage{Event: entry.Event, Data: data, outboxID: entry.ID})
+		log.Info("📤 MessageSender: Resending outbox message %s (queued %s)", entry.ID, entry.QueuedAt.Format(time.RFC3339))
+		ms.deliverFromOutbox(OutgoingMessage{Event: entry.Event, Data: data, outboxID: entry.ID})
 	}
 }
 
@@ -271,18 +293,24 @@ func (ms *MessageSender) sendWSWithRetry(msg OutgoingMessage) bool {
 
 // sendHTTPWithRetry sends a message via HTTP with exponential backoff retry logic.
 // If all HTTP attempts fail, it falls back to sending via WebSocket.
-// Returns true if the message was delivered, or can never be (malformed), so it should leave the outbox.
-func (ms *MessageSender) sendHTTPWithRetry(msg OutgoingMessage) bool {
+func (ms *MessageSender) sendHTTPWithRetry(msg OutgoingMessage) {
+	if err := ms.submitHTTPWithRetry(msg); err != nil {
+		log.Warn("⚠️ MessageSender: HTTP failed: %v. Falling back to WebSocket.", err)
+		ms.sendWSFallback(msg)
+	}
+}
+
+// submitHTTPWithRetry submits a message via HTTP with exponential backoff. A malformed
+// message returns a permanent error, since no retry can deliver it.
+func (ms *MessageSender) submitHTTPWithRetry(msg OutgoingMessage) error {
 	msgBytes, err := json.Marshal(msg.Data)
 	if err != nil {
-		log.Error("❌ MessageSender: Failed to marshal message for HTTP: %v", err)
-		return true
+		return &clients.StatusError{Code: http.StatusBadRequest, Body: "marshal: " + err.Error()}
 	}
 
 	var baseMsg models.BaseMessage
 	if err := json.Unmarshal(msgBytes, &baseMsg); err != nil {
-		log.Error("❌ MessageSender: Failed to unmarshal BaseMessage for HTTP: %v", err)
-		return true
+		return &clients.StatusError{Code: http.StatusBadRequest, Body: "unmarshal: " + err.Error()}
 	}
 
 	expBackoff := backoff.NewExponentialBackOff()
@@ -295,6 +323,10 @@ func (ms *MessageSender) sendHTTPWithRetry(msg OutgoingMessage) bool {
 	operation := func() error {
 		attempt++
 		err := ms.apiClient.SubmitMessage(baseMsg)
+		var rejected *clients.StatusError
+		if errors.As(err, &rejected) && rejected.Permanent() {
+			return backoff.Permanent(err)
+		}
 		if err != nil {
 			log.Warn("⚠️ MessageSender: Failed to submit message via HTTP (attempt %d): %v", attempt, err)
 			return err
@@ -303,19 +335,17 @@ func (ms *MessageSender) sendHTTPWithRetry(msg OutgoingMessage) bool {
 		return nil
 	}
 
-	err = backoff.Retry(operation, expBackoff)
-	if err == nil {
-		return true
+	if err := backoff.Retry(operation, expBackoff); err != nil {
+		return fmt.Errorf("after %d attempts: %w", attempt, err)
 	}
-	log.Warn("⚠️ MessageSender: HTTP failed after %d attempts: %v. Falling back to WebSocket.", attempt, err)
-	return ms.sendWSFallback(msg)
+	return nil
 }
 
 // sendWSFallback attempts to deliver a message via WebSocket after HTTP delivery has failed.
 // It waits for an active WebSocket connection and retries with exponential backoff.
-func (ms *MessageSender) sendWSFallback(msg OutgoingMessage) bool {
+func (ms *MessageSender) sendWSFallback(msg OutgoingMessage) {
 	ms.connectionState.WaitForConnection()
-	return ms.sendWSWithRetry(msg)
+	ms.sendWSWithRetry(msg)
 }
 
 // runProgressSender processes the progress queue in a separate goroutine.
@@ -346,6 +376,22 @@ func (ms *MessageSender) QueueMessage(event string, data any) {
 	}
 	ms.messageQueue <- msg
 	log.Info("📤 MessageSender: Message for event '%s' has been consumed by sender", event)
+}
+
+// QueueMessageLater persists a reply for the sender to deliver once it runs, without waiting.
+// For callers that run before the sender starts, such as startup recovery.
+func (ms *MessageSender) QueueMessageLater(event string, data any) {
+	msg := OutgoingMessage{Event: event, Data: data}
+	if !ms.isWSMessage(msg) {
+		if id := ms.persistToOutbox(event, data); id != "" {
+			// Not pending: the sender's first resend picks it up.
+			ms.pendingMu.Lock()
+			delete(ms.pendingOutbox, id)
+			ms.pendingMu.Unlock()
+			return
+		}
+	}
+	go ms.QueueMessage(event, data)
 }
 
 // Close closes the message queue, causing Run() to exit.

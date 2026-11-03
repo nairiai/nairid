@@ -15,7 +15,9 @@ import (
 	"github.com/gammazero/workerpool"
 
 	"nairid/clients"
+	"nairid/core/env"
 	"nairid/models"
+	"nairid/usecases"
 )
 
 // A reply queued just before the container stops is still sent by the next container.
@@ -284,4 +286,121 @@ func waitUntil(t *testing.T, cond func() bool) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// Recovery runs before the sender starts. Two jobs it cannot resume used to fill the one-slot
+// queue and hang startup; their notices now wait in the outbox for the sender.
+func TestRecoverJobs_NonResumableJobsDoNotBlockStartup(t *testing.T) {
+	t.Setenv("NAIRI_CONFIG_DIR", t.TempDir())
+	appState, _, err := RestoreAppState(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := time.Now().Add(-25 * time.Hour)
+	for _, id := range []string{"1", "2"} {
+		if err := appState.UpdateJobData("j"+id, models.JobData{
+			JobID: "j" + id, ProcessedMessageID: "cmsg_" + id, Status: models.JobStatusInProgress, UpdatedAt: stale,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	envManager, err := env.NewEnvManager()
+	if err != nil {
+		t.Fatal(err)
+	}
+	apiClient := clients.NewAgentsApiClient("k", "http://127.0.0.1:1", "agent")
+	sender := NewMessageSender(NewConnectionState(), apiClient)
+	sender.SetOutbox(appState)
+	agent := &stoppableAgent{started: make(chan struct{})}
+	handler := NewMessageHandler(agent, usecases.NewGitUseCase(nil, agent, appState), appState, envManager, sender, apiClient)
+	wp := workerpool.New(1)
+	defer wp.StopWait()
+
+	recovered := make(chan struct{})
+	go func() {
+		RecoverJobs(appState, usecases.NewGitUseCase(nil, agent, appState), NewJobDispatcher(handler, wp, appState), handler)
+		close(recovered)
+	}()
+	select {
+	case <-recovered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("recovery blocked before the sender started")
+	}
+
+	if got := len(appState.GetAllOutboxMessages()); got != 2 {
+		t.Errorf("outbox holds %d restart notices, want 2", got)
+	}
+	for _, id := range []string{"cmsg_1", "cmsg_2"} {
+		if !appState.IsMessageDone(id) {
+			t.Errorf("%s should be done once its user is told", id)
+		}
+	}
+}
+
+// A WS emit is not acknowledged by the backend, so it cannot take a reply out of the outbox.
+func TestMessageSender_FailedHTTPKeepsReplyInOutbox(t *testing.T) {
+	appState, _, err := RestoreAppState(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := &mockWS{}
+	ms := newMessageSenderForTest(NewConnectionState(), &mockHTTP{failCount: -1}, ws)
+	ms.SetOutbox(appState)
+	id := ms.persistToOutbox("cc_message", makeTestMessage(models.MessageTypeAssistantMessage).Data)
+
+	ms.send(OutgoingMessage{Event: "cc_message", Data: makeTestMessage(models.MessageTypeAssistantMessage).Data, outboxID: id})
+
+	if got := len(appState.GetAllOutboxMessages()); got != 1 {
+		t.Errorf("outbox has %d replies after a failed send, want 1", got)
+	}
+	if len(ws.calls) != 0 {
+		t.Errorf("an outbox reply went over WS %d times; only HTTP proves delivery", len(ws.calls))
+	}
+	if !ms.markPending(id) {
+		t.Error("a failed reply must be free for the next resend")
+	}
+}
+
+// Age alone never drops a reply: one left over from a long stop is still sent.
+func TestMessageSender_OldReplyIsStillResent(t *testing.T) {
+	appState, _, err := RestoreAppState(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(makeTestMessage(models.MessageTypeAssistantMessage).Data)
+	if err := appState.AddOutboxMessage(models.OutboxMessage{ID: "msg_old", Event: "cc_message", Data: raw, QueuedAt: time.Now().Add(-48 * time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	httpMock := &mockHTTP{}
+	ms := newMessageSenderForTest(NewConnectionState(), httpMock, &mockWS{})
+	ms.SetOutbox(appState)
+
+	ms.resendOutbox()
+
+	if len(httpMock.getCalls()) != 1 || len(appState.GetAllOutboxMessages()) != 0 {
+		t.Errorf("a 2-day-old reply was not delivered: %d sends, %d left", len(httpMock.getCalls()), len(appState.GetAllOutboxMessages()))
+	}
+}
+
+// A reply the backend refuses for good (a 4xx such as 400) leaves the outbox instead of looping.
+func TestMessageSender_PermanentRejectionLeavesOutbox(t *testing.T) {
+	appState, _, err := RestoreAppState(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ms := newMessageSenderForTest(NewConnectionState(), rejectingHTTP{}, &mockWS{})
+	ms.SetOutbox(appState)
+	id := ms.persistToOutbox("cc_message", makeTestMessage(models.MessageTypeAssistantMessage).Data)
+
+	ms.deliverFromOutbox(OutgoingMessage{Event: "cc_message", Data: makeTestMessage(models.MessageTypeAssistantMessage).Data, outboxID: id})
+
+	if got := len(appState.GetAllOutboxMessages()); got != 0 {
+		t.Errorf("outbox kept %d rejected replies", got)
+	}
+}
+
+type rejectingHTTP struct{}
+
+func (rejectingHTTP) SubmitMessage(models.BaseMessage) error {
+	return &clients.StatusError{Code: http.StatusBadRequest, Body: "invalid"}
 }

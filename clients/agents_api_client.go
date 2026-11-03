@@ -552,8 +552,27 @@ func (c *AgentsApiClient) SubmitMessage(msg models.BaseMessage) error {
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(bodyBytes))
+		return &StatusError{Code: resp.StatusCode, Body: string(bodyBytes)}
 	}
 
 	return nil
+}
+
+// StatusError is a non-200 answer from the backend.
+type StatusError struct {
+	Code int
+	Body string
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("API returned status %d: %s", e.Code, e.Body)
+}
+
+// Permanent reports whether resending the same request can never succeed.
+func (e *StatusError) Permanent() bool {
+	switch e.Code {
+	case http.StatusBadRequest, http.StatusNotFound, http.StatusGone, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
+		return true
+	}
+	return false
 }

@@ -325,12 +325,24 @@ func (a *AppState) FinishMessage(processedMessageID string, at time.Time) error 
 	return nil
 }
 
-// RestoreDoneMessages loads done messages from disk in one write.
-func (a *AppState) RestoreDoneMessages(done map[string]time.Time) error {
+// Restore loads a whole persisted snapshot and writes it back once.
+func (a *AppState) Restore(jobs map[string]*JobData, queued map[string]*QueuedMessage, done map[string]time.Time, outbox map[string]*OutboxMessage) error {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
+	for jobID, jobData := range jobs {
+		copied := *jobData
+		a.jobs[jobID] = &copied
+	}
+	for msgID, queuedMsg := range queued {
+		copied := *queuedMsg
+		a.queuedMessages[msgID] = &copied
+	}
 	for msgID, doneAt := range done {
 		a.doneMessages[msgID] = doneAt
+	}
+	for id, outboxMsg := range outbox {
+		copied := *outboxMsg
+		a.outbox[id] = &copied
 	}
 
 	if err := a.persistStateLocked(); err != nil {
@@ -447,9 +459,15 @@ func (a *AppState) persistStateLocked() error {
 	if err := os.Rename(tempPath, a.statePath); err != nil {
 		return fmt.Errorf("failed to rename state file: %w", err)
 	}
+	if afterPersist != nil {
+		afterPersist(a.statePath)
+	}
 
 	return nil
 }
+
+// afterPersist lets tests look at every state file written, each a point a crash could leave behind.
+var afterPersist func(statePath string)
 
 // LoadState loads persisted state from disk
 // Returns LoadedState containing the loaded data and a boolean indicating success, or an error

@@ -281,65 +281,42 @@ func RestoreAppState(statePath string) (*models.AppState, string, error) {
 
 	// Create app state with agent ID and state path
 	appState := models.NewAppState(agentID, statePath)
-
-	// Restore jobs if state was loaded
-	if loadedState.Loaded && loadedState.Jobs != nil {
-		for jobID, jobData := range loadedState.Jobs {
-			if err := appState.UpdateJobData(jobID, *jobData); err != nil {
-				log.Warn("⚠️ Failed to restore job state for %s: %v", jobID, err)
-				continue
-			}
-			log.Info("📥 Restored job state: %s (branch: %s, session: %s)", jobID, jobData.BranchName, jobData.ClaudeSessionID)
-		}
+	if !loadedState.Loaded {
+		return appState, agentID, nil
 	}
 
-	// Restore queued messages if state was loaded
-	if loadedState.Loaded && loadedState.QueuedMessages != nil {
-		for _, queuedMsg := range loadedState.QueuedMessages {
-			if err := appState.AddQueuedMessage(*queuedMsg); err != nil {
-				log.Warn("⚠️ Failed to restore queued message for %s: %v", queuedMsg.ProcessedMessageID, err)
-				continue
-			}
-			log.Info("📥 Restored queued message: %s (job: %s, type: %s)", queuedMsg.ProcessedMessageID, queuedMsg.JobID, queuedMsg.MessageType)
-		}
+	for jobID, jobData := range loadedState.Jobs {
+		log.Info("📥 Restored job state: %s (branch: %s, session: %s)", jobID, jobData.BranchName, jobData.ClaudeSessionID)
+	}
+	for _, queuedMsg := range loadedState.QueuedMessages {
+		log.Info("📥 Restored queued message: %s (job: %s, type: %s)", queuedMsg.ProcessedMessageID, queuedMsg.JobID, queuedMsg.MessageType)
 	}
 
-	if loadedState.Loaded {
-		done := make(map[string]time.Time, len(loadedState.DoneMessages)+len(loadedState.SeenMessages))
-		for msgID, doneAt := range loadedState.DoneMessages {
-			done[msgID] = doneAt
-		}
-		// Older versions only recorded "seen". A seen message still queued, or still the turn of
-		// an in-progress job, is unfinished and recovery runs it; the rest count as done from now.
-		unfinished := make(map[string]bool)
-		for _, jobData := range loadedState.Jobs {
-			if jobData.Status == models.JobStatusInProgress && jobData.ProcessedMessageID != "" {
-				unfinished[jobData.ProcessedMessageID] = true
-			}
-		}
-		for msgID := range loadedState.SeenMessages {
-			if _, queued := loadedState.QueuedMessages[msgID]; queued || unfinished[msgID] {
-				continue
-			}
-			if _, exists := done[msgID]; !exists {
-				done[msgID] = time.Now()
-			}
-		}
-		if len(done) > 0 {
-			if err := appState.RestoreDoneMessages(done); err != nil {
-				log.Warn("⚠️ Failed to restore done messages: %v", err)
-			}
-			log.Info("📥 Restored %d handled messages for deduplication", len(done))
-		}
-		for _, outboxMsg := range loadedState.Outbox {
-			if err := appState.AddOutboxMessage(*outboxMsg); err != nil {
-				log.Warn("⚠️ Failed to restore unsent reply %s: %v", outboxMsg.ID, err)
-			}
-		}
-		if len(loadedState.Outbox) > 0 {
-			log.Info("📥 Restored %d unsent replies", len(loadedState.Outbox))
+	done := make(map[string]time.Time, len(loadedState.DoneMessages)+len(loadedState.SeenMessages))
+	for msgID, doneAt := range loadedState.DoneMessages {
+		done[msgID] = doneAt
+	}
+	// Older versions only recorded "seen". A seen message still queued, or still the turn of
+	// an in-progress job, is unfinished and recovery runs it; the rest count as done from now.
+	unfinished := make(map[string]bool)
+	for _, jobData := range loadedState.Jobs {
+		if jobData.Status == models.JobStatusInProgress && jobData.ProcessedMessageID != "" {
+			unfinished[jobData.ProcessedMessageID] = true
 		}
 	}
+	for msgID := range loadedState.SeenMessages {
+		if _, queued := loadedState.QueuedMessages[msgID]; queued || unfinished[msgID] {
+			continue
+		}
+		if _, exists := done[msgID]; !exists {
+			done[msgID] = time.Now()
+		}
+	}
+	// One write for everything: a crash mid-restore must not leave a file missing any part.
+	if err := appState.Restore(loadedState.Jobs, loadedState.QueuedMessages, done, loadedState.Outbox); err != nil {
+		log.Warn("⚠️ Failed to persist restored state: %v", err)
+	}
+	log.Info("📥 Restored %d handled messages for deduplication, %d unsent replies", len(done), len(loadedState.Outbox))
 
 	return appState, agentID, nil
 }
@@ -393,9 +370,15 @@ func (mh *MessageHandler) notifyNotResumed(jobData models.JobData) {
 	if jobData.ProcessedMessageID == "" {
 		return
 	}
-	text := "The agent restarted and could not resume this conversation. Please send your message again."
-	if err := mh.sendSystemMessage(text, jobData.ProcessedMessageID, jobData.JobID); err != nil {
-		log.Warn("⚠️ Failed to tell job %s it was not resumed: %v", jobData.JobID, err)
-	}
+	// Recovery runs before the sender starts, so the notice waits in the outbox instead of the queue.
+	mh.messageSender.QueueMessageLater("cc_message", models.BaseMessage{
+		ID:   core.NewID("msg"),
+		Type: models.MessageTypeSystemMessage,
+		Payload: models.SystemMessagePayload{
+			Message:            "The agent restarted and could not resume this conversation. Please send your message again.",
+			ProcessedMessageID: jobData.ProcessedMessageID,
+			JobID:              jobData.JobID,
+		},
+	})
 	mh.finishMessage(jobData.ProcessedMessageID)
 }
