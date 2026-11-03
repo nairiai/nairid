@@ -383,19 +383,28 @@ func TestMessageSender_OldReplyIsStillResent(t *testing.T) {
 }
 
 // A reply the backend refuses for good (a 4xx such as 400) leaves the outbox instead of looping.
-func TestMessageSender_PermanentRejectionLeavesOutbox(t *testing.T) {
+// A rejected reply stays on disk, goes out over WebSocket once, and is retried over HTTP later.
+func TestMessageSender_RejectedReplyStaysInOutbox(t *testing.T) {
 	appState, _, err := RestoreAppState(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ms := newMessageSenderForTest(NewConnectionState(), rejectingHTTP{}, &mockWS{})
+	conn := NewConnectionState()
+	conn.SetConnected(true)
+	ws := &mockWS{}
+	ms := newMessageSenderForTest(conn, rejectingHTTP{}, ws)
 	ms.SetOutbox(appState)
-	id := ms.persistToOutbox("cc_message", makeTestMessage(models.MessageTypeAssistantMessage).Data)
+	data := makeTestMessage(models.MessageTypeAssistantMessage).Data
+	id := ms.persistToOutbox("cc_message", data)
 
-	ms.deliverFromOutbox(OutgoingMessage{Event: "cc_message", Data: makeTestMessage(models.MessageTypeAssistantMessage).Data, outboxID: id})
+	ms.deliverFromOutbox(OutgoingMessage{Event: "cc_message", Data: data, outboxID: id})
+	ms.resendOutbox()
 
-	if got := len(appState.GetAllOutboxMessages()); got != 0 {
-		t.Errorf("outbox kept %d rejected replies", got)
+	if got := len(appState.GetAllOutboxMessages()); got != 1 {
+		t.Errorf("outbox has %d replies after rejection, want 1", got)
+	}
+	if got := len(ws.getCalls()); got != 1 {
+		t.Errorf("WebSocket emits = %d, want 1", got)
 	}
 }
 

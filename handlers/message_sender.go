@@ -59,6 +59,7 @@ type MessageSender struct {
 	outbox        outboxStore
 	pendingMu     sync.Mutex
 	pendingOutbox map[string]bool
+	wsTried       map[string]bool
 }
 
 // Compile-time interface assertions
@@ -78,6 +79,7 @@ func NewMessageSender(connectionState *ConnectionState, apiClient *clients.Agent
 		socketClient:    nil, // Set later via Run()
 		apiClient:       apiClient,
 		pendingOutbox:   make(map[string]bool),
+		wsTried:         make(map[string]bool),
 	}
 }
 
@@ -90,6 +92,7 @@ func newMessageSenderForTest(connectionState *ConnectionState, apiClient httpSub
 		socketClient:    ws,
 		apiClient:       apiClient,
 		pendingOutbox:   make(map[string]bool),
+		wsTried:         make(map[string]bool),
 	}
 }
 
@@ -167,13 +170,29 @@ func (ms *MessageSender) deliverFromOutbox(msg OutgoingMessage) {
 	err := ms.submitHTTPWithRetry(msg)
 	var rejected *clients.StatusError
 	if errors.As(err, &rejected) && rejected.Permanent() {
-		log.Error("❌ MessageSender: Backend rejected outbox message %s for good, dropping it: %v", msg.outboxID, err)
-		err = nil
+		log.Error("❌ MessageSender: Backend rejected outbox message %s, keeping it: %v", msg.outboxID, err)
+		ms.emitRejectedOnce(msg)
 	}
 	if err != nil {
 		log.Warn("⚠️ MessageSender: Outbox message %s not delivered, retrying in %s: %v", msg.outboxID, outboxRetryInterval, err)
 	}
 	ms.settleOutbox(msg.outboxID, err == nil)
+}
+
+// emitRejectedOnce sends a reply the HTTP endpoint refused over WebSocket, as the pre-outbox
+// fallback did. Once per entry per process, since an emit is not a backend ack and the entry stays.
+func (ms *MessageSender) emitRejectedOnce(msg OutgoingMessage) {
+	if !ms.connectionState.IsConnected() {
+		return
+	}
+	ms.pendingMu.Lock()
+	tried := ms.wsTried[msg.outboxID]
+	ms.wsTried[msg.outboxID] = true
+	ms.pendingMu.Unlock()
+	if tried {
+		return
+	}
+	ms.sendWSWithRetry(msg)
 }
 
 // persistToOutbox stores the message before it is queued. Returns "" when there is no outbox or the write failed.
@@ -224,6 +243,9 @@ func (ms *MessageSender) settleOutbox(id string, delivered bool) {
 	}
 	ms.pendingMu.Lock()
 	delete(ms.pendingOutbox, id)
+	if delivered {
+		delete(ms.wsTried, id)
+	}
 	ms.pendingMu.Unlock()
 }
 
