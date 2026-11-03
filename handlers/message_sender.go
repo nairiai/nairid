@@ -32,7 +32,10 @@ type outboxStore interface {
 	GetAllOutboxMessages() []models.OutboxMessage
 }
 
-const outboxRetryInterval = 60 * time.Second
+const (
+	outboxRetryInterval = 60 * time.Second
+	outboxMaxBackoff    = 10 * time.Minute
+)
 
 // httpSubmitter sends messages via the HTTP API (for testability).
 type httpSubmitter interface {
@@ -60,6 +63,9 @@ type MessageSender struct {
 	pendingMu     sync.Mutex
 	pendingOutbox map[string]bool
 	wsTried       map[string]bool
+	failures      map[string]int
+	retryAt       map[string]time.Time
+	done          chan struct{}
 }
 
 // Compile-time interface assertions
@@ -80,6 +86,9 @@ func NewMessageSender(connectionState *ConnectionState, apiClient *clients.Agent
 		apiClient:       apiClient,
 		pendingOutbox:   make(map[string]bool),
 		wsTried:         make(map[string]bool),
+		failures:        make(map[string]int),
+		retryAt:         make(map[string]time.Time),
+		done:            make(chan struct{}),
 	}
 }
 
@@ -93,6 +102,9 @@ func newMessageSenderForTest(connectionState *ConnectionState, apiClient httpSub
 		apiClient:       apiClient,
 		pendingOutbox:   make(map[string]bool),
 		wsTried:         make(map[string]bool),
+		failures:        make(map[string]int),
+		retryAt:         make(map[string]time.Time),
+		done:            make(chan struct{}),
 	}
 }
 
@@ -130,19 +142,22 @@ func (ms *MessageSender) getSocketClient() wsEmitter {
 func (ms *MessageSender) processQueue() {
 	log.Info("📤 MessageSender: Started processing queue")
 
-	// Replies left over from a previous run go out before new ones, keeping their order.
+	// Retries run on their own goroutine so a reply the backend keeps refusing never holds up new ones.
+	go ms.runOutboxRetrier()
+	for msg := range ms.messageQueue {
+		ms.send(msg)
+	}
+	log.Info("📤 MessageSender: Queue closed, exiting")
+}
+
+func (ms *MessageSender) runOutboxRetrier() {
 	ms.resendOutbox()
 	ticker := time.NewTicker(outboxRetryInterval)
 	defer ticker.Stop()
-
 	for {
 		select {
-		case msg, ok := <-ms.messageQueue:
-			if !ok {
-				log.Info("📤 MessageSender: Queue closed, exiting")
-				return
-			}
-			ms.send(msg)
+		case <-ms.done:
+			return
 		case <-ticker.C:
 			ms.resendOutbox()
 		}
@@ -159,24 +174,52 @@ func (ms *MessageSender) send(msg OutgoingMessage) {
 		ms.sendHTTPWithRetry(msg)
 		return
 	}
-	// Older replies that failed earlier go first, so a job's replies keep their order.
-	ms.resendOutbox()
+	// Older replies of the same job go first, so a job's replies keep their order.
+	ms.resendOlderForJob(msg.outboxID)
 	ms.deliverFromOutbox(msg)
 }
 
 // deliverFromOutbox submits an outbox reply over HTTP only: a WS emit is not acknowledged
 // by the backend, so it cannot prove delivery. A failed reply stays for the next resend.
 func (ms *MessageSender) deliverFromOutbox(msg OutgoingMessage) {
-	err := ms.submitHTTPWithRetry(msg)
+	ms.settleAttempt(msg, ms.submitHTTPWithRetry(msg))
+}
+
+// deliverOnce makes a single attempt, so a pass over many failing replies stays short.
+func (ms *MessageSender) deliverOnce(msg OutgoingMessage) {
+	ms.settleAttempt(msg, ms.submitHTTPOnce(msg))
+}
+
+func (ms *MessageSender) settleAttempt(msg OutgoingMessage, err error) {
 	var rejected *clients.StatusError
 	if errors.As(err, &rejected) && rejected.Permanent() {
 		log.Error("❌ MessageSender: Backend rejected outbox message %s, keeping it: %v", msg.outboxID, err)
 		ms.emitRejectedOnce(msg)
 	}
 	if err != nil {
-		log.Warn("⚠️ MessageSender: Outbox message %s not delivered, retrying in %s: %v", msg.outboxID, outboxRetryInterval, err)
+		log.Warn("⚠️ MessageSender: Outbox message %s not delivered, retrying in %s: %v", msg.outboxID, ms.backOff(msg.outboxID), err)
 	}
 	ms.settleOutbox(msg.outboxID, err == nil)
+}
+
+// backOff schedules the next retry of a failed reply, doubling from outboxRetryInterval up to outboxMaxBackoff.
+func (ms *MessageSender) backOff(id string) time.Duration {
+	ms.pendingMu.Lock()
+	defer ms.pendingMu.Unlock()
+	ms.failures[id]++
+	wait := outboxRetryInterval
+	for i := 1; i < ms.failures[id] && wait < outboxMaxBackoff; i++ {
+		wait *= 2
+	}
+	wait = min(wait, outboxMaxBackoff)
+	ms.retryAt[id] = time.Now().Add(wait)
+	return wait
+}
+
+func (ms *MessageSender) retryDue(id string) bool {
+	ms.pendingMu.Lock()
+	defer ms.pendingMu.Unlock()
+	return !time.Now().Before(ms.retryAt[id])
 }
 
 // emitRejectedOnce sends a reply the HTTP endpoint refused over WebSocket, as the pre-outbox
@@ -245,28 +288,67 @@ func (ms *MessageSender) settleOutbox(id string, delivered bool) {
 	delete(ms.pendingOutbox, id)
 	if delivered {
 		delete(ms.wsTried, id)
+		delete(ms.failures, id)
+		delete(ms.retryAt, id)
 	}
 	ms.pendingMu.Unlock()
 }
 
-// resendOutbox retries every persisted reply that is not already on its way.
+// resendOutbox retries every persisted reply that is due and not already on its way.
 func (ms *MessageSender) resendOutbox() {
 	if ms.outbox == nil {
 		return
 	}
 	for _, entry := range ms.outbox.GetAllOutboxMessages() {
-		if !ms.markPending(entry.ID) {
-			continue
-		}
-		var data models.BaseMessage
-		if err := json.Unmarshal(entry.Data, &data); err != nil {
-			log.Error("❌ MessageSender: Dropping unreadable outbox message %s: %v", entry.ID, err)
-			ms.settleOutbox(entry.ID, true)
-			continue
-		}
-		log.Info("📤 MessageSender: Resending outbox message %s (queued %s)", entry.ID, entry.QueuedAt.Format(time.RFC3339))
-		ms.deliverFromOutbox(OutgoingMessage{Event: entry.Event, Data: data, outboxID: entry.ID})
+		ms.resendEntry(entry)
 	}
+}
+
+// resendOlderForJob retries the due replies of the same job that were queued before this one.
+func (ms *MessageSender) resendOlderForJob(id string) {
+	if ms.outbox == nil {
+		return
+	}
+	entries := ms.outbox.GetAllOutboxMessages()
+	var current *models.OutboxMessage
+	for i := range entries {
+		if entries[i].ID == id {
+			current = &entries[i]
+		}
+	}
+	if current == nil {
+		return
+	}
+	jobID := outboxJobID(current.Data)
+	for _, entry := range entries {
+		if entry.ID != id && jobID != "" && outboxJobID(entry.Data) == jobID && entry.QueuedAt.Before(current.QueuedAt) {
+			ms.resendEntry(entry)
+		}
+	}
+}
+
+func (ms *MessageSender) resendEntry(entry models.OutboxMessage) {
+	if !ms.retryDue(entry.ID) || !ms.markPending(entry.ID) {
+		return
+	}
+	var data models.BaseMessage
+	if err := json.Unmarshal(entry.Data, &data); err != nil {
+		log.Error("❌ MessageSender: Dropping unreadable outbox message %s: %v", entry.ID, err)
+		ms.settleOutbox(entry.ID, true)
+		return
+	}
+	log.Info("📤 MessageSender: Resending outbox message %s (queued %s)", entry.ID, entry.QueuedAt.Format(time.RFC3339))
+	ms.deliverOnce(OutgoingMessage{Event: entry.Event, Data: data, outboxID: entry.ID})
+}
+
+func outboxJobID(raw json.RawMessage) string {
+	var msg struct {
+		Payload struct {
+			JobID string `json:"job_id"`
+		} `json:"payload"`
+	}
+	_ = json.Unmarshal(raw, &msg)
+	return msg.Payload.JobID
 }
 
 // isWSMessage checks if the message should be sent via WS (processing_message_v1 only)
@@ -363,6 +445,19 @@ func (ms *MessageSender) submitHTTPWithRetry(msg OutgoingMessage) error {
 	return nil
 }
 
+// submitHTTPOnce makes one HTTP attempt.
+func (ms *MessageSender) submitHTTPOnce(msg OutgoingMessage) error {
+	msgBytes, err := json.Marshal(msg.Data)
+	if err != nil {
+		return &clients.StatusError{Code: http.StatusBadRequest, Body: "marshal: " + err.Error()}
+	}
+	var baseMsg models.BaseMessage
+	if err := json.Unmarshal(msgBytes, &baseMsg); err != nil {
+		return &clients.StatusError{Code: http.StatusBadRequest, Body: "unmarshal: " + err.Error()}
+	}
+	return ms.apiClient.SubmitMessage(baseMsg)
+}
+
 // sendWSFallback attempts to deliver a message via WebSocket after HTTP delivery has failed.
 // It waits for an active WebSocket connection and retries with exponential backoff.
 func (ms *MessageSender) sendWSFallback(msg OutgoingMessage) {
@@ -419,6 +514,7 @@ func (ms *MessageSender) QueueMessageLater(event string, data any) {
 // Close closes the message queue, causing Run() to exit.
 // Should be called during graceful shutdown.
 func (ms *MessageSender) Close() {
+	close(ms.done)
 	close(ms.messageQueue)
 	close(ms.progressQueue)
 }
