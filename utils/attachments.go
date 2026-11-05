@@ -155,7 +155,11 @@ func GetAttachmentsDir(sessionID string) (string, error) {
 
 // FetchAndStoreAttachment fetches an attachment from the API and stores it as a binary file
 // Returns the absolute path to the stored file
-func FetchAndStoreAttachment(client *clients.AgentsApiClient, attachmentID string, sessionID string, index int) (string, error) {
+func FetchAndStoreAttachment(client *clients.AgentsApiClient, attachmentID string, sessionID string) (string, error) {
+	if !isFileName(attachmentID) {
+		return "", fmt.Errorf("attachment ID %q can't be used as a file name", attachmentID)
+	}
+
 	// Fetch attachment from API
 	attachmentResp, err := client.FetchAttachment(attachmentID)
 	if err != nil {
@@ -187,9 +191,8 @@ func FetchAndStoreAttachment(client *clients.AgentsApiClient, attachmentID strin
 		return "", err
 	}
 
-	// Create filename: attachment_<index>.<ext>
-	filename := fmt.Sprintf("attachment_%d%s", index, ext)
-	filePath := filepath.Join(dir, filename)
+	// Named by ID because a job's directory spans all its messages and turns.
+	filePath := filepath.Join(dir, attachmentID+ext)
 
 	// Write binary content to file
 	if err := os.WriteFile(filePath, content, 0644); err != nil {
@@ -197,6 +200,10 @@ func FetchAndStoreAttachment(client *clients.AgentsApiClient, attachmentID strin
 	}
 
 	return filePath, nil
+}
+
+func isFileName(name string) bool {
+	return name != "" && name != "." && name != ".." && !strings.ContainsAny(name, `/\`)
 }
 
 // FormatAttachmentsText formats a list of file paths into a text block

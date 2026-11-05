@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"nairid/clients"
@@ -206,7 +207,7 @@ func TestFetchAndStoreAttachment_ValidPNG(t *testing.T) {
 	client := clients.NewAgentsApiClient("test-api-key", server.URL, "test-agent-id")
 
 	sessionID := "test_session_png"
-	filePath, err := FetchAndStoreAttachment(client, "test-attachment-id", sessionID, 0)
+	filePath, err := FetchAndStoreAttachment(client, "test-attachment-id", sessionID)
 
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
@@ -250,7 +251,7 @@ func TestFetchAndStoreAttachment_APIError(t *testing.T) {
 	client := clients.NewAgentsApiClient("test-api-key", server.URL, "test-agent-id")
 
 	sessionID := "test_session_error"
-	_, err := FetchAndStoreAttachment(client, "nonexistent-id", sessionID, 0)
+	_, err := FetchAndStoreAttachment(client, "nonexistent-id", sessionID)
 
 	if err == nil {
 		t.Error("Expected error for API failure, got nil")
@@ -275,7 +276,7 @@ func TestFetchAndStoreAttachment_InvalidBase64(t *testing.T) {
 	client := clients.NewAgentsApiClient("test-api-key", server.URL, "test-agent-id")
 
 	sessionID := "test_session_invalid"
-	_, err := FetchAndStoreAttachment(client, "test-id", sessionID, 0)
+	_, err := FetchAndStoreAttachment(client, "test-id", sessionID)
 
 	if err == nil {
 		t.Error("Expected error for invalid base64, got nil")
@@ -287,6 +288,96 @@ func TestFetchAndStoreAttachment_InvalidBase64(t *testing.T) {
 
 	// Cleanup
 	_ = os.RemoveAll(filepath.Join("/tmp", "eksecd", "attachments", sessionID))
+}
+
+func TestFetchAndStoreAttachment_RetryOfSameIDIsIdempotent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"id":   "att_retry",
+			"data": base64.StdEncoding.EncodeToString([]byte("same bytes")),
+		})
+	}))
+	defer server.Close()
+	client := clients.NewAgentsApiClient("test-api-key", server.URL, "test-agent-id")
+	sessionID := "test_session_retry"
+	t.Cleanup(func() { _ = os.RemoveAll(filepath.Join("/tmp", "eksecd", "attachments", sessionID)) })
+
+	first, err := FetchAndStoreAttachment(client, "att_retry", sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := FetchAndStoreAttachment(client, "att_retry", sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if first != second {
+		t.Errorf("retry wrote %s, first attempt wrote %s", second, first)
+	}
+	content, err := os.ReadFile(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "same bytes" {
+		t.Errorf("file holds %q", content)
+	}
+	entries, err := os.ReadDir(filepath.Dir(second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("directory holds %d files, want 1", len(entries))
+	}
+}
+
+func TestFetchAndStoreAttachment_RefusesIDThatIsNotAFileName(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"id":   "odd",
+			"data": base64.StdEncoding.EncodeToString([]byte("odd bytes")),
+		})
+	}))
+	defer server.Close()
+	client := clients.NewAgentsApiClient("test-api-key", server.URL, "test-agent-id")
+	sessionID := "test_session_odd_id"
+	t.Cleanup(func() { _ = os.RemoveAll(filepath.Join("/tmp", "eksecd", "attachments", sessionID)) })
+
+	for _, id := range []string{"", ".", "..", "/", "a/b", "../x", "/x", "a/", `a\b`} {
+		if filePath, err := FetchAndStoreAttachment(client, id, sessionID); err == nil {
+			t.Errorf("ID %q was accepted and stored at %s", id, filePath)
+		}
+	}
+	if got := requests.Load(); got != 0 {
+		t.Errorf("made %d API requests for IDs that were refused", got)
+	}
+}
+
+func TestFetchAndStoreAttachment_OddButValidIDStaysInDirectory(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"id":   "att..v2",
+			"data": base64.StdEncoding.EncodeToString([]byte("odd bytes")),
+		})
+	}))
+	defer server.Close()
+	client := clients.NewAgentsApiClient("test-api-key", server.URL, "test-agent-id")
+	sessionID := "test_session_odd_valid_id"
+	dir, err := GetAttachmentsDir(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
+	filePath, err := FetchAndStoreAttachment(client, "att..v2", sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if filepath.Dir(filePath) != dir {
+		t.Errorf("stored at %s, want inside %s", filePath, dir)
+	}
 }
 
 // Test directory functions
