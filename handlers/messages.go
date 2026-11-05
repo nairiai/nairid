@@ -18,12 +18,12 @@ import (
 	"nairid/utils"
 )
 
-// JobEvictor is an interface for evicting jobs from the dispatcher.
-// This allows the message handler to signal the dispatcher to stop
-// processing a job when an unrecoverable error occurs.
+// JobEvictor is the handler's view of the dispatcher's per-job channels: it can end a job's
+// processor, empty its channel, and tell whether a message is waiting there.
 type JobEvictor interface {
 	EvictJob(jobID string)
 	DropQueuedMessages(jobID string) []models.BaseMessage
+	HasQueuedMessages(jobID string) bool
 }
 
 type MessageHandler struct {
@@ -392,11 +392,6 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 			log.Info("💾 Marked job %s as failed due to Claude session error", payload.JobID)
 		}
 		mh.saveTimedOutWork(failedJob, err)
-
-		// Evict the job from dispatcher to immediately free up the worker slot
-		if mh.jobEvictor != nil {
-			mh.jobEvictor.EvictJob(payload.JobID)
-		}
 
 		return fmt.Errorf("error starting %s session: %w", mh.claudeService.AgentName(), err)
 	}
@@ -786,11 +781,6 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 		}
 		mh.saveTimedOutWork(failedJob, err)
 
-		// Evict the job from dispatcher to immediately free up the worker slot
-		if mh.jobEvictor != nil {
-			mh.jobEvictor.EvictJob(payload.JobID)
-		}
-
 		return fmt.Errorf("error continuing %s session: %w", mh.claudeService.AgentName(), err)
 	}
 
@@ -1025,6 +1015,11 @@ func (mh *MessageHandler) checkJobIdleness(jobID string, jobData models.JobData)
 	}
 
 	if shouldComplete {
+		if mh.jobHasPendingWork(jobID) {
+			log.Warn("⏳ Job %s is ready to complete (%s) but a turn is running or a message is waiting, retrying at the next check", jobID, reason)
+			return nil
+		}
+
 		if err := mh.sendJobCompleteMessage(jobID, reason); err != nil {
 			log.Error("❌ Failed to send job complete message for job %s: %v", jobID, err)
 			return fmt.Errorf("failed to send job complete message: %w", err)
@@ -1051,6 +1046,14 @@ func (mh *MessageHandler) checkJobIdleness(jobID string, jobData models.JobData)
 
 	log.Info("📋 Completed successfully - checked idleness for job %s", jobID)
 	return nil
+}
+
+// Channel first: a message leaving it for a turn between the two reads is then seen as running.
+func (mh *MessageHandler) jobHasPendingWork(jobID string) bool {
+	if mh.jobEvictor != nil && mh.jobEvictor.HasQueuedMessages(jobID) {
+		return true
+	}
+	return mh.turns.IsRunning(jobID)
 }
 
 // resolvePRMerger returns the display name of the user who merged the job's PR,

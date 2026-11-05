@@ -39,6 +39,13 @@ func (r *turnRegistry) Stop(jobID string) (running bool) {
 	return exists
 }
 
+func (r *turnRegistry) IsRunning(jobID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, running := r.turns[jobID]
+	return running
+}
+
 func (r *turnRegistry) End(jobID string, turn *runningTurn) (stopped bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

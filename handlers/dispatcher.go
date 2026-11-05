@@ -186,10 +186,9 @@ func (d *JobDispatcher) ForgetMessage(processedMsgID string) {
 	delete(d.inFlight, processedMsgID)
 }
 
-// EvictJob forcefully removes a job from the dispatcher, closing its channel
-// and causing the processor goroutine to exit. This should be called when a
-// job encounters an unrecoverable error (e.g., API error) to immediately free
-// up the worker slot instead of waiting for the next message.
+// EvictJob removes a job from the dispatcher, closing its channel so an idle processor exits and
+// frees its worker slot. Call it from outside the job's processor: a processor evicting its own job
+// keeps draining the closed channel while the next message starts a second processor.
 func (d *JobDispatcher) EvictJob(jobID string) {
 	log.Info("🚫 Evicting job %s from dispatcher", jobID)
 	d.mutex.Lock()
@@ -197,6 +196,15 @@ func (d *JobDispatcher) EvictJob(jobID string) {
 	if ch, exists := d.activeJobs[jobID]; exists {
 		d.closeLocked(jobID, ch)
 	}
+}
+
+// HasQueuedMessages reports whether a message is waiting in the job's channel. A processor blocked
+// on an empty channel does not count: that job has nothing left to do.
+func (d *JobDispatcher) HasQueuedMessages(jobID string) bool {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	ch, exists := d.activeJobs[jobID]
+	return exists && len(ch) > 0
 }
 
 // DropQueuedMessages empties the job's channel and returns what was waiting in it.

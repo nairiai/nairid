@@ -45,6 +45,26 @@ func TestTurnRegistry_EndingAnOlderTurnLeavesTheNewerOne(t *testing.T) {
 	}
 }
 
+func TestTurnRegistry_IsRunningFollowsBeginAndEnd(t *testing.T) {
+	registry := newTurnRegistry()
+	if registry.IsRunning("j1") {
+		t.Fatal("no turn has begun")
+	}
+	older := registry.Begin("j1")
+	if !registry.IsRunning("j1") || registry.IsRunning("j2") {
+		t.Fatal("only j1 has a running turn")
+	}
+	newer := registry.Begin("j1")
+	registry.End("j1", older)
+	if !registry.IsRunning("j1") {
+		t.Fatal("ending an older turn must leave the newer one running")
+	}
+	registry.End("j1", newer)
+	if registry.IsRunning("j1") {
+		t.Fatal("an ended turn is not running")
+	}
+}
+
 func TestTurnRegistry_SameStopRequestIsClaimedOnce(t *testing.T) {
 	registry := newTurnRegistry()
 	if !registry.claimStopRequest("j1", "2026-10-21T20:00:00Z") {
