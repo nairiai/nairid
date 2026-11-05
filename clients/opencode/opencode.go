@@ -28,8 +28,7 @@ func (c *OpenCodeClient) StartNewSession(ctx context.Context, prompt string, opt
 
 	args := buildRunArgs("", modelFromOptions(options), effortFromOptions(options), prompt, opencodeSupportsStandalone())
 
-	log.Info("Starting new OpenCode session with prompt: %s", prompt)
-	log.Info("Command arguments: %v", args)
+	log.Info("OpenCode command: %s", clients.ArgsForLog(args, prompt))
 
 	timeout := options.RunTimeout()
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -53,8 +52,7 @@ func (c *OpenCodeClient) ContinueSession(ctx context.Context, sessionID, prompt 
 
 	args := buildRunArgs(sessionID, modelFromOptions(options), effortFromOptions(options), prompt, opencodeSupportsStandalone())
 
-	log.Info("Executing OpenCode command with sessionID: %s, prompt: %s", sessionID, prompt)
-	log.Info("Command arguments: %v", args)
+	log.Info("OpenCode command: %s", clients.ArgsForLog(args, prompt))
 
 	timeout := options.RunTimeout()
 	ctx, cancel := context.WithTimeout(ctx, timeout)

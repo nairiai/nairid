@@ -30,6 +30,7 @@ import (
 	"nairid/core"
 	"nairid/core/env"
 	"nairid/core/log"
+	"nairid/core/retention"
 	"nairid/handlers"
 	"nairid/models"
 	"nairid/services"
@@ -47,6 +48,8 @@ type CmdRunner struct {
 	connectionState *handlers.ConnectionState
 	gitUseCase      *usecases.GitUseCase
 	appState        *models.AppState
+	cliAgent        services.CLIAgent
+	codexHome       string
 	rotatingWriter  *log.RotatingWriter
 	envManager      *env.EnvManager
 	agentID         string
@@ -816,13 +819,6 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 		return nil, fmt.Errorf("failed to create CLI agent: %w", err)
 	}
 
-	// Cleanup old session logs (older than 7 days)
-	err = cliAgent.CleanupOldLogs(7)
-	if err != nil {
-		log.Error("Warning: Failed to cleanup old session logs: %v", err)
-		// Don't exit - this is not critical for agent operation
-	}
-
 	gitClient := clients.NewGitClient()
 
 	// Handle repository path and create repository context.
@@ -892,6 +888,8 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 		connectionState:   connectionState,
 		gitUseCase:        gitUseCase,
 		appState:          appState,
+		cliAgent:          cliAgent,
+		codexHome:         codexHome(agentType, targetHomeDir),
 		envManager:        envManager,
 		agentID:           agentID,
 		agentsApiClient:   agentsApiClient,
@@ -1230,6 +1228,10 @@ func main() {
 		defer cleanupCancel()
 		cmdRunner.startCleanupRoutine(cleanupCtx)
 	}
+
+	retentionCtx, retentionCancel := context.WithCancel(context.Background())
+	defer retentionCancel()
+	cmdRunner.startRetentionRoutine(retentionCtx)
 
 	// Set up deferred cleanup
 	defer func() {
@@ -1593,12 +1595,13 @@ func (cr *CmdRunner) setupProgramLogging() (string, error) {
 		logsDir = filepath.Join(configDir, "logs")
 	}
 
-	// Set up rotating writer with 10MB file size limit
 	rotatingWriter, err := log.NewRotatingWriter(log.RotatingWriterConfig{
 		LogDir:      logsDir,
-		MaxFileSize: 1024, // 10MB
+		MaxFileSize: 10 * 1024 * 1024,
 		FilePrefix:  "eksecd",
 		Stdout:      os.Stdout,
+		MaxAge:      time.Duration(retention.Days()) * 24 * time.Hour,
+		MaxFiles:    20,
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to create rotating writer: %w", err)
@@ -1648,6 +1651,84 @@ func (cr *CmdRunner) startPingRoutine(ctx context.Context, socketClient *socket.
 			}
 		}
 	}()
+}
+
+func codexHome(agentType, targetHomeDir string) string {
+	if agentType != "codex" {
+		return ""
+	}
+	home := targetHomeDir
+	if home == "" {
+		home, _ = os.UserHomeDir()
+	}
+	if home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".codex")
+}
+
+func (cr *CmdRunner) startRetentionRoutine(ctx context.Context) {
+	log.Info("🧹 Starting retention routine (every 24 hours, keeping %d days)", retention.Days())
+	go func() {
+		cr.pruneOldData()
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				log.Info("🧹 Retention routine stopped")
+				return
+			case <-ticker.C:
+				cr.pruneOldData()
+			}
+		}
+	}()
+}
+
+func (cr *CmdRunner) pruneOldData() {
+	days := retention.Days()
+	cutoff := time.Now().AddDate(0, 0, -days)
+	log.Info("🧹 Pruning data older than %d days", days)
+	if err := cr.cliAgent.CleanupOldLogs(days); err != nil {
+		log.Warn("⚠️ Failed to prune the session logs: %v", err)
+	}
+	if removed, err := cr.rotatingWriter.Prune(); err != nil {
+		log.Warn("⚠️ Failed to prune the program logs (%d removed): %v", removed, err)
+	}
+	configDir, err := env.GetConfigDir()
+	if err != nil {
+		log.Warn("⚠️ Failed to find the config directory: %v", err)
+		return
+	}
+	currentLog := filepath.Base(cr.rotatingWriter.GetCurrentLogPath())
+	legacyLogsDir := filepath.Join(configDir, "logs")
+	if removed, err := retention.PruneFiles(legacyLogsDir, []string{"eksecd-"}, []string{".log"}, cutoff, func(name string) bool {
+		return name == currentLog
+	}); err != nil {
+		log.Warn("⚠️ Failed to prune the legacy program logs (%d removed): %v", removed, err)
+	}
+	if removed, err := retention.PruneDirs(utils.InboundAttachmentsDir, cutoff, os.RemoveAll); err != nil {
+		log.Warn("⚠️ Failed to prune the inbound attachments (%d removed): %v", removed, err)
+	}
+	if removed, err := retention.PruneDirs(filepath.Join(configDir, "attachments"), cutoff, os.RemoveAll); err != nil {
+		log.Warn("⚠️ Failed to prune the outbound attachments (%d removed): %v", removed, err)
+	}
+	if cr.codexHome != "" {
+		if removed, err := utils.PruneCodexRollouts(cr.codexHome, cutoff, cr.liveSessionIDs()); err != nil {
+			log.Warn("⚠️ Failed to prune the Codex transcripts (%d removed): %v", removed, err)
+		}
+	}
+	log.Info("🧹 Pruned data older than %d days", days)
+}
+
+func (cr *CmdRunner) liveSessionIDs() []string {
+	var ids []string
+	for _, job := range cr.appState.GetAllJobs() {
+		if job.ClaudeSessionID != "" {
+			ids = append(ids, job.ClaudeSessionID)
+		}
+	}
+	return ids
 }
 
 func (cr *CmdRunner) startCleanupRoutine(ctx context.Context) {

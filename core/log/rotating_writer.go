@@ -1,10 +1,13 @@
 package log
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"sync"
 	"time"
 )
@@ -14,6 +17,8 @@ type RotatingWriter struct {
 	logDir      string
 	maxFileSize int64
 	filePrefix  string
+	maxAge      time.Duration
+	maxFiles    int
 
 	mu          sync.Mutex
 	currentFile *os.File
@@ -28,6 +33,10 @@ type RotatingWriterConfig struct {
 	MaxFileSize int64     // Maximum size per file in bytes (default: 10MB)
 	FilePrefix  string    // Prefix for log file names (default: "app")
 	Stdout      io.Writer // Writer for stdout output (default: os.Stdout)
+	// Prune removes rotated files older than MaxAge and, beyond the newest MaxFiles, the oldest
+	// ones. Zero means no limit.
+	MaxAge   time.Duration
+	MaxFiles int
 }
 
 // NewRotatingWriter creates a new rotating writer with the specified configuration
@@ -52,6 +61,8 @@ func NewRotatingWriter(config RotatingWriterConfig) (*RotatingWriter, error) {
 		logDir:      config.LogDir,
 		maxFileSize: config.MaxFileSize,
 		filePrefix:  config.FilePrefix,
+		maxAge:      config.MaxAge,
+		maxFiles:    config.MaxFiles,
 		stdout:      config.Stdout,
 	}
 
@@ -117,6 +128,51 @@ func (rw *RotatingWriter) rotateFile() error {
 	rw.currentSize = 0
 
 	return nil
+}
+
+// Prune removes the rotated files past MaxAge or MaxFiles, never the current one. The directory
+// is read outside the lock, so logging continues while it runs.
+func (rw *RotatingWriter) Prune() (int, error) {
+	current := filepath.Base(rw.GetCurrentLogPath())
+	entries, err := os.ReadDir(rw.logDir)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read log directory: %w", err)
+	}
+	rotatedName := regexp.MustCompile(`^` + regexp.QuoteMeta(rw.filePrefix) + `-\d{8}-\d{6}\.log$`)
+	var rotated []string
+	for _, entry := range entries {
+		if !entry.IsDir() && entry.Name() != current && rotatedName.MatchString(entry.Name()) {
+			rotated = append(rotated, entry.Name())
+		}
+	}
+	sort.Strings(rotated)
+
+	removed := 0
+	var errs []error
+	for i, name := range rotated {
+		path := filepath.Join(rw.logDir, name)
+		overCount := rw.maxFiles > 0 && len(rotated)-i >= rw.maxFiles
+		if !overCount && !rw.olderThanMaxAge(path) {
+			continue
+		}
+		if err := os.Remove(path); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		removed++
+	}
+	return removed, errors.Join(errs...)
+}
+
+func (rw *RotatingWriter) olderThanMaxAge(path string) bool {
+	if rw.maxAge <= 0 {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return info.ModTime().Before(time.Now().Add(-rw.maxAge))
 }
 
 // Close closes the current log file

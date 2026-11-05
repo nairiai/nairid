@@ -31,8 +31,7 @@ func (c *CodexClient) StartNewSession(ctx context.Context, prompt string, option
 	args := c.buildBaseArgs(options)
 	args = append(args, prompt)
 
-	log.Info("Starting new Codex session with prompt: %s", prompt)
-	log.Info("Command arguments: %v", args)
+	log.Info("Codex command: %s", clients.ArgsForLog(args, prompt))
 
 	timeout := options.RunTimeout()
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -63,8 +62,7 @@ func (c *CodexClient) ContinueSession(ctx context.Context, threadID, prompt stri
 	// RESUME SUBCOMMAND with session ID and prompt
 	args = append(args, "resume", threadID, prompt)
 
-	log.Info("Executing Codex command with threadID: %s, prompt: %s", threadID, prompt)
-	log.Info("Command arguments: %v", args)
+	log.Info("Codex command: %s", clients.ArgsForLog(args, prompt))
 
 	timeout := options.RunTimeout()
 	ctx, cancel := context.WithTimeout(ctx, timeout)
