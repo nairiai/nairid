@@ -73,8 +73,8 @@ func (mh *MessageHandler) processAttachmentsForPrompt(
 	}
 
 	var paths []string
-	for i, attachmentID := range attachmentIDs {
-		filePath, err := utils.FetchAndStoreAttachment(mh.agentsApiClient, attachmentID, sessionID, i)
+	for _, attachmentID := range attachmentIDs {
+		filePath, err := utils.FetchAndStoreAttachment(mh.agentsApiClient, attachmentID, sessionID)
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to fetch and store attachment %s: %w", attachmentID, err)
 		}
@@ -124,7 +124,6 @@ func (mh *MessageHandler) formatThreadContext(
 	builder.WriteString("Previous messages in thread:\n")
 	builder.WriteString("---\n")
 
-	attachmentIndex := 0
 	for i, prevMsg := range previousMessages {
 		fmt.Fprintf(&builder, "Message %d:\n", i+1)
 		builder.WriteString(prevMsg.Message)
@@ -147,7 +146,6 @@ func (mh *MessageHandler) formatThreadContext(
 			}
 
 			allAttachmentPaths = append(allAttachmentPaths, prevPaths...)
-			attachmentIndex += len(prevPaths)
 		}
 
 		builder.WriteString("\n")
