@@ -1,3 +1,14 @@
+## [v0.0.135] - 2026-11-05
+
+### Bugfixes
+
+- Env values with special characters reach the agent CLI unchanged ([#258](https://github.com/nairiai/nairid/pull/258))
+  - In managed mode, a value with a space, `&`, `;`, `$` or a quote could stop the CLI from starting or reach it altered
+  - Env entries are now quoted the same way as args, so every value passes through byte for byte
+- Attachments in a thread no longer overwrite each other ([#259](https://github.com/nairiai/nairid/pull/259))
+  - Files were named by their position in the message, so two same-type attachments on different messages shared one path
+  - Each file is now named by its attachment ID; IDs that can't be a file name are refused before the fetch
+
 ## [v0.0.134] - 2026-11-05
 
 ### Bugfixes
