@@ -484,7 +484,7 @@ func TestFailedTurn_LeavesANewerTurnOfTheJobRunning(t *testing.T) {
 	f := newStopFixture(t)
 	f.mustHandle(t, startMessage("0"))
 
-	// The old turn was evicted on a CLI error, and a reply started a new turn before it unwound.
+	// The job's record already belongs to a newer turn when the old one fails.
 	f.handler.runTurn("j1", "cmsg_1", func(ctx context.Context) error {
 		job, _ := f.handler.appState.GetJobData("j1")
 		newer := *job

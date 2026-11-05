@@ -18,12 +18,13 @@ import (
 	"nairid/utils"
 )
 
-// JobEvictor is an interface for evicting jobs from the dispatcher.
-// This allows the message handler to signal the dispatcher to stop
-// processing a job when an unrecoverable error occurs.
+// JobEvictor is the handler's view of the dispatcher's per-job channels: it can end a job's
+// processor, empty its channel, and claim it for completion once nothing accepted for it is unfinished.
 type JobEvictor interface {
 	EvictJob(jobID string)
 	DropQueuedMessages(jobID string) []models.BaseMessage
+	ClaimCompletion(jobID string) bool
+	ReleaseCompletion(jobID string)
 }
 
 type MessageHandler struct {
@@ -392,11 +393,6 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 			log.Info("💾 Marked job %s as failed due to Claude session error", payload.JobID)
 		}
 		mh.saveTimedOutWork(failedJob, err)
-
-		// Evict the job from dispatcher to immediately free up the worker slot
-		if mh.jobEvictor != nil {
-			mh.jobEvictor.EvictJob(payload.JobID)
-		}
 
 		return fmt.Errorf("error starting %s session: %w", mh.claudeService.AgentName(), err)
 	}
@@ -786,11 +782,6 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 		}
 		mh.saveTimedOutWork(failedJob, err)
 
-		// Evict the job from dispatcher to immediately free up the worker slot
-		if mh.jobEvictor != nil {
-			mh.jobEvictor.EvictJob(payload.JobID)
-		}
-
 		return fmt.Errorf("error continuing %s session: %w", mh.claudeService.AgentName(), err)
 	}
 
@@ -1025,6 +1016,21 @@ func (mh *MessageHandler) checkJobIdleness(jobID string, jobData models.JobData)
 	}
 
 	if shouldComplete {
+		release, claimed := mh.claimCompletion(jobID)
+		if !claimed {
+			log.Warn("⏳ Job %s is ready to complete (%s) but a turn is running or a message is waiting, retrying at the next check", jobID, reason)
+			return nil
+		}
+		defer release()
+
+		// jobData can be minutes old: a turn may have finished since, or an overlapping check
+		// completed the job.
+		current, exists := mh.appState.GetJobData(jobID)
+		if !exists || !current.UpdatedAt.Equal(jobData.UpdatedAt) {
+			log.Info("⏳ Job %s changed during its idle check, retrying at the next check", jobID)
+			return nil
+		}
+
 		if err := mh.sendJobCompleteMessage(jobID, reason); err != nil {
 			log.Error("❌ Failed to send job complete message for job %s: %v", jobID, err)
 			return fmt.Errorf("failed to send job complete message: %w", err)
@@ -1051,6 +1057,19 @@ func (mh *MessageHandler) checkJobIdleness(jobID string, jobData models.JobData)
 
 	log.Info("📋 Completed successfully - checked idleness for job %s", jobID)
 	return nil
+}
+
+func (mh *MessageHandler) claimCompletion(jobID string) (release func(), claimed bool) {
+	if mh.turns.IsRunning(jobID) {
+		return nil, false
+	}
+	if mh.jobEvictor == nil {
+		return func() {}, true
+	}
+	if !mh.jobEvictor.ClaimCompletion(jobID) {
+		return nil, false
+	}
+	return func() { mh.jobEvictor.ReleaseCompletion(jobID) }, true
 }
 
 // resolvePRMerger returns the display name of the user who merged the job's PR,

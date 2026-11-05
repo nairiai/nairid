@@ -64,14 +64,7 @@ func newTestableDispatcher(poolSize int, appState *models.AppState) *testableDis
 	wp := workerpool.New(poolSize)
 
 	// Create dispatcher with nil handler (we'll intercept calls)
-	dispatcher := &JobDispatcher{
-		activeJobs:  make(map[string]chan models.BaseMessage),
-		inFlight:    make(map[string]time.Time),
-		lastCleanup: time.Now(),
-		handler:     nil, // Will be set via wrapper
-		workerPool:  wp,
-		appState:    appState,
-	}
+	dispatcher := NewJobDispatcher(nil, wp, appState) // handler is set via wrapper
 
 	return &testableDispatcher{
 		JobDispatcher: dispatcher,
