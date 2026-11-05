@@ -246,10 +246,8 @@ func (d *JobDispatcher) EvictJob(jobID string) {
 	}
 }
 
-// ClaimCompletion fails while a message accepted for the job is unfinished, wherever it is: queued,
-// just taken from the channel or running. A processor blocked on an empty channel does not count:
-// that job has nothing left to do. Until ReleaseCompletion, Dispatch turns the job's messages away,
-// so none can start between this check and the job's removal.
+// ClaimCompletion reserves a job only when no accepted message remains unfinished.
+// Until ReleaseCompletion, Dispatch leaves new messages for the next poll.
 func (d *JobDispatcher) ClaimCompletion(jobID string) bool {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
