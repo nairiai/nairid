@@ -2,11 +2,13 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +20,17 @@ import (
 )
 
 const inactiveForTooLong = 26 * time.Hour
+
+// The two rules that complete a job.
+var completionRules = []struct {
+	name       string
+	fixture    func(t *testing.T) *idleFixture
+	age        time.Duration
+	wantReason string
+}{
+	{"merged PR", func(t *testing.T) *idleFixture { return newRepoIdleFixture(t, 1) }, 0, "merged"},
+	{"inactive for 25 hours", func(t *testing.T) *idleFixture { return newIdleFixture(t, 1, nil) }, inactiveForTooLong, "inactive"},
+}
 
 // scriptedAgent reports each turn as it begins, then waits for the test to end it.
 type scriptedAgent struct {
@@ -81,6 +94,8 @@ type idleFixture struct {
 	dispatcher *JobDispatcher
 	// Replies pull in worktree mode, so the job's branch must exist on the remote.
 	publishBranch func(job *models.JobData)
+	// A reply on a job whose pushed branch is gone from the remote abandons the job.
+	deleteRemoteBranch func(job *models.JobData)
 }
 
 func newIdleFixture(t *testing.T, workers int, gitClient *clients.GitClient) *idleFixture {
@@ -138,6 +153,10 @@ esac
 	f.publishBranch = func(job *models.JobData) {
 		git(job.WorktreePath, "push", "-q", "-u", "origin", job.BranchName)
 	}
+	// On the remote itself, as a merge does: the worktree keeps its upstream tracking.
+	f.deleteRemoteBranch = func(job *models.JobData) {
+		git(remote, "branch", "-q", "-D", job.BranchName)
+	}
 	return f
 }
 
@@ -163,6 +182,19 @@ func (f *idleFixture) finishFirstTurn(t *testing.T) {
 	eventually(t, "the first turn to finish", func() bool {
 		return answered(f.box, "cmsg_0") && !f.handler.turns.IsRunning("j1") && !f.hasChannel("j1")
 	})
+}
+
+// finishJobAged is finishFirstTurn on a job that one completion rule would now complete.
+func (f *idleFixture) finishJobAged(t *testing.T, age time.Duration) {
+	t.Helper()
+	f.finishFirstTurn(t)
+	job, _ := f.handler.appState.GetJobData("j1")
+	f.publishBranch(job)
+	aged := *job
+	aged.UpdatedAt = time.Now().Add(-age)
+	if err := f.handler.appState.UpdateJobData("j1", aged); err != nil {
+		t.Fatalf("age job: %v", err)
+	}
 }
 
 func (f *idleFixture) expectNotCompleted(t *testing.T) {
@@ -206,6 +238,16 @@ func queuedFor(f *idleFixture, jobID string) int {
 		}
 	}
 	return count
+}
+
+func replyIDs(box *outbox) []string {
+	var ids []string
+	for _, msg := range box.ofType(models.MessageTypeAssistantMessage) {
+		if payload, ok := msg.Payload.(models.AssistantMessagePayload); ok {
+			ids = append(ids, payload.ProcessedMessageID)
+		}
+	}
+	return ids
 }
 
 func TestIdleCheck_WaitsForARunningTurnOnAMergedPR(t *testing.T) {
@@ -257,25 +299,10 @@ func TestIdleCheck_WaitsForARunningTurnOnAMergedPR(t *testing.T) {
 }
 
 func TestIdleCheck_WaitsForAFollowUpInTheChannel(t *testing.T) {
-	tests := []struct {
-		name    string
-		fixture func(t *testing.T) *idleFixture
-		age     time.Duration
-	}{
-		{"merged PR", func(t *testing.T) *idleFixture { return newRepoIdleFixture(t, 1) }, 0},
-		{"inactive for 25 hours", func(t *testing.T) *idleFixture { return newIdleFixture(t, 1, nil) }, inactiveForTooLong},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			f := tt.fixture(t)
-			f.finishFirstTurn(t)
-			job, _ := f.handler.appState.GetJobData("j1")
-			f.publishBranch(job)
-			aged := *job
-			aged.UpdatedAt = time.Now().Add(-tt.age)
-			if err := f.handler.appState.UpdateJobData("j1", aged); err != nil {
-				t.Fatalf("age job: %v", err)
-			}
+	for _, rule := range completionRules {
+		t.Run(rule.name, func(t *testing.T) {
+			f := rule.fixture(t)
+			f.finishJobAged(t, rule.age)
 
 			// With the only worker taken, the follow-up stays in the channel and no turn runs.
 			worker := make(chan struct{}, 1)
@@ -296,19 +323,147 @@ func TestIdleCheck_WaitsForAFollowUpInTheChannel(t *testing.T) {
 	}
 }
 
+// pausingPayload stops a processor that has taken its message from the channel and has not registered
+// the turn yet: HandleMessage marshals the payload in between.
+type pausingPayload struct {
+	models.UserMessagePayload
+	armed    atomic.Bool
+	pause    sync.Once
+	dequeued chan struct{}
+	resume   chan struct{}
+}
+
+func (p *pausingPayload) MarshalJSON() ([]byte, error) {
+	if p.armed.Load() {
+		p.pause.Do(func() {
+			close(p.dequeued)
+			<-p.resume
+		})
+	}
+	return json.Marshal(p.UserMessagePayload)
+}
+
+func TestIdleCheck_WaitsForAMessageBetweenItsChannelAndItsTurn(t *testing.T) {
+	for _, rule := range completionRules {
+		t.Run(rule.name, func(t *testing.T) {
+			f := rule.fixture(t)
+			f.finishJobAged(t, rule.age)
+
+			payload := &pausingPayload{
+				UserMessagePayload: models.UserMessagePayload{JobID: "j1", Message: "and again", ProcessedMessageID: "cmsg_1"},
+				dequeued:           make(chan struct{}),
+				resume:             make(chan struct{}),
+			}
+			resume := sync.OnceFunc(func() { close(payload.resume) })
+			t.Cleanup(resume)
+
+			// Dispatch marshals the payload too, so the processor is held back until it is armed.
+			worker := make(chan struct{})
+			f.pool.Submit(func() { <-worker })
+			f.dispatcher.Dispatch(models.BaseMessage{ID: "msg_1", Type: models.MessageTypeUserMessage, Payload: payload})
+			payload.armed.Store(true)
+			close(worker)
+			select {
+			case <-payload.dequeued:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the processor did not take the message")
+			}
+			if f.handler.turns.IsRunning("j1") {
+				t.Fatal("the barrier must hold the message before its turn is registered")
+			}
+
+			f.runIdleCheck()
+
+			f.expectNotCompleted(t)
+
+			resume()
+			f.agent.awaitTurn(t)
+			f.agent.release <- nil
+			eventually(t, "the message's reply", func() bool { return answered(f.box, "cmsg_1") })
+			f.expectNotCompleted(t)
+		})
+	}
+}
+
+func TestDispatch_LeavesAMessageForTheNextPollWhileItsJobIsBeingCompleted(t *testing.T) {
+	f := newIdleFixture(t, 1, nil)
+	if !f.dispatcher.ClaimCompletion("j1") {
+		t.Fatal("a job with no messages must be claimable")
+	}
+	if f.dispatcher.ClaimCompletion("j1") {
+		t.Fatal("a second idle check must not complete the job as well")
+	}
+
+	f.dispatcher.Dispatch(startMessage("0"))
+
+	if f.hasChannel("j1") || f.dispatcher.IsMessageInFlight("cmsg_0") {
+		t.Fatal("the message must be left for the next poll")
+	}
+
+	f.dispatcher.ReleaseCompletion("j1")
+	f.dispatcher.Dispatch(startMessage("0"))
+	f.agent.awaitTurn(t)
+	if f.dispatcher.ClaimCompletion("j1") {
+		t.Fatal("a running message must refuse the claim")
+	}
+	f.agent.release <- nil
+	eventually(t, "the claim once the message finished", func() bool { return f.dispatcher.ClaimCompletion("j1") })
+}
+
+// A reply on a job whose branch is gone removes the job, and its processor leaves. A message left
+// holding its claim would keep any later job with this id from completing.
+func TestProcessorLeavingAnAbandonedJob_ReleasesWhatItLeftBehind(t *testing.T) {
+	f := newRepoIdleFixture(t, 1)
+	f.finishFirstTurn(t)
+	job, _ := f.handler.appState.GetJobData("j1")
+	f.publishBranch(job)
+	f.deleteRemoteBranch(job)
+
+	worker := make(chan struct{})
+	f.pool.Submit(func() { <-worker })
+	f.dispatcher.Dispatch(replyMessage("1"))
+	f.dispatcher.Dispatch(replyMessage("2"))
+	close(worker)
+
+	eventually(t, "the left-behind message to return to the poller", func() bool {
+		return !f.hasChannel("j1") && !f.dispatcher.IsMessageInFlight("cmsg_2")
+	})
+	if _, exists := f.handler.appState.GetJobData("j1"); exists {
+		t.Fatal("the reply must have abandoned the job")
+	}
+	if !f.dispatcher.ClaimCompletion("j1") {
+		t.Error("the left-behind message must not hold up a completion")
+	}
+}
+
+// The PR lookups can take minutes, and idle checks can overlap.
+func TestIdleCheck_RechecksTheJobOnceItHoldsTheClaim(t *testing.T) {
+	f := newIdleFixture(t, 1, nil)
+	f.finishFirstTurn(t)
+	job, _ := f.handler.appState.GetJobData("j1")
+	snapshot := *job
+	snapshot.UpdatedAt = time.Now().Add(-inactiveForTooLong)
+
+	if err := f.handler.checkJobIdleness("j1", snapshot); err != nil {
+		t.Fatalf("check on a job that moved on: %v", err)
+	}
+	f.expectNotCompleted(t)
+
+	if err := f.handler.appState.RemoveJob("j1"); err != nil {
+		t.Fatalf("remove job: %v", err)
+	}
+	if err := f.handler.checkJobIdleness("j1", snapshot); err != nil {
+		t.Fatalf("check on a job already completed: %v", err)
+	}
+	if completes := f.box.ofType(models.MessageTypeJobComplete); len(completes) != 0 {
+		t.Errorf("job_complete sent for a job that is gone: %d", len(completes))
+	}
+}
+
 // A processor blocked on an empty channel and an in_progress status do not mean work is pending:
 // treating them as such would keep a stuck job forever.
 func TestIdleCheck_CompletesAStuckJobWithNothingPending(t *testing.T) {
-	rules := []struct {
-		name       string
-		fixture    func(t *testing.T) *idleFixture
-		age        time.Duration
-		wantReason string
-	}{
-		{"merged PR", func(t *testing.T) *idleFixture { return newRepoIdleFixture(t, 1) }, 0, "merged"},
-		{"inactive for 25 hours", func(t *testing.T) *idleFixture { return newIdleFixture(t, 1, nil) }, inactiveForTooLong, "inactive"},
-	}
-	for _, rule := range rules {
+	for _, rule := range completionRules {
 		seed := func(t *testing.T) *idleFixture {
 			t.Helper()
 			f := rule.fixture(t)
@@ -399,13 +554,7 @@ func TestFailedTurn_KeepsOneProcessorForTheMessagesBehindIt(t *testing.T) {
 			if maxRunning != 1 {
 				t.Errorf("%d turns ran at once, want 1", maxRunning)
 			}
-			var order []string
-			for _, msg := range f.box.ofType(models.MessageTypeAssistantMessage) {
-				if payload, ok := msg.Payload.(models.AssistantMessagePayload); ok {
-					order = append(order, payload.ProcessedMessageID)
-				}
-			}
-			if strings.Join(order, ",") != strings.Join(tt.wantOrder, ",") {
+			if order := replyIDs(f.box); strings.Join(order, ",") != strings.Join(tt.wantOrder, ",") {
 				t.Errorf("replies = %v, want %v", order, tt.wantOrder)
 			}
 		})

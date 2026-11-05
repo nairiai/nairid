@@ -19,11 +19,12 @@ import (
 )
 
 // JobEvictor is the handler's view of the dispatcher's per-job channels: it can end a job's
-// processor, empty its channel, and tell whether a message is waiting there.
+// processor, empty its channel, and claim it for completion once nothing accepted for it is unfinished.
 type JobEvictor interface {
 	EvictJob(jobID string)
 	DropQueuedMessages(jobID string) []models.BaseMessage
-	HasQueuedMessages(jobID string) bool
+	ClaimCompletion(jobID string) bool
+	ReleaseCompletion(jobID string)
 }
 
 type MessageHandler struct {
@@ -1015,8 +1016,18 @@ func (mh *MessageHandler) checkJobIdleness(jobID string, jobData models.JobData)
 	}
 
 	if shouldComplete {
-		if mh.jobHasPendingWork(jobID) {
+		release, claimed := mh.claimCompletion(jobID)
+		if !claimed {
 			log.Warn("⏳ Job %s is ready to complete (%s) but a turn is running or a message is waiting, retrying at the next check", jobID, reason)
+			return nil
+		}
+		defer release()
+
+		// jobData can be minutes old: a turn may have finished since, or an overlapping check
+		// completed the job.
+		current, exists := mh.appState.GetJobData(jobID)
+		if !exists || !current.UpdatedAt.Equal(jobData.UpdatedAt) {
+			log.Info("⏳ Job %s changed during its idle check, retrying at the next check", jobID)
 			return nil
 		}
 
@@ -1048,12 +1059,17 @@ func (mh *MessageHandler) checkJobIdleness(jobID string, jobData models.JobData)
 	return nil
 }
 
-// Channel first: a message leaving it for a turn between the two reads is then seen as running.
-func (mh *MessageHandler) jobHasPendingWork(jobID string) bool {
-	if mh.jobEvictor != nil && mh.jobEvictor.HasQueuedMessages(jobID) {
-		return true
+func (mh *MessageHandler) claimCompletion(jobID string) (release func(), claimed bool) {
+	if mh.turns.IsRunning(jobID) {
+		return nil, false
 	}
-	return mh.turns.IsRunning(jobID)
+	if mh.jobEvictor == nil {
+		return func() {}, true
+	}
+	if !mh.jobEvictor.ClaimCompletion(jobID) {
+		return nil, false
+	}
+	return func() { mh.jobEvictor.ReleaseCompletion(jobID) }, true
 }
 
 // resolvePRMerger returns the display name of the user who merged the job's PR,
