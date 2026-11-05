@@ -231,7 +231,7 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 		return fmt.Errorf("failed to send processing message notification: %w", err)
 	}
 
-	log.Info("🚀 Starting new conversation with message: %s", payload.Message)
+	log.Info("🚀 Starting new conversation for job %s (message %d chars)", payload.JobID, len(payload.Message))
 
 	// Prepare Git environment for new conversation - FAIL if this doesn't work
 	// Use worktrees if MAX_CONCURRENCY > 1 for concurrent job processing
@@ -317,7 +317,7 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 	}
 
 	// Process thread context (previous messages) and attachments
-	attachmentSessionID := fmt.Sprintf("job_%s", payload.JobID)
+	attachmentSessionID := attachmentSessionIDForJob(payload.JobID)
 
 	finalPrompt, attachmentPaths, err := mh.formatThreadContext(
 		payload.PreviousMessages,
@@ -376,7 +376,6 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 			WorktreePath:       worktreePath,
 			ClaudeSessionID:    sessionLeftByTimeout(err),
 			PullRequestID:      "",
-			LastMessage:        payload.Message,
 			ProcessedMessageID: payload.ProcessedMessageID,
 			MessageLink:        payload.MessageLink,
 			Status:             models.JobStatusFailed,
@@ -475,7 +474,6 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 		WorktreePath:       worktreePath, // Preserve worktree path for concurrent job mode
 		ClaudeSessionID:    claudeResult.SessionID,
 		PullRequestID:      prID,
-		LastMessage:        payload.Message,
 		ProcessedMessageID: payload.ProcessedMessageID,
 		MessageLink:        payload.MessageLink,
 		Status:             models.JobStatusCompleted,
@@ -538,7 +536,7 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 		return fmt.Errorf("failed to send processing message notification: %w", err)
 	}
 
-	log.Info("💬 Continuing conversation with message: %s", payload.Message)
+	log.Info("💬 Continuing conversation for job %s (message %d chars)", payload.JobID, len(payload.Message))
 
 	// Get the current job data to retrieve the Claude session ID and branch
 	jobData, exists := mh.appState.GetJobData(payload.JobID)
@@ -552,17 +550,7 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 			log.Info("⚠️ No Claude session ID for job %s, upgrading to start_conversation", payload.JobID)
 		}
 
-		startPayloadBytes, marshalErr := json.Marshal(startPayloadForUnstartedJob(payload, jobData))
-		if marshalErr != nil {
-			return fmt.Errorf("failed to marshal start_conversation payload: %w", marshalErr)
-		}
-
-		startMsg := models.BaseMessage{
-			ID:      msg.ID,
-			Type:    models.MessageTypeStartConversation,
-			Payload: json.RawMessage(startPayloadBytes),
-		}
-		return mh.handleStartConversation(turnCtx, startMsg)
+		return mh.startInsteadOfContinue(turnCtx, msg.ID, payload, jobData)
 	}
 
 	sessionID := jobData.ClaudeSessionID
@@ -695,7 +683,7 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 	}
 
 	// Process attachments and build final prompt
-	attachmentSessionID := fmt.Sprintf("job_%s", payload.JobID)
+	attachmentSessionID := attachmentSessionIDForJob(payload.JobID)
 
 	// Extract attachment IDs from MessageAttachment array
 	var attachmentIDs []string
@@ -758,6 +746,10 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 		stoppedJob.MessageLink = payload.MessageLink
 		return mh.finishStoppedTurn(stoppedJob, claudeResult, err)
 	}
+	if err != nil && conversationLost(err) {
+		log.Warn("⚠️ %s has no conversation %s for job %s any more, starting the job over", mh.claudeService.AgentName(), sessionID, payload.JobID)
+		return mh.startInsteadOfContinue(turnCtx, msg.ID, payload, jobData)
+	}
 	if err != nil {
 		// runTurn posts the returned error to the thread; posting it here too showed it twice.
 		log.Info("❌ Error continuing %s session: %v", mh.claudeService.AgentName(), err)
@@ -769,7 +761,6 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 			WorktreePath:       jobData.WorktreePath,
 			ClaudeSessionID:    cmp.Or(sessionLeftByTimeout(err), jobData.ClaudeSessionID),
 			PullRequestID:      jobData.PullRequestID,
-			LastMessage:        payload.Message,
 			ProcessedMessageID: payload.ProcessedMessageID,
 			MessageLink:        payload.MessageLink,
 			Status:             models.JobStatusFailed,
@@ -872,7 +863,6 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 		SessionTimeoutMs:   sessionTimeoutMs,
 		ClaudeSessionID:    claudeResult.SessionID,
 		PullRequestID:      prID,
-		LastMessage:        payload.Message,
 		ProcessedMessageID: payload.ProcessedMessageID,
 		MessageLink:        payload.MessageLink,
 		Status:             models.JobStatusCompleted,
@@ -915,6 +905,32 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 
 	log.Info("📋 Completed successfully - handled user message")
 	return nil
+}
+
+// startInsteadOfContinue runs a reply as a conversation start, keeping the job's mode and effort.
+// job is nil when this agent has never seen the job.
+func (mh *MessageHandler) startInsteadOfContinue(
+	turnCtx context.Context, msgID string, reply models.UserMessagePayload, job *models.JobData,
+) error {
+	startPayloadBytes, err := json.Marshal(startPayloadForUnstartedJob(reply, job))
+	if err != nil {
+		return fmt.Errorf("failed to marshal start_conversation payload: %w", err)
+	}
+	return mh.handleStartConversation(turnCtx, models.BaseMessage{
+		ID:      msgID,
+		Type:    models.MessageTypeStartConversation,
+		Payload: json.RawMessage(startPayloadBytes),
+	})
+}
+
+// conversationLost reports a resume the CLI refused because the session is gone from its disk,
+// which a redeploy or its own retention can cause.
+func conversationLost(err error) bool {
+	return strings.Contains(err.Error(), "No conversation found")
+}
+
+func attachmentSessionIDForJob(jobID string) string {
+	return "job_" + jobID
 }
 
 func (mh *MessageHandler) handleCheckIdleJobs(msg models.BaseMessage) error {
@@ -1039,6 +1055,9 @@ func (mh *MessageHandler) checkJobIdleness(jobID string, jobData models.JobData)
 			return fmt.Errorf("failed to remove job from app state: %w", err)
 		}
 		log.Info("🗑️ Removed completed job %s from app state", jobID)
+		if err := utils.RemoveInboundAttachments(attachmentSessionIDForJob(jobID)); err != nil {
+			log.Warn("⚠️ Failed to remove the inbound attachments of job %s: %v", jobID, err)
+		}
 
 		// Evict the job from the dispatcher to close its message channel.
 		// Without this, processJobMessages() stays blocked on `for msg := range ch`

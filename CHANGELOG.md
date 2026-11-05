@@ -1,3 +1,15 @@
+## [v0.0.134] - 2026-11-05
+
+### Features
+
+- Conversation data on the agent host is kept for `NAIRI_LOG_RETENTION_DAYS` (30 by default), and message text stays out of the logs
+  - A daily routine, run at startup too and in repo mode or not, removes CLI session logs, program logs, inbound and outbound attachments and Codex session transcripts older than the retention window; transcripts of jobs that can still be resumed are kept
+  - The program log rotates at 10 MB (it rotated at 1 KB) and keeps at most 20 files; switching the agent's CLI no longer strands the old CLI's session logs
+  - Start and continue log lines carry the job id and message size, and the CLI command lines leave the prompt out
+  - A finished or failed job no longer keeps its last message on disk, and its inbound attachments are removed when the idle check closes it
+  - A reply whose session the CLI no longer has ("No conversation found") starts the job over in the same mode and effort instead of failing
+  - Codex no longer writes every prompt to `~/.codex/history.jsonl`
+
 ## [v0.0.133] - 2026-11-03
 
 ### Bugfixes

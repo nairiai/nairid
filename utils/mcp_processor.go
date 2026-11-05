@@ -468,6 +468,16 @@ func (p *OpenCodeMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 	return nil
 }
 
+// withoutHistoryPersistence stops Codex from keeping every prompt in ~/.codex/history.jsonl.
+func withoutHistoryPersistence(config map[string]interface{}) {
+	history, _ := config["history"].(map[string]interface{})
+	if history == nil {
+		history = make(map[string]interface{})
+	}
+	history["persistence"] = "none"
+	config["history"] = history
+}
+
 // codexShellEnvironmentPolicy passes the agent's whole environment to Codex shell commands, as
 // Claude Code does: the proxy and CA variables route a shell curl through the secret proxy, and
 // vault placeholders (often named *_KEY or *_TOKEN) reach the shell for the proxy to fill.
@@ -557,6 +567,7 @@ func (p *CodexMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 	}
 
 	existingConfig["shell_environment_policy"] = codexShellEnvironmentPolicy()
+	withoutHistoryPersistence(existingConfig)
 	if p.stdioOnly {
 		delete(existingConfig, "mcp_servers")
 	}

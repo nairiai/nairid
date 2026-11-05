@@ -715,3 +715,36 @@ func TestClaudeMCPAllowRules_NoServers(t *testing.T) {
 		t.Fatalf("expected no rules, got %v", got)
 	}
 }
+
+func TestCodexMCPProcessor_TurnsHistoryPersistenceOff(t *testing.T) {
+	home := writeRemoteMCPConfig(t)
+	codexDir := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(codexDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	existing := "[history]\nmax_bytes = 1000\n"
+	if err := os.WriteFile(filepath.Join(codexDir, "config.toml"), []byte(existing), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := NewCodexMCPProcessor(testNairiMCP()).ProcessMCPConfigs(""); err != nil {
+		t.Fatal(err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(codexDir, "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		History map[string]interface{} `toml:"history"`
+	}
+	if err := toml.Unmarshal(content, &config); err != nil {
+		t.Fatal(err)
+	}
+	if config.History["persistence"] != "none" {
+		t.Errorf("history.persistence = %v, want none", config.History["persistence"])
+	}
+	if config.History["max_bytes"] != int64(1000) {
+		t.Errorf("the customer's history.max_bytes was lost: %v", config.History)
+	}
+}

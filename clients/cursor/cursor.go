@@ -42,8 +42,7 @@ func (c *CursorClient) StartNewSession(ctx context.Context, prompt string, optio
 		args = append([]string{"--model", options.Model}, args...)
 	}
 
-	log.Info("Starting new Cursor session with prompt: %s", finalPrompt)
-	log.Info("Command arguments: %v", args)
+	log.Info("Cursor command: %s", clients.ArgsForLog(args, finalPrompt))
 
 	timeout := options.RunTimeout()
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -90,8 +89,7 @@ func (c *CursorClient) ContinueSession(ctx context.Context, sessionID, prompt st
 		args = append([]string{"--model", options.Model}, args...)
 	}
 
-	log.Info("Executing Cursor command with sessionID: %s, prompt: %s", sessionID, prompt)
-	log.Info("Command arguments: %v", args)
+	log.Info("Cursor command: %s", clients.ArgsForLog(args, prompt))
 
 	timeout := options.RunTimeout()
 	ctx, cancel := context.WithTimeout(ctx, timeout)
