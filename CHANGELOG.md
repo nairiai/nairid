@@ -1,3 +1,12 @@
+## [v0.0.134] - 2026-11-05
+
+### Bugfixes
+
+- The idle check no longer completes a job while a turn is running or a follow-up is waiting ([#254](https://github.com/nairiai/nairid/pull/254))
+  - A PR merged or closed during a turn used to complete the job mid-turn, so the backend dropped the reply and queued follow-ups were wiped
+  - The check now skips a job with an accepted message or a running turn and retries on the next sweep; a stuck job with nothing running still completes
+  - A failed turn no longer evicts its own job, so a buffered follow-up can't start a second processor on the same session and worktree
+
 ## [v0.0.133] - 2026-11-03
 
 ### Bugfixes
