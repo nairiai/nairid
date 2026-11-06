@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"errors"
+	"fmt"
 	"sort"
 	"time"
 
@@ -265,8 +267,19 @@ func RecoverJobs(
 func RestoreAppState(statePath string) (*models.AppState, string, error) {
 	// Try to load existing state
 	loadedState, loadErr := models.LoadState(statePath)
+	// Every write records an agent ID, so a file that parses to nothing (`{}`, `null`) lost its contents too.
+	if loadErr == nil && loadedState.Loaded && loadedState.AgentID == "" && len(loadedState.Jobs) == 0 {
+		loadErr = errors.New("state file holds no agent ID and no jobs")
+	}
 	if loadErr != nil {
-		log.Warn("⚠️ Failed to load persisted state: %v (will start fresh)", loadErr)
+		asidePath, err := models.SetAsideUnreadableState(statePath)
+		if err != nil {
+			// With no set-aside file nothing would hold cleanup back, and booting would delete every
+			// worktree. Exiting leaves the file and the worktrees as they are.
+			return nil, "", fmt.Errorf("state file is unreadable (%v) and could not be set aside: %w", loadErr, err)
+		}
+		log.Error("🛑 State file is unreadable (%v). Moved it to %s and started with empty state. Worktrees and branches are kept until that file is removed", loadErr, asidePath)
+		loadedState = &models.LoadedState{}
 	}
 
 	// Determine agent ID (use loaded or generate new)

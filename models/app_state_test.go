@@ -1,6 +1,7 @@
 package models
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -129,5 +130,105 @@ func TestRestore_WritesTheWholeSnapshotOnce(t *testing.T) {
 	got := writes[0]
 	if len(got.Jobs) != 2 || len(got.QueuedMessages) != 1 || len(got.DoneMessages) != 1 || len(got.Outbox) != 1 {
 		t.Errorf("written state is missing parts: %d jobs, %d queued, %d done, %d unsent", len(got.Jobs), len(got.QueuedMessages), len(got.DoneMessages), len(got.Outbox))
+	}
+}
+
+func TestCleanupHold_FollowsTheSetAsideFile(t *testing.T) {
+	// Glob characters in the path must not hide the file.
+	dir := filepath.Join(t.TempDir(), "in[stance]*")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(dir, "state.json")
+	bad := []byte("not json")
+	if err := os.WriteFile(statePath, bad, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	state := NewAppState("agent", statePath)
+	if hold := state.CleanupHold(); hold != "" {
+		t.Fatalf("held before anything was set aside: %s", hold)
+	}
+
+	asidePath, err := SetAsideUnreadableState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kept, err := os.ReadFile(asidePath); err != nil || string(kept) != string(bad) {
+		t.Fatalf("set-aside file = %q, %v", kept, err)
+	}
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Fatalf("state file still in place: %v", err)
+	}
+	if state.CleanupHold() == "" {
+		t.Fatal("not held after the file was set aside")
+	}
+
+	// A valid state written later doesn't lift it, whichever process reads it.
+	if err := state.UpdateJobData("j1", JobData{JobID: "j1"}); err != nil {
+		t.Fatal(err)
+	}
+	if NewAppState("agent", statePath).CleanupHold() == "" {
+		t.Fatal("not held after a restart")
+	}
+
+	if err := os.Remove(asidePath); err != nil {
+		t.Fatal(err)
+	}
+	if hold := state.CleanupHold(); hold != "" {
+		t.Fatalf("still held after the file was removed: %s", hold)
+	}
+}
+
+func TestCleanupHold_NeedsEverySetAsideFileRemoved(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	var asidePaths []string
+	for range 2 {
+		if err := os.WriteFile(statePath, []byte("not json"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		asidePath, err := SetAsideUnreadableState(statePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		asidePaths = append(asidePaths, asidePath)
+	}
+	if asidePaths[0] == asidePaths[1] {
+		t.Fatal("second set-aside overwrote the first")
+	}
+	if err := os.Remove(asidePaths[0]); err != nil {
+		t.Fatal(err)
+	}
+	if NewAppState("agent", statePath).CleanupHold() == "" {
+		t.Fatal("not held with one set-aside file left")
+	}
+}
+
+func TestCleanupHold_FailsClosedWhenTheDirectoryCantBeListed(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	if NewAppState("agent", filepath.Join(dir, "state.json")).CleanupHold() == "" {
+		t.Fatal("not held when the directory can't be listed")
+	}
+}
+
+func TestCleanupHold_IgnoresOtherFiles(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"state.json", "state.json.tmp", "other.json.unreadable-1"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("{}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if hold := NewAppState("agent", filepath.Join(dir, "state.json")).CleanupHold(); hold != "" {
+		t.Fatalf("held by an unrelated file: %s", hold)
+	}
+	missing := filepath.Join(dir, "no-such-dir", "state.json")
+	if hold := NewAppState("agent", missing).CleanupHold(); hold != "" {
+		t.Fatalf("held by a missing directory: %s", hold)
 	}
 }

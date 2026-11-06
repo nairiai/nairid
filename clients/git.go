@@ -322,6 +322,21 @@ func (g *GitClient) HasUpstreamTrackingInWorktree(worktreePath string) (bool, er
 	return strings.TrimSpace(string(output)) != "", nil
 }
 
+// StashAllChanges saves tracked edits and untracked files on the stash, the same files
+// ResetHard and CleanUntracked discard. With nothing to save it does nothing.
+func (g *GitClient) StashAllChanges(message string) error {
+	cmd := exec.Command("git", "stash", "push", "--include-untracked", "--message", message)
+	g.setWorkDir(cmd)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Error("❌ Git stash failed: %v\nOutput: %s", err, string(output))
+		return fmt.Errorf("git stash failed: %w\nOutput: %s", err, string(output))
+	}
+
+	log.Info("✅ Git stash finished: %s", strings.TrimSpace(string(output)))
+	return nil
+}
+
 func (g *GitClient) CleanUntracked() error {
 	log.Info("📋 Starting to clean untracked files")
 
