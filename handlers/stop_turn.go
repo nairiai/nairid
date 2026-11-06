@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -103,6 +105,7 @@ func (mh *MessageHandler) finishStoppedTurn(
 		return &core.ErrTurnStopped{}
 	}
 
+	jobData.StartPayload = nil
 	jobData.Status = models.JobStatusCompleted
 	jobData.UpdatedAt = time.Now()
 	if err := mh.appState.UpdateJobData(jobData.JobID, jobData); err != nil {
@@ -155,8 +158,14 @@ func (mh *MessageHandler) keepJobWithoutSession(jobData models.JobData) error {
 	return nil
 }
 
+// The stored message is what a reply to a job stopped before it had a session starts over from.
 func jobDataForStart(start models.StartConversationPayload) models.JobData {
+	startPayload, err := json.Marshal(start)
+	if err != nil {
+		log.Warn("⚠️ Failed to store the first message of stopped job %s: %v", start.JobID, err)
+	}
 	return models.JobData{
+		StartPayload:       startPayload,
 		JobID:              start.JobID,
 		LastMessage:        start.Message,
 		ProcessedMessageID: start.ProcessedMessageID,
@@ -168,6 +177,10 @@ func jobDataForStart(start models.StartConversationPayload) models.JobData {
 		SessionTimeoutMs:   start.SessionTimeoutMs,
 	}
 }
+
+// errLeftForPoller is a reply for a job this agent has no row for. A start built here would have no
+// prompt and no mode, and the backend sends both when the poller offers it. So it stays unacked.
+var errLeftForPoller = errors.New("reply left for the poller")
 
 // The turn is registered before its handler prepares the worktree, so a stop that lands
 // during the preparation still ends it.
@@ -186,6 +199,9 @@ func (mh *MessageHandler) runTurn(jobID, processedMessageID string, handle func(
 		// the turn is reported as it went.
 		log.Info("🛑 Answering the stop of job %s: not running (%v)", jobID, err)
 		mh.sendTurnStopped(jobID, processedMessageID, models.TurnStopOutcomeNotRunning)
+	}
+	if errors.Is(err, errLeftForPoller) {
+		return
 	}
 	if err != nil && IsShuttingDown() {
 		// Most likely the CLI was killed with us; recovery reruns the turn after the restart.

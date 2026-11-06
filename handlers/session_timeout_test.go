@@ -72,7 +72,6 @@ func TestStartPayloadForUnstartedJob_SessionTimeout(t *testing.T) {
 	}{
 		{"the job's stored value when the reply has none", 0, stored, hourMs},
 		{"the reply's value over the stored one", 2 * hourMs, stored, 2 * hourMs},
-		{"the reply's value for a job this agent never saw", 2 * hourMs, nil, 2 * hourMs},
 	}
 	for _, tt := range tests {
 		reply := models.UserMessagePayload{JobID: "j1", Message: "continue", ProcessedMessageID: "cmsg_1", SessionTimeoutMs: tt.reply}

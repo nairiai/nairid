@@ -208,6 +208,9 @@ func TestStopTurn_EndsAFirstTurnAndKeepsItsSession(t *testing.T) {
 	if job.Status != models.JobStatusCompleted || job.ClaudeSessionID != "session-partial" {
 		t.Errorf("job after stop = status %q session %q, want completed / session-partial", job.Status, job.ClaudeSessionID)
 	}
+	if len(job.StartPayload) != 0 {
+		t.Error("a job with a session still stores its first message")
+	}
 	if got := f.outbox.ofType(models.MessageTypeSystemMessage); len(got) != 0 {
 		t.Errorf("no system message belongs in a stopped turn, got %+v", got[0].Payload)
 	}

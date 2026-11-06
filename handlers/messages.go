@@ -216,6 +216,15 @@ func (mh *MessageHandler) HandleMessage(msg models.BaseMessage) {
 	}
 }
 
+// finishTurnWithReply stores the reply and the finished job in one write, then sends the reply.
+// After a crash either both are on disk and the reply goes out once, or neither is and the turn
+// runs again. The reply is sent even if the write fails, since memory holds the same state.
+func (mh *MessageHandler) finishTurnWithReply(job models.JobData, reply models.BaseMessage) error {
+	return mh.messageSender.QueueMessageWith("cc_message", reply, func(entry *models.OutboxMessage) error {
+		return mh.appState.CompleteTurn(job, entry, time.Now())
+	})
+}
+
 func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg models.BaseMessage) error {
 	log.Info("📋 Starting to handle start conversation message")
 	var payload models.StartConversationPayload
@@ -260,6 +269,11 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 	reasoningEffort := effortForTurn(payload.JobID, payload.ReasoningEffort, payload.ReasoningEffortModel, mh.claudeService.Model())
 	sessionTimeout := timeoutForTurn(payload.JobID, payload.SessionTimeoutMs)
 
+	startPayload, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to store the first message: %w", err)
+	}
+
 	// Persist job state with message BEFORE calling Claude
 	// This enables crash recovery and future reprocessing
 	if err := mh.appState.UpdateJobData(payload.JobID, models.JobData{
@@ -276,6 +290,7 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 		ReasoningEffort:    payload.ReasoningEffort,
 		EffortModel:        payload.ReasoningEffortModel,
 		SessionTimeoutMs:   payload.SessionTimeoutMs,
+		StartPayload:       startPayload,
 		UpdatedAt:          time.Now(),
 	}); err != nil {
 		log.Error("❌ Failed to persist job state before Claude call: %v", err)
@@ -368,6 +383,11 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 		// runTurn posts the returned error to the thread; posting it here too showed it twice.
 		log.Info("❌ Error starting %s session: %v", mh.claudeService.AgentName(), err)
 
+		// The CLI most likely died with us. Stay in progress so the restart runs the first message again.
+		if IsShuttingDown() {
+			return fmt.Errorf("error starting %s session: %w", mh.claudeService.AgentName(), err)
+		}
+
 		// Mark job as failed so the processor goroutine can exit and free up a worker slot
 		failedJob := models.JobData{
 			JobID:              payload.JobID,
@@ -384,6 +404,9 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 			EffortModel:        payload.ReasoningEffortModel,
 			SessionTimeoutMs:   payload.SessionTimeoutMs,
 			UpdatedAt:          time.Now(),
+		}
+		if failedJob.ClaudeSessionID == "" {
+			failedJob.StartPayload = startPayload
 		}
 		if updateErr := mh.appState.UpdateJobData(payload.JobID, failedJob); updateErr != nil {
 			log.Error("❌ Failed to mark job as failed: %v", updateErr)
@@ -459,11 +482,7 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 		Type:    models.MessageTypeAssistantMessage,
 		Payload: assistantPayload,
 	}
-	mh.messageSender.QueueMessage("cc_message", assistantMsg)
-	log.Info("🤖 Queued assistant response (message ID: %s, attachments: %d)", assistantMsg.ID, len(attachmentIDs))
-
-	// Persist final job state with "completed" status after successful message send
-	if err := mh.appState.UpdateJobData(payload.JobID, models.JobData{
+	completedJob := models.JobData{
 		JobID:              payload.JobID,
 		BranchName:         finalBranchName,
 		WorktreePath:       worktreePath, // Preserve worktree path for concurrent job mode
@@ -478,10 +497,15 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 		EffortModel:        payload.ReasoningEffortModel,
 		SessionTimeoutMs:   payload.SessionTimeoutMs,
 		UpdatedAt:          time.Now(),
-	}); err != nil {
+	}
+	if claudeResult.SessionID == "" {
+		completedJob.StartPayload = startPayload
+	}
+	if err := mh.finishTurnWithReply(completedJob, assistantMsg); err != nil {
 		log.Error("❌ Failed to persist final job state: %v", err)
 		return fmt.Errorf("failed to persist final job state: %w", err)
 	}
+	log.Info("🤖 Queued assistant response (message ID: %s, attachments: %d)", assistantMsg.ID, len(attachmentIDs))
 	log.Info("💾 Persisted final job state with completed status")
 
 	// runTurn acks the message and takes it off the recovery queue. Follow-ups waiting behind
@@ -526,6 +550,13 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 		return fmt.Errorf("failed to unmarshal user message payload: %w", err)
 	}
 
+	// Get the current job data to retrieve the Claude session ID and branch
+	jobData, exists := mh.appState.GetJobData(payload.JobID)
+	if !exists {
+		log.Info("⚠️ JobID %s not found in AppState, leaving message %s to the poller", payload.JobID, payload.ProcessedMessageID)
+		return errLeftForPoller
+	}
+
 	// Send processing message notification that agent is starting to process
 	if err := mh.sendProcessingMessage(payload.ProcessedMessageID, payload.JobID); err != nil {
 		log.Info("❌ Failed to send processing message notification: %v", err)
@@ -534,17 +565,10 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 
 	log.Info("💬 Continuing conversation with message: %s", payload.Message)
 
-	// Get the current job data to retrieve the Claude session ID and branch
-	jobData, exists := mh.appState.GetJobData(payload.JobID)
-	if !exists || jobData.ClaudeSessionID == "" {
-		// Job not in local state or has no session — this can happen after a WebSocket
-		// reconnect or container restart where local state was lost. Upgrade to
-		// start_conversation so the agent starts a fresh Claude session instead of failing.
-		if !exists {
-			log.Info("⚠️ JobID %s not found in AppState, upgrading to start_conversation", payload.JobID)
-		} else {
-			log.Info("⚠️ No Claude session ID for job %s, upgrading to start_conversation", payload.JobID)
-		}
+	if jobData.ClaudeSessionID == "" {
+		// The first turn failed or was stopped before the CLI made a session. Start over so
+		// the agent starts a fresh Claude session instead of failing.
+		log.Info("⚠️ No Claude session ID for job %s, upgrading to start_conversation", payload.JobID)
 
 		startPayloadBytes, marshalErr := json.Marshal(startPayloadForUnstartedJob(payload, jobData))
 		if marshalErr != nil {
@@ -847,11 +871,7 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 		Type:    models.MessageTypeAssistantMessage,
 		Payload: assistantPayload,
 	}
-	mh.messageSender.QueueMessage("cc_message", assistantMsg)
-	log.Info("🤖 Queued assistant response (message ID: %s, attachments: %d)", assistantMsg.ID, len(outboundAttachmentIDs))
-
-	// Persist final job state with "completed" status after successful message send
-	if err := mh.appState.UpdateJobData(payload.JobID, models.JobData{
+	if err := mh.finishTurnWithReply(models.JobData{
 		JobID:              payload.JobID,
 		BranchName:         finalBranchName,
 		WorktreePath:       jobData.WorktreePath, // Preserve worktree path
@@ -866,10 +886,11 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 		MessageLink:        payload.MessageLink,
 		Status:             models.JobStatusCompleted,
 		UpdatedAt:          time.Now(),
-	}); err != nil {
+	}, assistantMsg); err != nil {
 		log.Error("❌ Failed to persist final job state: %v", err)
 		return fmt.Errorf("failed to persist final job state: %w", err)
 	}
+	log.Info("🤖 Queued assistant response (message ID: %s, attachments: %d)", assistantMsg.ID, len(outboundAttachmentIDs))
 	log.Info("💾 Persisted final job state with completed status")
 
 	// runTurn acks the message and takes it off the recovery queue. Follow-ups waiting behind

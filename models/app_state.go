@@ -50,8 +50,11 @@ type JobData struct {
 	ReasoningEffort    string    `json:"reasoning_effort,omitempty"` // CLI effort level the backend sent when the conversation started; empty = model default
 	EffortModel        string    `json:"effort_model,omitempty"`     // --model id the level was checked against; it applies only while the agent runs that model
 	// Latest per-agent cap on one CLI run the backend sent; 0 means NAIRI_MAX_SESSION_MS or 1h.
-	SessionTimeoutMs int64     `json:"session_timeout_ms,omitempty"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	SessionTimeoutMs int64 `json:"session_timeout_ms,omitempty"`
+	// The first message as received, kept until the job has a session. The CLI only keeps the
+	// instructions once a session exists, so a restart or a reply before then has to start over from this.
+	StartPayload json.RawMessage `json:"start_payload,omitempty"`
+	UpdatedAt    time.Time       `json:"updated_at"`
 }
 
 // QueuedMessage represents a message that has been queued for processing but not yet started
@@ -213,8 +216,8 @@ func (a *AppState) GetJobData(jobID string) (*JobData, bool) {
 	if !exists {
 		return nil, false
 	}
-	// Return a copy to avoid race conditions. JobData holds only values, so
-	// copying the struct copies every field, including ones added later.
+	// Return a copy to avoid race conditions. Every field is a value except StartPayload,
+	// which is only ever replaced whole, so copying the struct is enough.
 	jobCopy := *data
 	return &jobCopy, true
 }
@@ -328,6 +331,46 @@ func (a *AppState) FinishMessage(processedMessageID string, at time.Time) error 
 	}
 
 	return nil
+}
+
+// CompleteTurn records a finished turn in one write: the job's final state, its reply waiting to
+// be sent, and the message as done. Written apart, a crash between them gives a second reply:
+// a job still in progress is run again, and a message not yet done is delivered again.
+func (a *AppState) CompleteTurn(data JobData, reply *OutboxMessage, at time.Time) error {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+	job, hadJob := a.jobs[data.JobID]
+	done, wasDone := a.doneMessages[data.ProcessedMessageID]
+	queued, wasQueued := a.queuedMessages[data.ProcessedMessageID]
+
+	a.jobs[data.JobID] = &data
+	if reply != nil {
+		a.outbox[reply.ID] = reply
+	}
+	a.doneMessages[data.ProcessedMessageID] = at
+	delete(a.queuedMessages, data.ProcessedMessageID)
+
+	err := a.persistStateLocked()
+	if err == nil {
+		return nil
+	}
+
+	// Every write holds all of memory, so a later one would record a finished turn whose reply never went out.
+	restoreEntry(a.jobs, data.JobID, job, hadJob)
+	restoreEntry(a.doneMessages, data.ProcessedMessageID, done, wasDone)
+	restoreEntry(a.queuedMessages, data.ProcessedMessageID, queued, wasQueued)
+	if reply != nil {
+		delete(a.outbox, reply.ID)
+	}
+	return fmt.Errorf("failed to persist state: %w", err)
+}
+
+func restoreEntry[V any](entries map[string]V, key string, value V, existed bool) {
+	if existed {
+		entries[key] = value
+		return
+	}
+	delete(entries, key)
 }
 
 // Restore loads a whole persisted snapshot and writes it back once.
@@ -476,6 +519,12 @@ func (a *AppState) persistStateLocked() error {
 
 // afterPersist lets tests look at every state file written, each a point a crash could leave behind.
 var afterPersist func(statePath string)
+
+// SetAfterPersistForTest sets the hook for tests in other packages and returns a function that clears it.
+func SetAfterPersistForTest(hook func(statePath string)) (restore func()) {
+	afterPersist = hook
+	return func() { afterPersist = nil }
+}
 
 func writeFileSynced(path string, data []byte, perm os.FileMode) error {
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
