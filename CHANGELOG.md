@@ -1,3 +1,9 @@
+## [v0.0.137] - 2026-11-06
+
+### Bugfixes
+
+- Keep a conversation's first message across a restart ([#262](https://github.com/nairiai/nairid/pull/262))
+
 ## [v0.0.136] - 2026-11-06
 
 ### Bugfixes
