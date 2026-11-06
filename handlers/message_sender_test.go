@@ -338,20 +338,19 @@ func TestQueueMessageWith(t *testing.T) {
 		}
 	})
 
-	t.Run("a failed write still queues the reply", func(t *testing.T) {
+	t.Run("a failed write queues nothing", func(t *testing.T) {
 		sender := newMessageSenderForTest(NewConnectionState(), &mockHTTP{}, &mockWS{})
 		sender.SetOutbox(models.NewAppState("agent", filepath.Join(t.TempDir(), "state.json")))
 		failure := errors.New("disk full")
-		queued := make(chan error, 1)
-		go func() {
-			queued <- sender.QueueMessageWith("cc_message", reply(), func(*models.OutboxMessage) error { return failure })
-		}()
-		sent := <-sender.messageQueue
-		if err := <-queued; !errors.Is(err, failure) {
+		err := sender.QueueMessageWith("cc_message", reply(), func(*models.OutboxMessage) error { return failure })
+		if !errors.Is(err, failure) {
 			t.Errorf("got %v", err)
 		}
-		if sent.Event != "cc_message" {
-			t.Errorf("queued %+v", sent)
+		if queued := len(sender.messageQueue); queued != 0 {
+			t.Errorf("%d messages queued after a failed write", queued)
+		}
+		if !sender.markPending("msg_1") {
+			t.Error("the reply stayed pending after a failed write")
 		}
 	})
 }

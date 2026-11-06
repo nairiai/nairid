@@ -280,6 +280,55 @@ func TestCompleteTurnIsOneWrite(t *testing.T) {
 	}
 }
 
+// Memory must match the disk after a failed write: the next write stores all of memory.
+func TestCompleteTurnThatFailsToWriteChangesNothing(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	appState := NewAppState("agent", filepath.Join(stateDir, "state.json"))
+	running := JobData{JobID: "j1", ProcessedMessageID: "cmsg_1", Status: JobStatusInProgress, StartPayload: json.RawMessage(`{}`)}
+	if err := appState.UpdateJobData("j1", running); err != nil {
+		t.Fatal(err)
+	}
+	if err := appState.AddQueuedMessage(QueuedMessage{ProcessedMessageID: "cmsg_1", JobID: "j1", QueuedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(stateDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stateDir, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reply := func(id string) *OutboxMessage {
+		return &OutboxMessage{ID: id, Event: "cc_message", Data: json.RawMessage(`{}`), QueuedAt: time.Now()}
+	}
+
+	finished := JobData{JobID: "j1", ProcessedMessageID: "cmsg_1", Status: JobStatusCompleted, ClaudeSessionID: "session-1"}
+	if err := appState.CompleteTurn(finished, reply("out_1"), time.Now()); err == nil {
+		t.Fatal("the write should have failed")
+	}
+	job, exists := appState.GetJobData("j1")
+	if !exists || job.Status != JobStatusInProgress || job.ClaudeSessionID != "" || len(job.StartPayload) == 0 {
+		t.Errorf("job is %+v", job)
+	}
+	if len(appState.GetAllOutboxMessages()) != 0 {
+		t.Error("the reply stayed in the outbox")
+	}
+	if appState.IsMessageDone("cmsg_1") {
+		t.Error("the message stayed done")
+	}
+	if queued := appState.GetAllQueuedMessages(); len(queued) != 1 {
+		t.Errorf("queued messages are %+v", queued)
+	}
+
+	// A job with no row before the turn has none after it.
+	newJob := JobData{JobID: "j2", ProcessedMessageID: "cmsg_2", Status: JobStatusCompleted}
+	if err := appState.CompleteTurn(newJob, reply("out_2"), time.Now()); err == nil {
+		t.Fatal("the write should have failed")
+	}
+	if _, exists := appState.GetJobData("j2"); exists {
+		t.Error("the job stayed")
+	}
+}
+
 func TestCompleteTurnWithNoOutboxEntryStillFinishesTheTurn(t *testing.T) {
 	appState := NewAppState("agent", filepath.Join(t.TempDir(), "state.json"))
 	err := appState.CompleteTurn(JobData{JobID: "j1", ProcessedMessageID: "cmsg_1", Status: JobStatusCompleted}, nil, time.Now())

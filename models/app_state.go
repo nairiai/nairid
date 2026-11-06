@@ -339,6 +339,10 @@ func (a *AppState) FinishMessage(processedMessageID string, at time.Time) error 
 func (a *AppState) CompleteTurn(data JobData, reply *OutboxMessage, at time.Time) error {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
+	job, hadJob := a.jobs[data.JobID]
+	done, wasDone := a.doneMessages[data.ProcessedMessageID]
+	queued, wasQueued := a.queuedMessages[data.ProcessedMessageID]
+
 	a.jobs[data.JobID] = &data
 	if reply != nil {
 		a.outbox[reply.ID] = reply
@@ -346,11 +350,27 @@ func (a *AppState) CompleteTurn(data JobData, reply *OutboxMessage, at time.Time
 	a.doneMessages[data.ProcessedMessageID] = at
 	delete(a.queuedMessages, data.ProcessedMessageID)
 
-	if err := a.persistStateLocked(); err != nil {
-		return fmt.Errorf("failed to persist state: %w", err)
+	err := a.persistStateLocked()
+	if err == nil {
+		return nil
 	}
 
-	return nil
+	// Every write holds all of memory, so a later one would record a finished turn whose reply never went out.
+	restoreEntry(a.jobs, data.JobID, job, hadJob)
+	restoreEntry(a.doneMessages, data.ProcessedMessageID, done, wasDone)
+	restoreEntry(a.queuedMessages, data.ProcessedMessageID, queued, wasQueued)
+	if reply != nil {
+		delete(a.outbox, reply.ID)
+	}
+	return fmt.Errorf("failed to persist state: %w", err)
+}
+
+func restoreEntry[V any](entries map[string]V, key string, value V, existed bool) {
+	if existed {
+		entries[key] = value
+		return
+	}
+	delete(entries, key)
 }
 
 // Restore loads a whole persisted snapshot and writes it back once.

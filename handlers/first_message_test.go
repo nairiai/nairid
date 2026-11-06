@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -46,19 +48,24 @@ type recordingAgent struct {
 	continues []agentRun
 	session   string
 	failNext  error
-	onStart   func(workDir string) error
+	onRun     func(ctx context.Context, workDir string) error
+}
+
+func (a *recordingAgent) runHook(ctx context.Context, workDir string) error {
+	if a.onRun == nil {
+		return nil
+	}
+	return a.onRun(ctx, workDir)
 }
 
 func (a *recordingAgent) StartNewConversationWithProgress(
-	_ context.Context, prompt, systemPrompt, workDir, _ string, _ time.Duration, _ services.ProgressEmitter,
+	ctx context.Context, prompt, systemPrompt, workDir, _ string, _ time.Duration, _ services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.starts = append(a.starts, agentRun{prompt: prompt, systemPrompt: systemPrompt})
-	if a.onStart != nil {
-		if err := a.onStart(workDir); err != nil {
-			return nil, err
-		}
+	if err := a.runHook(ctx, workDir); err != nil {
+		return nil, err
 	}
 	if failure := a.failNext; failure != nil {
 		a.failNext = nil
@@ -68,11 +75,14 @@ func (a *recordingAgent) StartNewConversationWithProgress(
 }
 
 func (a *recordingAgent) ContinueConversationWithProgress(
-	_ context.Context, sessionID, prompt, systemPrompt, _, _ string, _ time.Duration, _ services.ProgressEmitter,
+	ctx context.Context, sessionID, prompt, systemPrompt, workDir, _ string, _ time.Duration, _ services.ProgressEmitter,
 ) (*services.CLIAgentResult, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.continues = append(a.continues, agentRun{prompt: prompt, systemPrompt: systemPrompt, sessionID: sessionID})
+	if err := a.runHook(ctx, workDir); err != nil {
+		return nil, err
+	}
 	return &services.CLIAgentResult{Output: "the answer", SessionID: sessionID}, nil
 }
 
@@ -361,13 +371,7 @@ func TestRestartAfterAnyWriteOfAFirstTurn(t *testing.T) {
 			restarted := bootAgentProcess(t, statePath, backend.URL)
 			restarted.recoverAndPoll(t, "cmsg_1")
 
-			replies := repliesTo(t, point.replies, "cmsg_1")
-			for id := range repliesTo(t, restarted.http.getCalls(), "cmsg_1") {
-				replies[id] = true
-			}
-			if len(replies) != 1 {
-				t.Errorf("got %d replies, want exactly 1: %v", len(replies), replies)
-			}
+			assertOneReply(t, "cmsg_1", point.replies, restarted.http.getCalls())
 			starts, continues := restarted.agent.runs()
 			if len(starts) > 1 || len(continues) != 0 {
 				t.Errorf("turn ran %d starts and %d continues", len(starts), len(continues))
@@ -412,24 +416,216 @@ func TestRestartAfterAnyWriteOfAFollowUp(t *testing.T) {
 			restarted := bootAgentProcess(t, statePath, backend.URL)
 			restarted.recoverAndPoll(t, "cmsg_2")
 
-			replies := repliesTo(t, point.replies, "cmsg_2")
-			for id := range repliesTo(t, restarted.http.getCalls(), "cmsg_2") {
-				replies[id] = true
-			}
-			if len(replies) != 1 {
-				t.Errorf("got %d replies, want exactly 1: %v", len(replies), replies)
-			}
-			starts, continues := restarted.agent.runs()
-			if len(starts) != 0 || len(continues) > 1 {
-				t.Errorf("turn ran %d starts and %d continues", len(starts), len(continues))
-			}
-			for _, run := range continues {
-				if run.sessionID != "session-1" || !strings.Contains(run.prompt, followUpText) {
-					t.Errorf("follow-up ran as %+v", run)
-				}
-			}
+			assertOneReply(t, "cmsg_2", point.replies, restarted.http.getCalls())
+			assertFollowUpRanAtMostOnce(t, restarted.agent)
 		})
 	}
+}
+
+// assertOneReply counts distinct replies across the runs of the binary.
+func assertOneReply(t *testing.T, processedMessageID string, runs ...[]models.BaseMessage) {
+	t.Helper()
+	replies := make(map[string]bool)
+	for _, calls := range runs {
+		maps.Copy(replies, repliesTo(t, calls, processedMessageID))
+	}
+	if len(replies) != 1 {
+		t.Errorf("got %d replies, want exactly 1: %v", len(replies), replies)
+	}
+}
+
+func assertFollowUpRanAtMostOnce(t *testing.T, agent *recordingAgent) {
+	t.Helper()
+	starts, continues := agent.runs()
+	if len(starts) != 0 || len(continues) > 1 {
+		t.Errorf("turn ran %d starts and %d continues", len(starts), len(continues))
+	}
+	for _, run := range continues {
+		if run.sessionID != "session-1" || !strings.Contains(run.prompt, followUpText) {
+			t.Errorf("follow-up ran as %+v", run)
+		}
+	}
+}
+
+// failWritesFromNextRun makes state writes fail from the agent's next run on and hands back what the
+// disk held by then. A file in place of the directory fails them even for root.
+func failWritesFromNextRun(live *agentProcess) <-chan []byte {
+	onDisk := make(chan []byte, 1)
+	live.agent.onRun = func(context.Context, string) error {
+		live.agent.onRun = nil
+		state, err := os.ReadFile(live.statePath)
+		if err != nil {
+			return err
+		}
+		stateDir := filepath.Dir(live.statePath)
+		if err := os.RemoveAll(stateDir); err != nil {
+			return err
+		}
+		if err := os.WriteFile(stateDir, nil, 0o600); err != nil {
+			return err
+		}
+		onDisk <- state
+		return nil
+	}
+	return onDisk
+}
+
+func errorPostsFor(t *testing.T, calls []models.BaseMessage, processedMessageID string) int {
+	t.Helper()
+	posts := 0
+	for _, call := range calls {
+		if call.Type != models.MessageTypeSystemMessage {
+			continue
+		}
+		var post models.SystemMessagePayload
+		if err := unmarshalPayload(call.Payload, &post); err != nil {
+			t.Fatalf("read system message: %v", err)
+		}
+		if post.ProcessedMessageID == processedMessageID && strings.Contains(post.Message, "encountered error") {
+			posts++
+		}
+	}
+	return posts
+}
+
+// restartAfterFailedFinalWrite runs a turn whose final write fails, checks that no reply went out, and
+// boots the next run of the binary on what the disk held.
+func restartAfterFailedFinalWrite(
+	t *testing.T, live *agentProcess, message models.BaseMessage, processedMessageID string, offer clients.AgentJobMessage,
+) *agentProcess {
+	t.Helper()
+	onDisk := failWritesFromNextRun(live)
+	live.handler.HandleMessage(message)
+	waitUntil(t, func() bool { return errorPostsFor(t, live.http.getCalls(), processedMessageID) == 1 })
+	live.sender.Close()
+
+	if replies := repliesTo(t, live.http.getCalls(), processedMessageID); len(replies) != 0 {
+		t.Errorf("a reply went out with its turn not on disk: %v", replies)
+	}
+	waitingReply := slices.ContainsFunc(live.state.GetAllOutboxMessages(), func(waiting models.OutboxMessage) bool {
+		return strings.Contains(string(waiting.Data), models.MessageTypeAssistantMessage)
+	})
+	if waitingReply {
+		t.Error("a later write would store a reply that never went out")
+	}
+	if job, _ := live.state.GetJobData("j1"); job.Status != models.JobStatusFailed {
+		t.Errorf("job after the failed write is %+v", job)
+	}
+
+	_, statePath := restoreCopy(t, <-onDisk)
+	return bootAgentProcess(t, statePath, newPollBackend(t, offer).URL)
+}
+
+func TestAFailedFinalWriteSendsNoReplyAndARestartGivesOne(t *testing.T) {
+	newLive := func(t *testing.T) *agentProcess {
+		t.Helper()
+		t.Setenv("NAIRI_CONFIG_DIR", t.TempDir())
+		return bootAgentProcess(t, filepath.Join(t.TempDir(), "state", "state.json"), newPollBackend(t).URL)
+	}
+
+	t.Run("first turn", func(t *testing.T) {
+		live := newLive(t)
+		restarted := restartAfterFailedFinalWrite(t, live, firstMessage(), "cmsg_1", firstMessageOffer(t))
+		restarted.recoverAndPoll(t, "cmsg_1")
+
+		assertOneReply(t, "cmsg_1", live.http.getCalls(), restarted.http.getCalls())
+		starts, continues := restarted.agent.runs()
+		if len(starts) != 1 || len(continues) != 0 {
+			t.Fatalf("ran %d starts and %d continues", len(starts), len(continues))
+		}
+		assertRanWithWholeFirstMessage(t, starts[0])
+	})
+
+	t.Run("follow-up", func(t *testing.T) {
+		live := newLive(t)
+		live.handler.HandleMessage(firstMessage())
+		live.waitForOutbox(t)
+		offer := offerOf(t, models.UserMessagePayload{JobID: "j1", Message: followUpText, ProcessedMessageID: "cmsg_2"})
+		restarted := restartAfterFailedFinalWrite(t, live, followUpMessage(), "cmsg_2", offer)
+		restarted.recoverAndPoll(t, "cmsg_2")
+
+		assertOneReply(t, "cmsg_2", live.http.getCalls(), restarted.http.getCalls())
+		assertFollowUpRanAtMostOnce(t, restarted.agent)
+		if _, continues := restarted.agent.runs(); len(continues) != 1 {
+			t.Errorf("ran %d continues, want 1", len(continues))
+		}
+	})
+}
+
+// A stopped first turn has no session, so its reply starts over. It runs with the whole first message.
+func assertLastStartRanTheReplyWithTheFirstMessage(t *testing.T, agent *recordingAgent) {
+	t.Helper()
+	starts, continues := agent.runs()
+	if len(starts) == 0 || len(continues) != 0 {
+		t.Fatalf("ran %d starts and %d continues", len(starts), len(continues))
+	}
+	last := starts[len(starts)-1]
+	assertRanWithWholeFirstMessage(t, agentRun{prompt: last.prompt + "\n" + senderLabel, systemPrompt: last.systemPrompt})
+	if !strings.Contains(last.prompt, followUpText) {
+		t.Errorf("the reply did not run:\n%s", last.prompt)
+	}
+}
+
+func TestAReplyToAFirstTurnStoppedBeforeASessionRunsWithTheFirstMessage(t *testing.T) {
+	t.Setenv("NAIRI_CONFIG_DIR", t.TempDir())
+	live := bootAgentProcess(t, filepath.Join(t.TempDir(), "state.json"), newPollBackend(t).URL)
+	t.Cleanup(live.sender.Close)
+	started := make(chan struct{})
+	live.agent.onRun = func(ctx context.Context, _ string) error {
+		live.agent.onRun = nil
+		close(started)
+		<-ctx.Done()
+		return &core.ErrTurnStopped{}
+	}
+	done := make(chan struct{})
+	go func() { live.handler.HandleMessage(firstMessage()); close(done) }()
+	<-started
+	live.handler.stopTurn("j1", "U1", "2026-11-06T10:00:00Z")
+	<-done
+
+	job, _ := live.state.GetJobData("j1")
+	if job.Status != models.JobStatusCompleted || job.ClaudeSessionID != "" || len(job.StartPayload) == 0 {
+		t.Fatalf("stopped job is %+v", job)
+	}
+
+	state, err := os.ReadFile(live.statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, statePath := restoreCopy(t, state)
+	restarted := bootAgentProcess(t, statePath, newPollBackend(t).URL)
+	restarted.recoverAndPoll(t, "cmsg_1")
+	if starts, continues := restarted.agent.runs(); len(starts)+len(continues) != 0 {
+		t.Errorf("a restart ran the stopped turn again: %d starts, %d continues", len(starts), len(continues))
+	}
+
+	live.handler.HandleMessage(followUpMessage())
+	assertLastStartRanTheReplyWithTheFirstMessage(t, live.agent)
+	job, _ = live.state.GetJobData("j1")
+	if job.ClaudeSessionID != "session-1" || len(job.StartPayload) != 0 {
+		t.Errorf("job ended as %+v", job)
+	}
+}
+
+func TestAReplyToAFirstMessageDroppedBeforeItRanRunsWithIt(t *testing.T) {
+	t.Setenv("NAIRI_CONFIG_DIR", t.TempDir())
+	live := bootAgentProcess(t, filepath.Join(t.TempDir(), "state.json"), newPollBackend(t).URL)
+	t.Cleanup(live.sender.Close)
+	pool := workerpool.New(1)
+	busy := make(chan struct{})
+	pool.Submit(func() { <-busy })
+	defer close(busy)
+	dispatcher := NewJobDispatcher(live.handler, pool, live.state)
+	live.handler.SetJobEvictor(dispatcher)
+	dispatcher.Dispatch(firstMessage())
+
+	live.handler.stopTurn("j1", "U1", "2026-11-06T10:00:00Z")
+
+	if starts, _ := live.agent.runs(); len(starts) != 0 {
+		t.Fatalf("the dropped message ran %d times", len(starts))
+	}
+	live.handler.HandleMessage(followUpMessage())
+	assertLastStartRanTheReplyWithTheFirstMessage(t, live.agent)
 }
 
 func TestAFinishedFirstTurnLeavesNoStoredMessage(t *testing.T) {
@@ -606,16 +802,9 @@ func TestAReplyToAFailedFirstTurnRunsWithTheFirstMessage(t *testing.T) {
 	}
 
 	live.handler.HandleMessage(followUpMessage())
-	starts, continues := live.agent.runs()
-	if len(starts) != 2 || len(continues) != 0 {
-		t.Fatalf("ran %d starts and %d continues", len(starts), len(continues))
-	}
-	assertRanWithWholeFirstMessage(t, agentRun{
-		prompt:       starts[1].prompt + "\n" + senderLabel,
-		systemPrompt: starts[1].systemPrompt,
-	})
-	if !strings.Contains(starts[1].prompt, followUpText) {
-		t.Errorf("the reply did not run:\n%s", starts[1].prompt)
+	assertLastStartRanTheReplyWithTheFirstMessage(t, live.agent)
+	if starts, _ := live.agent.runs(); len(starts) != 2 {
+		t.Errorf("ran %d starts, want 2", len(starts))
 	}
 	job, _ = live.state.GetJobData("j1")
 	if job.Status != models.JobStatusCompleted || job.ClaudeSessionID != "session-1" || len(job.StartPayload) != 0 {
@@ -767,7 +956,7 @@ func TestAReplyWithNoLocalJobInAskModeCommitsNothing(t *testing.T) {
 	t.Setenv("MAX_CONCURRENCY", "2")
 	gitClient := clients.NewGitClient()
 	gitClient.SetRepoPathProvider(func() string { return repo })
-	agent := &recordingAgent{session: "session-1", onStart: func(workDir string) error {
+	agent := &recordingAgent{session: "session-1", onRun: func(_ context.Context, workDir string) error {
 		return os.WriteFile(filepath.Join(workDir, "scratch.txt"), []byte("not for a commit"), 0o600)
 	}}
 	handler, _ := handlerWithOutbox(t, agent, gitClient)

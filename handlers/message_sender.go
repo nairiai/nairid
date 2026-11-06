@@ -536,8 +536,8 @@ func (ms *MessageSender) QueueMessage(event string, data any) {
 }
 
 // QueueMessageWith is QueueMessage for a reply that must reach disk in one write with the caller's
-// own state. persist does that write and gets the outbox entry, nil when there is no outbox. The
-// reply is queued whatever persist returns: the state in memory already holds it.
+// own state. persist does that write and gets the outbox entry, nil when there is no outbox. A
+// failed write sends nothing: the disk still has the turn running, so a restart would answer again.
 func (ms *MessageSender) QueueMessageWith(event string, data any, persist func(entry *models.OutboxMessage) error) error {
 	log.Info("📥 MessageSender: Queueing message for event '%s'", event)
 	msg := OutgoingMessage{Event: event, Data: data}
@@ -546,10 +546,13 @@ func (ms *MessageSender) QueueMessageWith(event string, data any, persist func(e
 		ms.markPending(entry.ID)
 		msg.outboxID = entry.ID
 	}
-	err := persist(entry)
+	if err := persist(entry); err != nil {
+		ms.settleOutbox(msg.outboxID, false)
+		return err
+	}
 	ms.messageQueue <- msg
 	log.Info("📤 MessageSender: Message for event '%s' has been consumed by sender", event)
-	return err
+	return nil
 }
 
 // QueueMessageLater persists a reply for the sender to deliver once it runs, without waiting.

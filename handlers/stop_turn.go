@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync/atomic"
@@ -104,6 +105,7 @@ func (mh *MessageHandler) finishStoppedTurn(
 		return &core.ErrTurnStopped{}
 	}
 
+	jobData.StartPayload = nil
 	jobData.Status = models.JobStatusCompleted
 	jobData.UpdatedAt = time.Now()
 	if err := mh.appState.UpdateJobData(jobData.JobID, jobData); err != nil {
@@ -156,8 +158,14 @@ func (mh *MessageHandler) keepJobWithoutSession(jobData models.JobData) error {
 	return nil
 }
 
+// The stored message is what a reply to a job stopped before it had a session starts over from.
 func jobDataForStart(start models.StartConversationPayload) models.JobData {
+	startPayload, err := json.Marshal(start)
+	if err != nil {
+		log.Warn("⚠️ Failed to store the first message of stopped job %s: %v", start.JobID, err)
+	}
 	return models.JobData{
+		StartPayload:       startPayload,
 		JobID:              start.JobID,
 		LastMessage:        start.Message,
 		ProcessedMessageID: start.ProcessedMessageID,
