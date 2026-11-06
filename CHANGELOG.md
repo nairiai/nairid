@@ -1,3 +1,9 @@
+## [v0.0.136] - 2026-11-06
+
+### Bugfixes
+
+- Handle an unreadable state file ([#260](https://github.com/nairiai/nairid/pull/260))
+
 ## [v0.0.135] - 2026-11-05
 
 ### Bugfixes
