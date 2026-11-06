@@ -862,6 +862,9 @@ func (g *GitUseCase) CleanupStaleBranches() error {
 		log.Info("📦 No-repo mode: Skipping branch cleanup")
 		return nil
 	}
+	if g.cleanupHeld("stale branch cleanup") {
+		return nil
+	}
 
 	// Get all local branches
 	localBranches, err := g.gitClient.GetLocalBranches()
@@ -1252,7 +1255,15 @@ func (g *GitUseCase) PrepareForNewConversationWithWorktree(jobID, conversationHi
 	}
 
 	existingWorktreePath := filepath.Join(worktreeBasePath, jobID)
-	if g.gitClient.WorktreeExists(existingWorktreePath) {
+	// A follow-up on a job the lost state forgot arrives here as a new conversation.
+	hold := g.appState.CleanupHold()
+	if hold != "" {
+		if err := g.keepExistingWorktree(existingWorktreePath); err != nil {
+			log.Error("❌ Failed to keep existing worktree for jobID %s: %v", jobID, err)
+			return "", "", fmt.Errorf("failed to keep existing worktree: %w", err)
+		}
+	}
+	if hold == "" && g.gitClient.WorktreeExists(existingWorktreePath) {
 		log.Warn("⚠️ Worktree already exists for jobID %s at %s - cleaning up before creating new one", jobID, existingWorktreePath)
 
 		// Get the branch name from the existing worktree for cleanup
@@ -1487,6 +1498,44 @@ func (g *GitUseCase) CleanupJobWorktree(worktreePath, branchName string) error {
 	return nil
 }
 
+// keepExistingWorktree moves a worktree out of the way of a new one without losing what is in it.
+func (g *GitUseCase) keepExistingWorktree(worktreePath string) error {
+	if _, err := os.Lstat(worktreePath); os.IsNotExist(err) {
+		return nil
+	}
+	keptPath := fmt.Sprintf("%s.kept-%d", worktreePath, time.Now().UnixNano())
+	log.Error("🛑 Keeping the worktree of a job the lost state forgot: moving %s to %s", worktreePath, keptPath)
+	if g.gitClient.WorktreeExists(worktreePath) && g.gitClient.MoveWorktree(worktreePath, keptPath) == nil {
+		return nil
+	}
+	if err := os.Rename(worktreePath, keptPath); err != nil {
+		return err
+	}
+	// git refuses to add a worktree at a path it still has registered.
+	if err := g.gitClient.PruneWorktrees(); err != nil {
+		log.Warn("⚠️ Failed to prune worktrees after moving %s: %v", worktreePath, err)
+	}
+	return nil
+}
+
+// cleanupHeld reports whether a lost state file is holding back the named cleanup.
+func (g *GitUseCase) cleanupHeld(cleanupName string) bool {
+	hold := g.appState.CleanupHold()
+	if hold == "" {
+		return false
+	}
+	log.Error("🛑 Skipping %s: %s", cleanupName, hold)
+	return true
+}
+
+// CleanupStaleJobWorktrees removes job worktrees whose git links are broken. It needs the pool to be set.
+func (g *GitUseCase) CleanupStaleJobWorktrees() error {
+	if g.cleanupHeld("stale job worktree cleanup") {
+		return nil
+	}
+	return g.worktreePool.CleanupStaleJobWorktrees()
+}
+
 // CleanupOrphanedWorktrees removes worktrees that don't correspond to any tracked job
 func (g *GitUseCase) CleanupOrphanedWorktrees() error {
 	log.Info("📋 Starting to cleanup orphaned worktrees")
@@ -1495,6 +1544,9 @@ func (g *GitUseCase) CleanupOrphanedWorktrees() error {
 	repoContext := g.appState.GetRepositoryContext()
 	if !repoContext.IsRepoMode {
 		log.Info("📦 No-repo mode: Skipping orphaned worktree cleanup")
+		return nil
+	}
+	if g.cleanupHeld("orphaned worktree cleanup") {
 		return nil
 	}
 

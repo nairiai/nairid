@@ -969,7 +969,7 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 		// Clean up stale job worktrees with broken git references
 		// This can happen when containers are recreated - old job worktrees remain
 		// but their git links point to non-existent directories
-		if err := worktreePool.CleanupStaleJobWorktrees(); err != nil {
+		if err := gitUseCase.CleanupStaleJobWorktrees(); err != nil {
 			log.Warn("⚠️ Failed to clean up stale job worktrees: %v", err)
 		}
 
