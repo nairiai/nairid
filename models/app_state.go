@@ -519,10 +519,8 @@ func SetAsideUnreadableState(statePath string) (string, error) {
 	return asidePath, nil
 }
 
-// CleanupHold returns why nothing may delete worktrees or branches, or "" if nothing holds them.
-// Cleanup treats whatever the state doesn't track as orphaned, so after a lost state file it would
-// delete live work. The check reads the disk each time because the empty state that replaced the
-// lost one looks normal after a restart, and so that an operator can clear the hold without a restart.
+// CleanupHold checks for set-aside unreadable state files before cleanup can delete forgotten work.
+// Reading disk each time preserves the hold across restarts and lets an operator clear it.
 func (a *AppState) CleanupHold() string {
 	dir := filepath.Dir(a.statePath)
 	entries, err := os.ReadDir(dir)

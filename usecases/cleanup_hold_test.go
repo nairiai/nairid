@@ -273,3 +273,115 @@ func TestPrepareWorktree_StillReplacesAnExistingWorktreeWhenNotHeld(t *testing.T
 		t.Errorf("kept worktrees = %v, want none", kept)
 	}
 }
+
+const (
+	forgottenEdit    = "# edited by a job the state forgot\n"
+	forgottenNewFile = "forgotten-untracked.txt"
+)
+
+// leaveForgottenWork puts the shared checkout where a lost job left it: on its branch, nothing committed.
+func (f cleanupHoldFixture) leaveForgottenWork(t *testing.T) {
+	t.Helper()
+	gitOutput(t, f.mainRepo, "checkout", "-b", "nairid/forgotten")
+	f.writeFile(t, "README.md", forgottenEdit)
+	f.writeFile(t, forgottenNewFile, "work")
+}
+
+func (f cleanupHoldFixture) writeFile(t *testing.T, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(f.mainRepo, name), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (f cleanupHoldFixture) readFile(t *testing.T, name string) string {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join(f.mainRepo, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(content)
+}
+
+func TestPrepareSequential_StashesUncommittedWorkWhileHeldAndKeepsItOnceCleared(t *testing.T) {
+	f := newCleanupHoldFixture(t)
+	asidePath := f.setAsideState(t)
+	f.leaveForgottenWork(t)
+
+	branch, err := f.gitUseCase.PrepareForNewConversation("hint")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current := gitOutput(t, f.mainRepo, "branch", "--show-current"); current != branch {
+		t.Errorf("current branch = %q, want the new conversation's %q", current, branch)
+	}
+	if status := gitOutput(t, f.mainRepo, "status", "--porcelain"); status != "" {
+		t.Errorf("new conversation started on a dirty checkout: %q", status)
+	}
+
+	if err := os.Remove(asidePath); err != nil {
+		t.Fatal(err)
+	}
+	f.runAllCleanup(t)
+
+	gitOutput(t, f.mainRepo, "stash", "pop")
+	if got := f.readFile(t, "README.md"); got != forgottenEdit {
+		t.Errorf("tracked edit after stash pop = %q, want %q", got, forgottenEdit)
+	}
+	if got := f.readFile(t, forgottenNewFile); got != "work" {
+		t.Errorf("untracked file after stash pop = %q", got)
+	}
+}
+
+func TestPrepareSequential_StashesNothingWhenTheCheckoutIsClean(t *testing.T) {
+	f := newCleanupHoldFixture(t)
+	f.setAsideState(t)
+
+	if _, err := f.gitUseCase.PrepareForNewConversation("hint"); err != nil {
+		t.Fatal(err)
+	}
+	if stashes := gitOutput(t, f.mainRepo, "stash", "list"); stashes != "" {
+		t.Errorf("stash list = %q, want empty", stashes)
+	}
+}
+
+// Git can't stash an index with unresolved conflicts, so this is how saving the work fails.
+func TestPrepareSequential_DestroysNothingWhenTheWorkCantBeStashed(t *testing.T) {
+	f := newCleanupHoldFixture(t)
+	f.setAsideState(t)
+
+	gitOutput(t, f.mainRepo, "checkout", "-b", "nairid/forgotten")
+	f.writeFile(t, "README.md", "ours\n")
+	gitOutput(t, f.mainRepo, "commit", "-am", "ours")
+	gitOutput(t, f.mainRepo, "checkout", "main")
+	f.writeFile(t, "README.md", "theirs\n")
+	gitOutput(t, f.mainRepo, "commit", "-am", "theirs")
+	merge := exec.Command("git", "merge", "nairid/forgotten")
+	merge.Dir = f.mainRepo
+	if err := merge.Run(); err == nil {
+		t.Fatal("merge should have conflicted")
+	}
+	f.writeFile(t, forgottenNewFile, "work")
+
+	if _, err := f.gitUseCase.PrepareForNewConversation("hint"); err == nil {
+		t.Fatal("prepare should fail when the work can't be stashed")
+	}
+	if got := f.readFile(t, forgottenNewFile); got != "work" {
+		t.Errorf("untracked file = %q", got)
+	}
+}
+
+func TestPrepareSequential_StillDiscardsUncommittedWorkWhenNotHeld(t *testing.T) {
+	f := newCleanupHoldFixture(t)
+	f.leaveForgottenWork(t)
+
+	if _, err := f.gitUseCase.PrepareForNewConversation("hint"); err != nil {
+		t.Fatal(err)
+	}
+	if stashes := gitOutput(t, f.mainRepo, "stash", "list"); stashes != "" {
+		t.Errorf("stash list = %q, want empty", stashes)
+	}
+	if status := gitOutput(t, f.mainRepo, "status", "--porcelain"); status != "" {
+		t.Errorf("checkout is dirty: %q", status)
+	}
+}

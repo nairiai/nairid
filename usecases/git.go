@@ -274,6 +274,8 @@ func (g *GitUseCase) SwitchToJobBranch(branchName string) error {
 	return nil
 }
 
+const heldWorkStashMessage = "nairid: uncommitted changes kept while the state file was unreadable"
+
 func (g *GitUseCase) PrepareForNewConversation(conversationHint string) (string, error) {
 	log.Info("📋 Starting to prepare for new conversation")
 
@@ -292,6 +294,14 @@ func (g *GitUseCase) PrepareForNewConversation(conversationHint string) (string,
 	}
 
 	log.Info("🌿 Generated branch name: %s", branchName)
+
+	// A follow-up on a job the lost state forgot arrives here as a new conversation.
+	if g.appState.CleanupHold() != "" {
+		if err := g.gitClient.StashAllChanges(heldWorkStashMessage); err != nil {
+			log.Error("❌ Failed to stash uncommitted changes: %v", err)
+			return "", fmt.Errorf("failed to keep uncommitted changes: %w", err)
+		}
+	}
 
 	// Use the common branch switching logic to get to main and pull latest
 	if _, err := g.resetAndPullDefaultBranch(); err != nil {
