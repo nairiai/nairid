@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -290,4 +292,66 @@ func TestSendWSWithRetry_RetriesOnFailure(t *testing.T) {
 	if len(wsCalls) != 3 {
 		t.Fatalf("expected 3 WS calls (2 failures + 1 success), got %d", len(wsCalls))
 	}
+}
+
+func TestQueueMessageWith(t *testing.T) {
+	reply := func() models.BaseMessage {
+		return models.BaseMessage{ID: "msg_1", Type: models.MessageTypeAssistantMessage}
+	}
+
+	t.Run("hands the outbox entry to the write and queues the reply", func(t *testing.T) {
+		sender := newMessageSenderForTest(NewConnectionState(), &mockHTTP{}, &mockWS{})
+		sender.SetOutbox(models.NewAppState("agent", filepath.Join(t.TempDir(), "state.json")))
+		var got *models.OutboxMessage
+		queued := make(chan error, 1)
+		go func() {
+			queued <- sender.QueueMessageWith("cc_message", reply(), func(entry *models.OutboxMessage) error {
+				got = entry
+				return nil
+			})
+		}()
+		sent := <-sender.messageQueue
+		if err := <-queued; err != nil {
+			t.Fatal(err)
+		}
+		if got == nil || got.ID != "msg_1" || sent.outboxID != "msg_1" {
+			t.Errorf("entry %+v, queued %+v", got, sent)
+		}
+	})
+
+	t.Run("no outbox means no entry", func(t *testing.T) {
+		sender := newMessageSenderForTest(NewConnectionState(), &mockHTTP{}, &mockWS{})
+		called := false
+		queued := make(chan error, 1)
+		go func() {
+			queued <- sender.QueueMessageWith("cc_message", reply(), func(entry *models.OutboxMessage) error {
+				called = true
+				if entry != nil {
+					t.Errorf("got entry %+v with no outbox", entry)
+				}
+				return nil
+			})
+		}()
+		<-sender.messageQueue
+		if err := <-queued; err != nil || !called {
+			t.Errorf("err %v, called %v", err, called)
+		}
+	})
+
+	t.Run("a failed write still queues the reply", func(t *testing.T) {
+		sender := newMessageSenderForTest(NewConnectionState(), &mockHTTP{}, &mockWS{})
+		sender.SetOutbox(models.NewAppState("agent", filepath.Join(t.TempDir(), "state.json")))
+		failure := errors.New("disk full")
+		queued := make(chan error, 1)
+		go func() {
+			queued <- sender.QueueMessageWith("cc_message", reply(), func(*models.OutboxMessage) error { return failure })
+		}()
+		sent := <-sender.messageQueue
+		if err := <-queued; !errors.Is(err, failure) {
+			t.Errorf("got %v", err)
+		}
+		if sent.Event != "cc_message" {
+			t.Errorf("queued %+v", sent)
+		}
+	})
 }

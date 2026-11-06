@@ -108,18 +108,9 @@ func RecoverJobs(
 			// No session = StartConversation (crashed before Claude)
 			log.Info("🔄 Recovering StartConversation job %s (age: %v)", jobID, jobAge)
 			msg = models.BaseMessage{
-				ID:   core.NewID("msg"),
-				Type: models.MessageTypeStartConversation,
-				Payload: models.StartConversationPayload{
-					JobID:                jobID,
-					Message:              jobData.LastMessage,
-					ProcessedMessageID:   jobData.ProcessedMessageID,
-					MessageLink:          jobData.MessageLink,
-					Mode:                 jobData.Mode,
-					ReasoningEffort:      jobData.ReasoningEffort,
-					ReasoningEffortModel: jobData.EffortModel,
-					SessionTimeoutMs:     jobData.SessionTimeoutMs,
-				},
+				ID:      core.NewID("msg"),
+				Type:    models.MessageTypeStartConversation,
+				Payload: startPayloadForRecovery(jobID, jobData),
 			}
 		} else {
 			// Has session = UserMessage (crashed during continuation)
@@ -332,6 +323,24 @@ func RestoreAppState(statePath string) (*models.AppState, string, error) {
 	log.Info("📥 Restored %d handled messages for deduplication, %d unsent replies", len(done), len(loadedState.Outbox))
 
 	return appState, agentID, nil
+}
+
+// startPayloadForRecovery replays the first message as received. Jobs written by an older version
+// didn't store it, so those rebuild what they can from the job.
+func startPayloadForRecovery(jobID string, job models.JobData) any {
+	if len(job.StartPayload) > 0 {
+		return job.StartPayload
+	}
+	return models.StartConversationPayload{
+		JobID:                jobID,
+		Message:              job.LastMessage,
+		ProcessedMessageID:   job.ProcessedMessageID,
+		MessageLink:          job.MessageLink,
+		Mode:                 job.Mode,
+		ReasoningEffort:      job.ReasoningEffort,
+		ReasoningEffortModel: job.EffortModel,
+		SessionTimeoutMs:     job.SessionTimeoutMs,
+	}
 }
 
 // recoverQueuedMessage replays a queued message with its full payload. It is dropped only

@@ -259,13 +259,28 @@ func (ms *MessageSender) emitRejectedOnce(msg OutgoingMessage) {
 
 // persistToOutbox stores the message before it is queued. Returns "" when there is no outbox or the write failed.
 func (ms *MessageSender) persistToOutbox(event string, data any) string {
-	if ms.outbox == nil {
+	entry := ms.newOutboxEntry(event, data)
+	if entry == nil {
 		return ""
+	}
+	ms.markPending(entry.ID)
+	if err := ms.outbox.AddOutboxMessage(*entry); err != nil {
+		log.Warn("⚠️ MessageSender: Failed to persist message %s to outbox: %v", entry.ID, err)
+		ms.settleOutbox(entry.ID, false)
+		return ""
+	}
+	return entry.ID
+}
+
+// newOutboxEntry returns nil when there is no outbox or the message can't be stored.
+func (ms *MessageSender) newOutboxEntry(event string, data any) *models.OutboxMessage {
+	if ms.outbox == nil {
+		return nil
 	}
 	raw, err := json.Marshal(data)
 	if err != nil {
 		log.Warn("⚠️ MessageSender: Failed to marshal message for outbox: %v", err)
-		return ""
+		return nil
 	}
 	var baseMsg models.BaseMessage
 	_ = json.Unmarshal(raw, &baseMsg)
@@ -273,14 +288,7 @@ func (ms *MessageSender) persistToOutbox(event string, data any) string {
 	if id == "" {
 		id = core.NewID("out")
 	}
-	ms.markPending(id)
-	entry := models.OutboxMessage{ID: id, Event: event, Data: raw, QueuedAt: time.Now()}
-	if err := ms.outbox.AddOutboxMessage(entry); err != nil {
-		log.Warn("⚠️ MessageSender: Failed to persist message %s to outbox: %v", id, err)
-		ms.settleOutbox(id, false)
-		return ""
-	}
-	return id
+	return &models.OutboxMessage{ID: id, Event: event, Data: raw, QueuedAt: time.Now()}
 }
 
 // markPending returns false if the outbox entry is already queued or being sent.
@@ -525,6 +533,23 @@ func (ms *MessageSender) QueueMessage(event string, data any) {
 	}
 	ms.messageQueue <- msg
 	log.Info("📤 MessageSender: Message for event '%s' has been consumed by sender", event)
+}
+
+// QueueMessageWith is QueueMessage for a reply that must reach disk in one write with the caller's
+// own state. persist does that write and gets the outbox entry, nil when there is no outbox. The
+// reply is queued whatever persist returns: the state in memory already holds it.
+func (ms *MessageSender) QueueMessageWith(event string, data any, persist func(entry *models.OutboxMessage) error) error {
+	log.Info("📥 MessageSender: Queueing message for event '%s'", event)
+	msg := OutgoingMessage{Event: event, Data: data}
+	entry := ms.newOutboxEntry(event, data)
+	if entry != nil {
+		ms.markPending(entry.ID)
+		msg.outboxID = entry.ID
+	}
+	err := persist(entry)
+	ms.messageQueue <- msg
+	log.Info("📤 MessageSender: Message for event '%s' has been consumed by sender", event)
+	return err
 }
 
 // QueueMessageLater persists a reply for the sender to deliver once it runs, without waiting.

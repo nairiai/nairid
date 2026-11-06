@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -169,6 +170,10 @@ func jobDataForStart(start models.StartConversationPayload) models.JobData {
 	}
 }
 
+// errLeftForPoller is a reply for a job this agent has no row for. A start built here would have no
+// prompt and no mode, and the backend sends both when the poller offers it. So it stays unacked.
+var errLeftForPoller = errors.New("reply left for the poller")
+
 // The turn is registered before its handler prepares the worktree, so a stop that lands
 // during the preparation still ends it.
 func (mh *MessageHandler) runTurn(jobID, processedMessageID string, handle func(ctx context.Context) error) {
@@ -186,6 +191,9 @@ func (mh *MessageHandler) runTurn(jobID, processedMessageID string, handle func(
 		// the turn is reported as it went.
 		log.Info("🛑 Answering the stop of job %s: not running (%v)", jobID, err)
 		mh.sendTurnStopped(jobID, processedMessageID, models.TurnStopOutcomeNotRunning)
+	}
+	if errors.Is(err, errLeftForPoller) {
+		return
 	}
 	if err != nil && IsShuttingDown() {
 		// Most likely the CLI was killed with us; recovery reruns the turn after the restart.

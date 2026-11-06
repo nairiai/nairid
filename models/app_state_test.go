@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -26,6 +27,7 @@ func TestJobDataIsReadBackWithEveryField(t *testing.T) {
 		ReasoningEffort:    "xhigh",
 		EffortModel:        "claude-opus-4-8",
 		SessionTimeoutMs:   7200000,
+		StartPayload:       json.RawMessage(`{"job_id":"j1"}`),
 		UpdatedAt:          time.Date(2026, 10, 2, 10, 0, 0, 0, time.UTC),
 	}
 	fields := reflect.ValueOf(want)
@@ -230,5 +232,64 @@ func TestCleanupHold_IgnoresOtherFiles(t *testing.T) {
 	missing := filepath.Join(dir, "no-such-dir", "state.json")
 	if hold := NewAppState("agent", missing).CleanupHold(); hold != "" {
 		t.Fatalf("held by a missing directory: %s", hold)
+	}
+}
+
+// One write is what makes a crash leave either all of a finished turn or none of it.
+func TestCompleteTurnIsOneWrite(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	appState := NewAppState("agent", statePath)
+	if err := appState.AddQueuedMessage(QueuedMessage{ProcessedMessageID: "cmsg_1", JobID: "j1", QueuedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	writes := 0
+	restore := SetAfterPersistForTest(func(path string) {
+		if path == statePath {
+			writes++
+		}
+	})
+	defer restore()
+
+	err := appState.CompleteTurn(
+		JobData{JobID: "j1", ProcessedMessageID: "cmsg_1", Status: JobStatusCompleted, ClaudeSessionID: "session-1"},
+		&OutboxMessage{ID: "out_1", Event: "cc_message", Data: json.RawMessage(`{}`), QueuedAt: time.Now()},
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if writes != 1 {
+		t.Errorf("finishing a turn took %d writes, want 1", writes)
+	}
+
+	loaded, err := LoadState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job := loaded.Jobs["j1"]; job == nil || job.Status != JobStatusCompleted || job.ClaudeSessionID != "session-1" {
+		t.Errorf("job read back as %+v", job)
+	}
+	if loaded.Outbox["out_1"] == nil {
+		t.Error("reply was not stored")
+	}
+	if _, done := loaded.DoneMessages["cmsg_1"]; !done {
+		t.Error("message was not marked done")
+	}
+	if loaded.QueuedMessages["cmsg_1"] != nil {
+		t.Error("message is still queued")
+	}
+}
+
+func TestCompleteTurnWithNoOutboxEntryStillFinishesTheTurn(t *testing.T) {
+	appState := NewAppState("agent", filepath.Join(t.TempDir(), "state.json"))
+	err := appState.CompleteTurn(JobData{JobID: "j1", ProcessedMessageID: "cmsg_1", Status: JobStatusCompleted}, nil, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !appState.IsMessageDone("cmsg_1") {
+		t.Error("message was not marked done")
+	}
+	if len(appState.GetAllOutboxMessages()) != 0 {
+		t.Error("nothing should be in the outbox")
 	}
 }

@@ -1,6 +1,9 @@
 package handlers
 
 import (
+	"cmp"
+	"encoding/json"
+
 	"nairid/core/log"
 	"nairid/models"
 )
@@ -52,24 +55,44 @@ func effortForTurn(jobID, level, checkedModel, ownModel string) string {
 }
 
 // startPayloadForUnstartedJob turns a reply into a conversation start, for a job
-// that has no CLI session yet. job is nil when this agent has never seen the job.
+// that has no CLI session yet. The first message it can't resume goes into the history.
 func startPayloadForUnstartedJob(reply models.UserMessagePayload, job *models.JobData) models.StartConversationPayload {
-	start := models.StartConversationPayload{
-		JobID:              reply.JobID,
-		Message:            reply.Message,
-		ProcessedMessageID: reply.ProcessedMessageID,
-		MessageLink:        reply.MessageLink,
-		Attachments:        reply.Attachments,
-		PreviousMessages:   reply.PreviousMessages,
-		SenderMetadata:     reply.SenderMetadata,
-		SessionTimeoutMs:   reply.SessionTimeoutMs,
+	var first models.StartConversationPayload
+	if len(job.StartPayload) > 0 {
+		if err := json.Unmarshal(job.StartPayload, &first); err != nil {
+			log.Warn("⚠️ Ignoring the stored first message of job %s: %v", reply.JobID, err)
+			first = models.StartConversationPayload{}
+		}
 	}
-	if job != nil {
-		start.Mode = job.Mode
-		start.SystemPrompt = job.SystemPrompt
-		start.ReasoningEffort = job.ReasoningEffort
-		start.ReasoningEffortModel = job.EffortModel
-		start.SessionTimeoutMs = latestSessionTimeoutMs(reply.SessionTimeoutMs, job.SessionTimeoutMs)
+
+	// The first message offered again rather than a new reply: run it as it came, or it lands in its own history.
+	if first.ProcessedMessageID != "" && first.ProcessedMessageID == reply.ProcessedMessageID {
+		return first
 	}
-	return start
+
+	return models.StartConversationPayload{
+		JobID:                reply.JobID,
+		Message:              reply.Message,
+		ProcessedMessageID:   reply.ProcessedMessageID,
+		MessageLink:          reply.MessageLink,
+		Mode:                 job.Mode,
+		SystemPrompt:         cmp.Or(first.SystemPrompt, job.SystemPrompt),
+		Attachments:          reply.Attachments,
+		PreviousMessages:     historyBefore(first, reply),
+		SenderMetadata:       reply.SenderMetadata,
+		ReasoningEffort:      job.ReasoningEffort,
+		ReasoningEffortModel: job.EffortModel,
+		SessionTimeoutMs:     latestSessionTimeoutMs(reply.SessionTimeoutMs, job.SessionTimeoutMs),
+	}
+}
+
+// historyBefore is what came before a reply to a first turn that never made a session: the first
+// message's history, the first message, then whatever the reply brought.
+func historyBefore(first models.StartConversationPayload, reply models.UserMessagePayload) []models.PreviousMessage {
+	if first.Message == "" {
+		return reply.PreviousMessages
+	}
+	history := append([]models.PreviousMessage{}, first.PreviousMessages...)
+	history = append(history, models.PreviousMessage{Message: first.Message, Attachments: first.Attachments})
+	return append(history, reply.PreviousMessages...)
 }
