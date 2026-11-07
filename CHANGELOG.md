@@ -1,3 +1,10 @@
+## [v0.0.138] - 2026-11-07
+
+### Bugfixes
+
+- Git and gh in the repo and job worktrees run as the agent user ([#263](https://github.com/nairiai/nairid/pull/263))
+  - Repo hooks and git config that the agent can edit no longer run with the daemon's privileges
+
 ## [v0.0.137] - 2026-11-06
 
 ### Bugfixes
