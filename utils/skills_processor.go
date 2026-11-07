@@ -12,6 +12,9 @@ import (
 	"nairid/core/log"
 )
 
+// maxSkillEntryBytes caps how far one skill file may expand, since the sizes a zip declares are not trusted.
+const maxSkillEntryBytes = 64 << 20
+
 // SkillsProcessor defines the interface for processing agent-specific skills
 type SkillsProcessor interface {
 	// ProcessSkills processes skills from the eksecd skills directory
@@ -249,10 +252,9 @@ func extractZipFile(file *zip.File, targetPath string) error {
 	}
 	defer func() { _ = rc.Close() }()
 
-	// Read entire content into memory
-	content, err := io.ReadAll(rc)
+	content, err := readZipEntry(rc, maxSkillEntryBytes)
 	if err != nil {
-		return fmt.Errorf("failed to read file content: %w", err)
+		return err
 	}
 
 	// Preserve the execute bit from the original file in the ZIP archive.
@@ -269,6 +271,18 @@ func extractZipFile(file *zip.File, targetPath string) error {
 	}
 
 	return nil
+}
+
+// readZipEntry reads at most maxBytes, counting the bytes actually read.
+func readZipEntry(r io.Reader, maxBytes int64) ([]byte, error) {
+	content, err := io.ReadAll(io.LimitReader(r, maxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file content: %w", err)
+	}
+	if int64(len(content)) > maxBytes {
+		return nil, fmt.Errorf("file expands to more than %d MB", maxBytes>>20)
+	}
+	return content, nil
 }
 
 // ClaudeCodeSkillsProcessor handles skills processing for Claude Code
