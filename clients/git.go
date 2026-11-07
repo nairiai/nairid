@@ -112,9 +112,6 @@ func (g *GitClient) executeWithRetry(cmd *exec.Cmd, operationName string) ([]byt
 	retryBackoff.MaxElapsedTime = 2 * time.Minute
 	retryBackoff.Multiplier = 2
 
-	// Preserve original working directory for retries
-	originalDir := cmd.Dir
-
 	retryOperation := func() error {
 		output, err = cmd.CombinedOutput()
 
@@ -128,9 +125,7 @@ func (g *GitClient) executeWithRetry(cmd *exec.Cmd, operationName string) ([]byt
 			} else {
 				log.Info("⏳ GitHub API recoverable error detected for %s, retrying...", operationName)
 			}
-			// Reset command for retry, preserving working directory
-			cmd = exec.Command(cmd.Args[0], cmd.Args[1:]...)
-			cmd.Dir = originalDir
+			cmd = rebuildCommand(cmd)
 			return err // This will trigger a retry
 		}
 
@@ -152,7 +147,7 @@ func (g *GitClient) executeWithRetry(cmd *exec.Cmd, operationName string) ([]byt
 func (g *GitClient) CheckoutBranch(branchName string) error {
 	log.Info("📋 Starting to checkout branch: %s", branchName)
 
-	cmd := exec.Command("git", "checkout", branchName)
+	cmd := newRepoCommand("git", "checkout", branchName)
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -169,7 +164,7 @@ func (g *GitClient) CheckoutBranch(branchName string) error {
 func (g *GitClient) PullLatest() error {
 	log.Info("📋 Starting to pull latest changes")
 
-	cmd := exec.Command("git", "pull", "--rebase")
+	cmd := newRepoCommand("git", "pull", "--rebase")
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -233,7 +228,7 @@ func (g *GitClient) ResetHard() error {
 		return nil
 	}
 
-	cmd := exec.Command("git", "reset", "--hard", "HEAD")
+	cmd := newRepoCommand("git", "reset", "--hard", "HEAD")
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -251,7 +246,7 @@ func (g *GitClient) ResetHard() error {
 func (g *GitClient) ResetHardToRef(ref string) error {
 	log.Info("📋 Starting to reset hard to ref: %s", ref)
 
-	cmd := exec.Command("git", "reset", "--hard", ref)
+	cmd := newRepoCommand("git", "reset", "--hard", ref)
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -268,7 +263,7 @@ func (g *GitClient) ResetHardToRef(ref string) error {
 func (g *GitClient) hasCommits() (bool, error) {
 	// Use git rev-parse --verify HEAD to check if HEAD exists
 	// This will return an error if there are no commits
-	cmd := exec.Command("git", "rev-parse", "--verify", "HEAD")
+	cmd := newRepoCommand("git", "rev-parse", "--verify", "HEAD")
 	g.setWorkDir(cmd)
 	err := cmd.Run()
 
@@ -280,7 +275,7 @@ func (g *GitClient) hasCommits() (bool, error) {
 // HasUpstreamTracking checks if the current branch has upstream tracking configured.
 // Returns true if the branch has been pushed and is tracking a remote branch.
 func (g *GitClient) HasUpstreamTracking() (bool, error) {
-	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "@{u}")
+	cmd := newRepoCommand("git", "rev-parse", "--abbrev-ref", "@{u}")
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -302,7 +297,7 @@ func (g *GitClient) HasUpstreamTracking() (bool, error) {
 
 // HasUpstreamTrackingInWorktree checks if the current branch in a worktree has upstream tracking.
 func (g *GitClient) HasUpstreamTrackingInWorktree(worktreePath string) (bool, error) {
-	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "@{u}")
+	cmd := newRepoCommand("git", "rev-parse", "--abbrev-ref", "@{u}")
 	cmd.Dir = worktreePath
 	output, err := cmd.CombinedOutput()
 
@@ -325,7 +320,7 @@ func (g *GitClient) HasUpstreamTrackingInWorktree(worktreePath string) (bool, er
 // StashAllChanges saves tracked edits and untracked files on the stash, the same files
 // ResetHard and CleanUntracked discard. With nothing to save it does nothing.
 func (g *GitClient) StashAllChanges(message string) error {
-	cmd := exec.Command("git", "stash", "push", "--include-untracked", "--message", message)
+	cmd := newRepoCommand("git", "stash", "push", "--include-untracked", "--message", message)
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -340,7 +335,7 @@ func (g *GitClient) StashAllChanges(message string) error {
 func (g *GitClient) CleanUntracked() error {
 	log.Info("📋 Starting to clean untracked files")
 
-	cmd := exec.Command("git", "clean", "-fd")
+	cmd := newRepoCommand("git", "clean", "-fd")
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -357,7 +352,7 @@ func (g *GitClient) CleanUntracked() error {
 func (g *GitClient) AddAll() error {
 	log.Info("📋 Starting to add all changes")
 
-	cmd := exec.Command("git", "add", ".")
+	cmd := newRepoCommand("git", "add", ".")
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -374,7 +369,7 @@ func (g *GitClient) AddAll() error {
 func (g *GitClient) Commit(message string) error {
 	log.Info("📋 Starting to commit with message: %s", message)
 
-	cmd := exec.Command("git", "commit", "-m", message)
+	cmd := newRepoCommand("git", "commit", "-m", message)
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -391,7 +386,7 @@ func (g *GitClient) Commit(message string) error {
 func (g *GitClient) PushBranch(branchName string) error {
 	log.Info("📋 Starting to push branch: %s", branchName)
 
-	cmd := exec.Command("git", "push", "-u", "origin", branchName)
+	cmd := newRepoCommand("git", "push", "-u", "origin", branchName)
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -419,7 +414,7 @@ func (g *GitClient) CreatePullRequest(title, body, baseBranch string) (string, e
 		finalBody = validationResult.DescriptionPrefix + body
 	}
 
-	cmd := exec.Command("gh", "pr", "create", "--title", validationResult.Title, "--body", finalBody, "--base", baseBranch)
+	cmd := newRepoCommand("gh", "pr", "create", "--title", validationResult.Title, "--body", finalBody, "--base", baseBranch)
 	g.setWorkDir(cmd)
 	output, err := g.executeWithRetry(cmd, "create pull request")
 
@@ -439,7 +434,7 @@ func (g *GitClient) CreatePullRequest(title, body, baseBranch string) (string, e
 func (g *GitClient) GetPRURL(branchName string) (string, error) {
 	log.Info("📋 Starting to get PR URL for branch: %s", branchName)
 
-	cmd := exec.Command("gh", "pr", "view", branchName, "--json", "url", "--jq", ".url")
+	cmd := newRepoCommand("gh", "pr", "view", branchName, "--json", "url", "--jq", ".url")
 	g.setWorkDir(cmd)
 	output, err := g.executeWithRetry(cmd, "get PR URL")
 
@@ -458,7 +453,7 @@ func (g *GitClient) GetPRURL(branchName string) (string, error) {
 func (g *GitClient) GetCurrentBranch() (string, error) {
 	log.Info("📋 Starting to get current branch")
 
-	cmd := exec.Command("git", "branch", "--show-current")
+	cmd := newRepoCommand("git", "branch", "--show-current")
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -486,7 +481,7 @@ func (g *GitClient) GetDefaultBranch() (string, error) {
 	log.Info("📋 Starting to determine default branch")
 
 	// Run git remote show origin to get HEAD branch information
-	cmd := exec.Command("git", "remote", "show", "origin")
+	cmd := newRepoCommand("git", "remote", "show", "origin")
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -520,7 +515,7 @@ func (g *GitClient) GetDefaultBranch() (string, error) {
 func (g *GitClient) CreateAndCheckoutBranch(branchName string) error {
 	log.Info("📋 Starting to create and checkout branch: %s", branchName)
 
-	cmd := exec.Command("git", "checkout", "-b", branchName)
+	cmd := newRepoCommand("git", "checkout", "-b", branchName)
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -537,7 +532,7 @@ func (g *GitClient) CreateAndCheckoutBranch(branchName string) error {
 func (g *GitClient) IsGitRepository() error {
 	log.Info("📋 Starting to check if current directory is a Git repository")
 
-	cmd := exec.Command("git", "rev-parse", "--git-dir")
+	cmd := newRepoCommand("git", "rev-parse", "--git-dir")
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -554,7 +549,7 @@ func (g *GitClient) IsGitRepository() error {
 func (g *GitClient) IsGitRepositoryRoot() error {
 	log.Info("📋 Starting to check if target directory is the Git repository root")
 
-	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	cmd := newRepoCommand("git", "rev-parse", "--show-toplevel")
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -594,7 +589,7 @@ func (g *GitClient) IsGitRepositoryRoot() error {
 func (g *GitClient) HasRemoteRepository() error {
 	log.Info("📋 Starting to check for remote repository")
 
-	cmd := exec.Command("git", "remote", "-v")
+	cmd := newRepoCommand("git", "remote", "-v")
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -618,7 +613,7 @@ func (g *GitClient) IsGitHubCLIAvailable() error {
 	log.Info("📋 Starting to check GitHub CLI availability")
 
 	// Check if gh command exists
-	cmd := exec.Command("gh", "--version")
+	cmd := newRepoCommand("gh", "--version")
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -628,7 +623,7 @@ func (g *GitClient) IsGitHubCLIAvailable() error {
 	}
 
 	// Check if gh is authenticated
-	cmd = exec.Command("gh", "auth", "status")
+	cmd = newRepoCommand("gh", "auth", "status")
 	g.setWorkDir(cmd)
 	output, err = cmd.CombinedOutput()
 
@@ -646,7 +641,7 @@ func (g *GitClient) HasUncommittedChanges() (bool, error) {
 	log.Info("📋 Starting to check for uncommitted changes")
 
 	// Check for staged and unstaged changes
-	cmd := exec.Command("git", "status", "--porcelain")
+	cmd := newRepoCommand("git", "status", "--porcelain")
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -673,7 +668,7 @@ func (g *GitClient) HasExistingPR(branchName string) (bool, error) {
 	log.Info("📋 Starting to check for existing PR for branch: %s", branchName)
 
 	// Use GitHub CLI to list PRs for the current branch
-	cmd := exec.Command("gh", "pr", "list", "--head", branchName, "--json", "number")
+	cmd := newRepoCommand("gh", "pr", "list", "--head", branchName, "--json", "number")
 	g.setWorkDir(cmd)
 	output, err := g.executeWithRetry(cmd, "check existing PR")
 
@@ -699,7 +694,7 @@ func (g *GitClient) HasExistingPR(branchName string) (bool, error) {
 func (g *GitClient) GetLatestCommitHash() (string, error) {
 	log.Info("📋 Starting to get latest commit hash")
 
-	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd := newRepoCommand("git", "rev-parse", "HEAD")
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -724,7 +719,7 @@ func RedactURLCredentials(s string) string {
 func (g *GitClient) getRawRemoteURL() (string, error) {
 	log.Info("📋 Starting to get raw remote URL")
 
-	cmd := exec.Command("git", "remote", "get-url", "origin")
+	cmd := newRepoCommand("git", "remote", "get-url", "origin")
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -742,7 +737,7 @@ func (g *GitClient) getRawRemoteURL() (string, error) {
 func (g *GitClient) GetRemoteURL() (string, error) {
 	log.Info("📋 Starting to get remote URL")
 
-	cmd := exec.Command("git", "remote", "get-url", "origin")
+	cmd := newRepoCommand("git", "remote", "get-url", "origin")
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -803,7 +798,7 @@ func (g *GitClient) GetRepositoryIdentifier() (string, error) {
 func (g *GitClient) GetPRDescription(branchName string) (string, error) {
 	log.Info("📋 Starting to get PR description for branch: %s", branchName)
 
-	cmd := exec.Command("gh", "pr", "view", branchName, "--json", "body", "--jq", ".body")
+	cmd := newRepoCommand("gh", "pr", "view", branchName, "--json", "body", "--jq", ".body")
 	g.setWorkDir(cmd)
 	output, err := g.executeWithRetry(cmd, "get PR description")
 
@@ -821,7 +816,7 @@ func (g *GitClient) GetPRDescription(branchName string) (string, error) {
 func (g *GitClient) UpdatePRDescription(branchName, newDescription string) error {
 	log.Info("📋 Starting to update PR description for branch: %s", branchName)
 
-	cmd := exec.Command("gh", "pr", "edit", branchName, "--body", newDescription)
+	cmd := newRepoCommand("gh", "pr", "edit", branchName, "--body", newDescription)
 	g.setWorkDir(cmd)
 	output, err := g.executeWithRetry(cmd, "update PR description")
 
@@ -838,7 +833,7 @@ func (g *GitClient) UpdatePRDescription(branchName, newDescription string) error
 func (g *GitClient) GetPRTitle(branchName string) (string, error) {
 	log.Info("📋 Starting to get PR title for branch: %s", branchName)
 
-	cmd := exec.Command("gh", "pr", "view", branchName, "--json", "title", "--jq", ".title")
+	cmd := newRepoCommand("gh", "pr", "view", branchName, "--json", "title", "--jq", ".title")
 	g.setWorkDir(cmd)
 	output, err := g.executeWithRetry(cmd, "get PR title")
 
@@ -881,7 +876,7 @@ func (g *GitClient) UpdatePRTitle(branchName, newTitle string) error {
 	}
 
 	// Update the title
-	cmd := exec.Command("gh", "pr", "edit", branchName, "--title", validationResult.Title)
+	cmd := newRepoCommand("gh", "pr", "edit", branchName, "--title", validationResult.Title)
 	g.setWorkDir(cmd)
 	output, err := g.executeWithRetry(cmd, "update PR title")
 
@@ -898,7 +893,7 @@ func (g *GitClient) UpdatePRTitle(branchName, newTitle string) error {
 func (g *GitClient) GetPRState(branchName string) (string, error) {
 	log.Info("📋 Starting to get PR state for branch: %s", branchName)
 
-	cmd := exec.Command("gh", "pr", "view", branchName, "--json", "state", "--jq", ".state")
+	cmd := newRepoCommand("gh", "pr", "view", branchName, "--json", "state", "--jq", ".state")
 	g.setWorkDir(cmd)
 	output, err := g.executeWithRetry(cmd, "get PR state")
 
@@ -930,7 +925,7 @@ func (g *GitClient) ExtractPRIDFromURL(prURL string) string {
 func (g *GitClient) GetPRStateByID(prID string) (string, error) {
 	log.Info("📋 Starting to get PR state by ID: %s", prID)
 
-	cmd := exec.Command("gh", "pr", "view", prID, "--json", "state", "--jq", ".state")
+	cmd := newRepoCommand("gh", "pr", "view", prID, "--json", "state", "--jq", ".state")
 	g.setWorkDir(cmd)
 	output, err := g.executeWithRetry(cmd, "get PR state by ID")
 
@@ -970,7 +965,7 @@ func parsePRMergedBy(jsonOutput []byte) string {
 func (g *GitClient) GetPRMergedBy(branchName string) (string, error) {
 	log.Info("📋 Starting to get PR merger for branch: %s", branchName)
 
-	cmd := exec.Command("gh", "pr", "view", branchName, "--json", "mergedBy")
+	cmd := newRepoCommand("gh", "pr", "view", branchName, "--json", "mergedBy")
 	g.setWorkDir(cmd)
 	output, err := g.executeWithRetry(cmd, "get PR merger")
 
@@ -990,7 +985,7 @@ func (g *GitClient) GetPRMergedBy(branchName string) (string, error) {
 func (g *GitClient) GetPRMergedByID(prID string) (string, error) {
 	log.Info("📋 Starting to get PR merger by ID: %s", prID)
 
-	cmd := exec.Command("gh", "pr", "view", prID, "--json", "mergedBy")
+	cmd := newRepoCommand("gh", "pr", "view", prID, "--json", "mergedBy")
 	g.setWorkDir(cmd)
 	output, err := g.executeWithRetry(cmd, "get PR merger by ID")
 
@@ -1008,7 +1003,7 @@ func (g *GitClient) GetPRMergedByID(prID string) (string, error) {
 func (g *GitClient) GetLocalBranches() ([]string, error) {
 	log.Info("📋 Starting to get local branches")
 
-	cmd := exec.Command("git", "branch", "--format=%(refname:short)")
+	cmd := newRepoCommand("git", "branch", "--format=%(refname:short)")
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -1043,7 +1038,7 @@ func (g *GitClient) RemoteBranchExists(branchName string) (bool, error) {
 
 	// Use git ls-remote to check if the branch exists on the remote
 	// This checks origin/branchName without fetching
-	cmd := exec.Command("git", "ls-remote", "--heads", "origin", branchName)
+	cmd := newRepoCommand("git", "ls-remote", "--heads", "origin", branchName)
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -1069,7 +1064,7 @@ func (g *GitClient) CheckoutRemoteBranch(branchName string) error {
 	log.Info("📋 Starting to checkout remote branch: %s", branchName)
 
 	// First, fetch the branch from remote
-	fetchCmd := exec.Command("git", "fetch", "origin", branchName)
+	fetchCmd := newRepoCommand("git", "fetch", "origin", branchName)
 	g.setWorkDir(fetchCmd)
 	fetchOutput, fetchErr := fetchCmd.CombinedOutput()
 
@@ -1081,7 +1076,7 @@ func (g *GitClient) CheckoutRemoteBranch(branchName string) error {
 	log.Info("✅ Successfully fetched remote branch: %s", branchName)
 
 	// Now checkout the branch, creating a local tracking branch
-	checkoutCmd := exec.Command("git", "checkout", "-b", branchName, fmt.Sprintf("origin/%s", branchName))
+	checkoutCmd := newRepoCommand("git", "checkout", "-b", branchName, fmt.Sprintf("origin/%s", branchName))
 	g.setWorkDir(checkoutCmd)
 	checkoutOutput, checkoutErr := checkoutCmd.CombinedOutput()
 
@@ -1098,7 +1093,7 @@ func (g *GitClient) CheckoutRemoteBranch(branchName string) error {
 func (g *GitClient) DeleteLocalBranch(branchName string) error {
 	log.Info("📋 Starting to delete local branch: %s", branchName)
 
-	cmd := exec.Command("git", "branch", "-D", branchName)
+	cmd := newRepoCommand("git", "branch", "-D", branchName)
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -1128,16 +1123,16 @@ func (g *GitClient) ValidateRemoteAccess() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "git", "ls-remote", "origin", "HEAD")
-	g.setWorkDir(cmd)
-
 	// Set environment variables to prevent credential prompting
-	cmd.Env = append(os.Environ(),
+	cmd := newRepoCommandContext(ctx, []string{
 		"GIT_TERMINAL_PROMPT=0",
 		"SSH_ASKPASS=",
 		"DISPLAY=", // Disable X11 forwarding for SSH
 		"GIT_SSH_COMMAND=ssh -o BatchMode=yes -o ConnectTimeout=10", // Force non-interactive SSH
-	)
+	}, "git", "ls-remote", "origin", "HEAD")
+	g.setWorkDir(cmd)
+	// sudo can't pass a SIGKILL on, so the timeout kills the whole group, as for fetch.
+	configureFetchProcessGroup(cmd, FetchOriginWaitDelay)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1271,7 +1266,7 @@ func (g *GitClient) UpdateRemoteURLWithToken(token string) error {
 	log.Info("📋 Starting to update remote URL with GitHub token")
 
 	// Get current remote URL
-	cmd := exec.Command("git", "remote", "get-url", "origin")
+	cmd := newRepoCommand("git", "remote", "get-url", "origin")
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1298,7 +1293,7 @@ func (g *GitClient) UpdateRemoteURLWithToken(token string) error {
 	newURL := fmt.Sprintf("https://x-access-token:%s@github.com/%s/%s.git", token, repoDetails.Owner, repoDetails.Repo)
 
 	// Update the remote URL
-	cmd = exec.Command("git", "remote", "set-url", "origin", newURL)
+	cmd = newRepoCommand("git", "remote", "set-url", "origin", newURL)
 	g.setWorkDir(cmd)
 	output, err = cmd.CombinedOutput()
 	if err != nil {
@@ -1324,7 +1319,7 @@ func (g *GitClient) FetchOrigin() error {
 	log.Info("📋 Starting to fetch from origin")
 	ctx, cancel := context.WithTimeout(context.Background(), FetchOriginTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "fetch", "--prune", "origin")
+	cmd := newRepoCommandContext(ctx, nil, "git", "fetch", "--prune", "origin")
 	g.setWorkDir(cmd)
 	configureFetchProcessGroup(cmd, FetchOriginWaitDelay)
 	output, err := cmd.CombinedOutput()
@@ -1358,7 +1353,7 @@ func (g *GitClient) FindPRTemplate() (string, error) {
 	}
 
 	for _, path := range templatePaths {
-		if content, err := os.ReadFile(path); err == nil {
+		if content, err := readRepoFile("", path); err == nil {
 			log.Info("✅ Found PR template at: %s", path)
 			return strings.TrimSpace(string(content)), nil
 		}
@@ -1381,9 +1376,9 @@ func (g *GitClient) CreateWorktree(worktreePath, branchName, baseRef string) err
 	// git worktree add <path> -b <branch> [<baseRef>] creates worktree with a new branch
 	var cmd *exec.Cmd
 	if baseRef != "" {
-		cmd = exec.Command("git", "worktree", "add", worktreePath, "-b", branchName, baseRef)
+		cmd = newRepoCommand("git", "worktree", "add", worktreePath, "-b", branchName, baseRef)
 	} else {
-		cmd = exec.Command("git", "worktree", "add", worktreePath, "-b", branchName)
+		cmd = newRepoCommand("git", "worktree", "add", worktreePath, "-b", branchName)
 	}
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
@@ -1402,7 +1397,7 @@ func (g *GitClient) CreateWorktree(worktreePath, branchName, baseRef string) err
 func (g *GitClient) CreateBranch(branchName, baseRef string) error {
 	log.Info("📋 Starting to create branch %s at %s", branchName, baseRef)
 
-	cmd := exec.Command("git", "branch", branchName, baseRef)
+	cmd := newRepoCommand("git", "branch", branchName, baseRef)
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -1420,7 +1415,7 @@ func (g *GitClient) CreateBranch(branchName, baseRef string) error {
 func (g *GitClient) AddWorktreeForBranch(worktreePath, branchName string) error {
 	log.Info("📋 Starting to create worktree at %s for existing branch %s", worktreePath, branchName)
 
-	cmd := exec.Command("git", "worktree", "add", worktreePath, branchName)
+	cmd := newRepoCommand("git", "worktree", "add", worktreePath, branchName)
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -1438,7 +1433,7 @@ func (g *GitClient) AddWorktreeForBranch(worktreePath, branchName string) error 
 func (g *GitClient) RemoveWorktree(worktreePath string) error {
 	log.Info("📋 Starting to remove worktree at %s", worktreePath)
 
-	cmd := exec.Command("git", "worktree", "remove", worktreePath, "--force")
+	cmd := newRepoCommand("git", "worktree", "remove", worktreePath, "--force")
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -1455,7 +1450,7 @@ func (g *GitClient) RemoveWorktree(worktreePath string) error {
 func (g *GitClient) ListWorktrees() ([]WorktreeInfo, error) {
 	log.Info("📋 Starting to list worktrees")
 
-	cmd := exec.Command("git", "worktree", "list", "--porcelain")
+	cmd := newRepoCommand("git", "worktree", "list", "--porcelain")
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -1532,7 +1527,7 @@ func (g *GitClient) WorktreeExists(worktreePath string) bool {
 func (g *GitClient) PruneWorktrees() error {
 	log.Info("📋 Starting to prune stale worktree entries")
 
-	cmd := exec.Command("git", "worktree", "prune")
+	cmd := newRepoCommand("git", "worktree", "prune")
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -1565,7 +1560,7 @@ func (g *GitClient) ResetHardInWorktree(worktreePath string) error {
 		return nil
 	}
 
-	cmd := exec.Command("git", "reset", "--hard", "HEAD")
+	cmd := newRepoCommand("git", "reset", "--hard", "HEAD")
 	cmd.Dir = worktreePath
 	output, err := cmd.CombinedOutput()
 
@@ -1580,7 +1575,7 @@ func (g *GitClient) ResetHardInWorktree(worktreePath string) error {
 
 // hasCommitsInDir checks if the repository at the given directory has any commits
 func (g *GitClient) hasCommitsInDir(dir string) (bool, error) {
-	cmd := exec.Command("git", "rev-parse", "--verify", "HEAD")
+	cmd := newRepoCommand("git", "rev-parse", "--verify", "HEAD")
 	cmd.Dir = dir
 	err := cmd.Run()
 	return err == nil, nil
@@ -1590,7 +1585,7 @@ func (g *GitClient) hasCommitsInDir(dir string) (bool, error) {
 func (g *GitClient) CleanUntrackedInWorktree(worktreePath string) error {
 	log.Info("📋 Starting to clean untracked files in worktree: %s", worktreePath)
 
-	cmd := exec.Command("git", "clean", "-fd")
+	cmd := newRepoCommand("git", "clean", "-fd")
 	cmd.Dir = worktreePath
 	output, err := cmd.CombinedOutput()
 
@@ -1607,7 +1602,7 @@ func (g *GitClient) CleanUntrackedInWorktree(worktreePath string) error {
 func (g *GitClient) PullLatestInWorktree(worktreePath string) error {
 	log.Info("📋 Starting to pull latest changes in worktree: %s", worktreePath)
 
-	cmd := exec.Command("git", "pull", "--rebase")
+	cmd := newRepoCommand("git", "pull", "--rebase")
 	cmd.Dir = worktreePath
 	output, err := cmd.CombinedOutput()
 
@@ -1654,7 +1649,7 @@ func (g *GitClient) PullLatestInWorktree(worktreePath string) error {
 func (g *GitClient) AddAllInWorktree(worktreePath string) error {
 	log.Info("📋 Starting to add all changes in worktree: %s", worktreePath)
 
-	cmd := exec.Command("git", "add", ".")
+	cmd := newRepoCommand("git", "add", ".")
 	cmd.Dir = worktreePath
 	output, err := cmd.CombinedOutput()
 
@@ -1671,7 +1666,7 @@ func (g *GitClient) AddAllInWorktree(worktreePath string) error {
 func (g *GitClient) CommitInWorktree(worktreePath, message string) error {
 	log.Info("📋 Starting to commit in worktree: %s", worktreePath)
 
-	cmd := exec.Command("git", "commit", "-m", message)
+	cmd := newRepoCommand("git", "commit", "-m", message)
 	cmd.Dir = worktreePath
 	output, err := cmd.CombinedOutput()
 
@@ -1688,7 +1683,7 @@ func (g *GitClient) CommitInWorktree(worktreePath, message string) error {
 func (g *GitClient) PushBranchFromWorktree(worktreePath, branchName string) error {
 	log.Info("📋 Starting to push branch %s from worktree: %s", branchName, worktreePath)
 
-	cmd := exec.Command("git", "push", "-u", "origin", branchName)
+	cmd := newRepoCommand("git", "push", "-u", "origin", branchName)
 	cmd.Dir = worktreePath
 	output, err := cmd.CombinedOutput()
 
@@ -1705,7 +1700,7 @@ func (g *GitClient) PushBranchFromWorktree(worktreePath, branchName string) erro
 func (g *GitClient) HasUncommittedChangesInWorktree(worktreePath string) (bool, error) {
 	log.Info("📋 Starting to check for uncommitted changes in worktree: %s", worktreePath)
 
-	cmd := exec.Command("git", "status", "--porcelain")
+	cmd := newRepoCommand("git", "status", "--porcelain")
 	cmd.Dir = worktreePath
 	output, err := cmd.CombinedOutput()
 
@@ -1730,7 +1725,7 @@ func (g *GitClient) HasUncommittedChangesInWorktree(worktreePath string) (bool, 
 func (g *GitClient) GetCurrentBranchInWorktree(worktreePath string) (string, error) {
 	log.Info("📋 Starting to get current branch in worktree: %s", worktreePath)
 
-	cmd := exec.Command("git", "branch", "--show-current")
+	cmd := newRepoCommand("git", "branch", "--show-current")
 	cmd.Dir = worktreePath
 	output, err := cmd.CombinedOutput()
 
@@ -1753,7 +1748,7 @@ func (g *GitClient) GetCurrentBranchInWorktree(worktreePath string) (string, err
 func (g *GitClient) GetLatestCommitHashInWorktree(worktreePath string) (string, error) {
 	log.Info("📋 Starting to get latest commit hash in worktree: %s", worktreePath)
 
-	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd := newRepoCommand("git", "rev-parse", "HEAD")
 	cmd.Dir = worktreePath
 	output, err := cmd.CombinedOutput()
 
@@ -1771,7 +1766,7 @@ func (g *GitClient) GetLatestCommitHashInWorktree(worktreePath string) (string, 
 func (g *GitClient) GetRemoteURLInWorktree(worktreePath string) (string, error) {
 	log.Info("📋 Starting to get remote URL in worktree: %s", worktreePath)
 
-	cmd := exec.Command("git", "remote", "get-url", "origin")
+	cmd := newRepoCommand("git", "remote", "get-url", "origin")
 	cmd.Dir = worktreePath
 	output, err := cmd.CombinedOutput()
 
@@ -1798,7 +1793,7 @@ func (g *GitClient) GetRemoteURLInWorktree(worktreePath string) (string, error) 
 func (g *GitClient) HasExistingPRInWorktree(worktreePath, branchName string) (bool, error) {
 	log.Info("📋 Starting to check for existing PR for branch %s in worktree: %s", branchName, worktreePath)
 
-	cmd := exec.Command("gh", "pr", "list", "--head", branchName, "--json", "number")
+	cmd := newRepoCommand("gh", "pr", "list", "--head", branchName, "--json", "number")
 	cmd.Dir = worktreePath
 	output, err := g.executeWithRetryInDir(cmd, worktreePath, "check existing PR")
 
@@ -1845,7 +1840,7 @@ func (g *GitClient) executeWithRetryInDir(cmd *exec.Cmd, workDir, operationName 
 			} else {
 				log.Info("⏳ GitHub API recoverable error detected for %s, retrying...", operationName)
 			}
-			cmd = exec.Command(cmd.Args[0], cmd.Args[1:]...)
+			cmd = rebuildCommand(cmd)
 			cmd.Dir = workDir
 			return err
 		}
@@ -1877,7 +1872,7 @@ func (g *GitClient) CreatePullRequestInWorktree(worktreePath, title, body, baseB
 		finalBody = validationResult.DescriptionPrefix + body
 	}
 
-	cmd := exec.Command("gh", "pr", "create", "--title", validationResult.Title, "--body", finalBody, "--base", baseBranch)
+	cmd := newRepoCommand("gh", "pr", "create", "--title", validationResult.Title, "--body", finalBody, "--base", baseBranch)
 	cmd.Dir = worktreePath
 	output, err := g.executeWithRetryInDir(cmd, worktreePath, "create pull request")
 
@@ -1895,7 +1890,7 @@ func (g *GitClient) CreatePullRequestInWorktree(worktreePath, title, body, baseB
 func (g *GitClient) GetPRURLInWorktree(worktreePath, branchName string) (string, error) {
 	log.Info("📋 Starting to get PR URL for branch %s from worktree: %s", branchName, worktreePath)
 
-	cmd := exec.Command("gh", "pr", "view", branchName, "--json", "url", "--jq", ".url")
+	cmd := newRepoCommand("gh", "pr", "view", branchName, "--json", "url", "--jq", ".url")
 	cmd.Dir = worktreePath
 	output, err := g.executeWithRetryInDir(cmd, worktreePath, "get PR URL")
 
@@ -1913,7 +1908,7 @@ func (g *GitClient) GetPRURLInWorktree(worktreePath, branchName string) (string,
 func (g *GitClient) GetDefaultBranchInWorktree(worktreePath string) (string, error) {
 	log.Info("📋 Starting to determine default branch from worktree: %s", worktreePath)
 
-	cmd := exec.Command("git", "remote", "show", "origin")
+	cmd := newRepoCommand("git", "remote", "show", "origin")
 	cmd.Dir = worktreePath
 	output, err := cmd.CombinedOutput()
 
@@ -1944,7 +1939,7 @@ func (g *GitClient) GetDefaultBranchInWorktree(worktreePath string) (string, err
 func (g *GitClient) GetPRTitleInWorktree(worktreePath, branchName string) (string, error) {
 	log.Info("📋 Starting to get PR title for branch %s from worktree: %s", branchName, worktreePath)
 
-	cmd := exec.Command("gh", "pr", "view", branchName, "--json", "title", "--jq", ".title")
+	cmd := newRepoCommand("gh", "pr", "view", branchName, "--json", "title", "--jq", ".title")
 	cmd.Dir = worktreePath
 	output, err := g.executeWithRetryInDir(cmd, worktreePath, "get PR title")
 
@@ -1962,7 +1957,7 @@ func (g *GitClient) GetPRTitleInWorktree(worktreePath, branchName string) (strin
 func (g *GitClient) GetPRDescriptionInWorktree(worktreePath, branchName string) (string, error) {
 	log.Info("📋 Starting to get PR description for branch %s from worktree: %s", branchName, worktreePath)
 
-	cmd := exec.Command("gh", "pr", "view", branchName, "--json", "body", "--jq", ".body")
+	cmd := newRepoCommand("gh", "pr", "view", branchName, "--json", "body", "--jq", ".body")
 	cmd.Dir = worktreePath
 	output, err := g.executeWithRetryInDir(cmd, worktreePath, "get PR description")
 
@@ -1998,7 +1993,7 @@ func (g *GitClient) UpdatePRTitleInWorktree(worktreePath, branchName, newTitle s
 		}
 	}
 
-	cmd := exec.Command("gh", "pr", "edit", branchName, "--title", validationResult.Title)
+	cmd := newRepoCommand("gh", "pr", "edit", branchName, "--title", validationResult.Title)
 	cmd.Dir = worktreePath
 	output, err := g.executeWithRetryInDir(cmd, worktreePath, "update PR title")
 
@@ -2015,7 +2010,7 @@ func (g *GitClient) UpdatePRTitleInWorktree(worktreePath, branchName, newTitle s
 func (g *GitClient) UpdatePRDescriptionInWorktree(worktreePath, branchName, newDescription string) error {
 	log.Info("📋 Starting to update PR description for branch %s from worktree: %s", branchName, worktreePath)
 
-	cmd := exec.Command("gh", "pr", "edit", branchName, "--body", newDescription)
+	cmd := newRepoCommand("gh", "pr", "edit", branchName, "--body", newDescription)
 	cmd.Dir = worktreePath
 	output, err := g.executeWithRetryInDir(cmd, worktreePath, "update PR description")
 
@@ -2044,7 +2039,7 @@ func (g *GitClient) FindPRTemplateInWorktree(worktreePath string) (string, error
 
 	for _, path := range templatePaths {
 		fullPath := filepath.Join(worktreePath, path)
-		if content, err := os.ReadFile(fullPath); err == nil {
+		if content, err := readRepoFile(worktreePath, path); err == nil {
 			log.Info("✅ Found PR template at: %s", fullPath)
 			return strings.TrimSpace(string(content)), nil
 		}
@@ -2062,7 +2057,7 @@ func (g *GitClient) FindPRTemplateInWorktree(worktreePath string) (string, error
 func (g *GitClient) ResetHardInWorktreeToRef(worktreePath, ref string) error {
 	log.Info("📋 Starting to reset worktree %s to ref %s", worktreePath, ref)
 
-	cmd := exec.Command("git", "reset", "--hard", ref)
+	cmd := newRepoCommand("git", "reset", "--hard", ref)
 	cmd.Dir = worktreePath
 	output, err := cmd.CombinedOutput()
 
@@ -2079,7 +2074,7 @@ func (g *GitClient) ResetHardInWorktreeToRef(worktreePath, ref string) error {
 func (g *GitClient) RenameBranchInWorktree(worktreePath, oldBranch, newBranch string) error {
 	log.Info("📋 Starting to rename branch %s to %s in worktree %s", oldBranch, newBranch, worktreePath)
 
-	cmd := exec.Command("git", "branch", "-m", oldBranch, newBranch)
+	cmd := newRepoCommand("git", "branch", "-m", oldBranch, newBranch)
 	cmd.Dir = worktreePath
 	output, err := cmd.CombinedOutput()
 
@@ -2096,7 +2091,7 @@ func (g *GitClient) RenameBranchInWorktree(worktreePath, oldBranch, newBranch st
 func (g *GitClient) GetOriginCommit(branchName string) (string, error) {
 	log.Info("📋 Starting to get origin commit for branch %s", branchName)
 
-	cmd := exec.Command("git", "rev-parse", fmt.Sprintf("origin/%s", branchName))
+	cmd := newRepoCommand("git", "rev-parse", fmt.Sprintf("origin/%s", branchName))
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 
@@ -2115,7 +2110,7 @@ func (g *GitClient) GetOriginCommit(branchName string) (string, error) {
 func (g *GitClient) MoveWorktree(oldPath, newPath string) error {
 	log.Info("📋 Starting to move worktree from %s to %s", oldPath, newPath)
 
-	cmd := exec.Command("git", "worktree", "move", oldPath, newPath)
+	cmd := newRepoCommand("git", "worktree", "move", oldPath, newPath)
 	g.setWorkDir(cmd)
 	output, err := cmd.CombinedOutput()
 

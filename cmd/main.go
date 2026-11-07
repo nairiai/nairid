@@ -951,6 +951,10 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 		if err != nil {
 			return nil, fmt.Errorf("failed to get worktree base path: %w", err)
 		}
+		// Older versions made it 0755, and the cleanup below removes worktrees as the agent user.
+		if err := clients.EnsureWorktreeBaseDir(worktreeBasePath); err != nil {
+			log.Warn("⚠️ Failed to prepare worktree base directory: %v", err)
+		}
 
 		worktreePool = usecases.NewWorktreePool(
 			gitUseCase.GetGitClient(),
