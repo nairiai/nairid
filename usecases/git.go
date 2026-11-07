@@ -1342,7 +1342,7 @@ func (g *GitUseCase) PrepareForNewConversationWithWorktree(jobID, conversationHi
 
 	// Create base directory if it doesn't exist
 	// Note: worktreeBasePath was already retrieved earlier for existing worktree check
-	if err := os.MkdirAll(worktreeBasePath, 0755); err != nil {
+	if err := clients.EnsureWorktreeBaseDir(worktreeBasePath); err != nil {
 		log.Error("❌ Failed to create worktree base directory: %v", err)
 		return "", "", fmt.Errorf("failed to create worktree base directory: %w", err)
 	}
