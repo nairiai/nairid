@@ -44,17 +44,7 @@ func newFakeEngine(t *testing.T, holdPosts bool) *fakeEngine {
 
 func (f *fakeEngine) serve(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
-		_, _ = io.Copy(io.Discard, r.Body)
-		f.inflight.Add(1)
-		defer f.inflight.Add(-1)
-		if f.holdPost != nil {
-			select {
-			case <-f.holdPost:
-			case <-f.done:
-				return
-			}
-		}
-		_, _ = w.Write([]byte("ok"))
+		f.servePost(w, r)
 		return
 	}
 	if r.URL.Query().Get("sid") == "" {
@@ -69,6 +59,22 @@ func (f *fakeEngine) serve(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(body))
 	case <-f.done:
 	case <-r.Context().Done():
+	}
+}
+
+// servePost accepts a write, holding it until the test lets it through when holdPost is set.
+func (f *fakeEngine) servePost(w http.ResponseWriter, r *http.Request) {
+	_, _ = io.Copy(io.Discard, r.Body)
+	f.inflight.Add(1)
+	defer f.inflight.Add(-1)
+	if f.holdPost == nil {
+		_, _ = w.Write([]byte("ok"))
+		return
+	}
+	select {
+	case <-f.holdPost:
+		_, _ = w.Write([]byte("ok"))
+	case <-f.done:
 	}
 }
 
@@ -93,35 +99,44 @@ func eventually(t *testing.T, what string, cond func() bool) {
 func TestPauseRacingPollCompletion(t *testing.T) {
 	for i := range 100 {
 		t.Run(fmt.Sprint(i), func(t *testing.T) {
-			f := newFakeEngine(t, false)
-			tr := f.open(t, Polling).Transport()
-
-			// Answer the held poll while pausing, at slightly different offsets each round.
-			go func() { f.release <- "6" }()
-			time.Sleep(time.Duration(i%10) * 30 * time.Microsecond)
-			inflightAtPause := make(chan int32, 1)
-			tr.Pause(func() { inflightAtPause <- f.inflight.Load() })
-
-			timeout := time.After(5 * time.Second)
-			for {
-				select {
-				case n := <-inflightAtPause:
-					if n != 0 {
-						t.Fatalf("paused with %d requests in flight", n)
-					}
-					polls := f.polls.Load()
-					time.Sleep(20 * time.Millisecond)
-					if got := f.polls.Load(); got != polls {
-						t.Fatalf("a poll started after the pause: %d -> %d", polls, got)
-					}
-					return
-				case f.release <- "6":
-					// A poll that began before the pause was seen must finish first.
-				case <-timeout:
-					t.Fatal("pause never completed")
-				}
-			}
+			pauseWhilePollCompletes(t, time.Duration(i%10)*30*time.Microsecond)
 		})
+	}
+}
+
+// pauseWhilePollCompletes answers the held poll while pausing, delay apart.
+func pauseWhilePollCompletes(t *testing.T, delay time.Duration) {
+	f := newFakeEngine(t, false)
+	tr := f.open(t, Polling).Transport()
+
+	go func() { f.release <- "6" }()
+	time.Sleep(delay)
+	inflightAtPause := make(chan int32, 1)
+	tr.Pause(func() { inflightAtPause <- f.inflight.Load() })
+
+	if n := f.awaitPause(t, inflightAtPause); n != 0 {
+		t.Fatalf("paused with %d requests in flight", n)
+	}
+	polls := f.polls.Load()
+	time.Sleep(20 * time.Millisecond)
+	if got := f.polls.Load(); got != polls {
+		t.Fatalf("a poll started after the pause: %d -> %d", polls, got)
+	}
+}
+
+// awaitPause returns the in-flight count seen by the pause, answering earlier polls meanwhile.
+func (f *fakeEngine) awaitPause(t *testing.T, paused <-chan int32) int32 {
+	t.Helper()
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case n := <-paused:
+			return n
+		case f.release <- "6":
+			// A poll that began before the pause was seen must finish first.
+		case <-timeout:
+			t.Fatal("pause never completed")
+		}
 	}
 }
 

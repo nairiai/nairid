@@ -1,8 +1,5 @@
-// Package socketio holds nairid's Engine.IO long-polling transport.
-//
-// It follows the library's polling transport (github.com/zishang520/socket.io, MIT), except that
-// the pause check, the next-poll decision and pending writes share one lock, so a pause during
-// an upgrade cannot miss the end of an in-flight request.
+// Package socketio provides Engine.IO polling, adapted from github.com/zishang520/socket.io (MIT).
+// One lock covers pause registration, pending writes, and the next-poll decision to avoid missed completions.
 package socketio
 
 import (
