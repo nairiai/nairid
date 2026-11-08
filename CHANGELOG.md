@@ -1,3 +1,10 @@
+## [v0.0.139] - 2026-11-08
+
+### Bugfixes
+
+- Keep the websocket upgrade from stalling on a finishing poll ([#266](https://github.com/nairiai/nairid/pull/266))
+- Cap how far one skill file may expand when extracting ([#264](https://github.com/nairiai/nairid/pull/264))
+
 ## [v0.0.138] - 2026-11-07
 
 ### Bugfixes
