@@ -30,6 +30,7 @@ import (
 	"nairid/core"
 	"nairid/core/env"
 	"nairid/core/log"
+	"nairid/core/socketio"
 	"nairid/handlers"
 	"nairid/models"
 	"nairid/services"
@@ -1383,7 +1384,7 @@ func (cr *CmdRunner) startSocketIOClient(ctx context.Context, serverURLStr, apiK
 
 	// Set up Socket.IO client options
 	opts := socket.DefaultOptions()
-	opts.SetTransports(types.NewSet(socket.Polling, socket.WebSocket))
+	opts.SetTransports(types.NewSet(socketio.Polling, socket.WebSocket))
 
 	// Disable automatic reconnection - handle reconnection externally with backoff
 	opts.SetReconnection(false)
