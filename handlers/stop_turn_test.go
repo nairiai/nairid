@@ -247,6 +247,57 @@ func TestStopTurn_KeepsThePreviousSessionWhenTheStoppedTurnHasNone(t *testing.T)
 	}
 }
 
+func releasedStop(jobID string) models.BaseMessage {
+	return models.BaseMessage{
+		ID:   "msg_stop",
+		Type: models.MessageTypeStopTurn,
+		Payload: models.StopTurnPayload{
+			JobID: jobID, RequestedBy: "U1", RequestedAt: "2026-11-10T20:00:00Z", Released: true,
+		},
+	}
+}
+
+func TestReleasedStop_ForgetsTheJobOnceItsTurnHasStopped(t *testing.T) {
+	f := newStopFixture(t)
+	f.agent.blockNext = true
+	f.agent.sessionWhenStopped = "session-partial"
+
+	done := make(chan struct{})
+	go func() { f.handler.HandleMessage(startMessage("0")); close(done) }()
+	<-f.agent.started
+	f.handler.HandleMessage(releasedStop("j1"))
+
+	<-done
+	stop := waitForStop(t, f.outbox)
+	if stop.Outcome != models.TurnStopOutcomeStopped {
+		t.Errorf("turn_stopped = %+v", stop)
+	}
+	if _, exists := f.handler.appState.GetJobData("j1"); exists {
+		t.Error("a job switched to another agent is still in the app state")
+	}
+	if got := f.outbox.ofType(models.MessageTypeJobComplete); len(got) != 0 {
+		t.Errorf("a switched-away job must not be reported complete, got %+v", got[0].Payload)
+	}
+}
+
+func TestReleasedStop_ForgetsAJobWithNoTurnRunning(t *testing.T) {
+	f := newStopFixture(t)
+	f.mustHandle(t, startMessage("0"))
+	if _, exists := f.handler.appState.GetJobData("j1"); !exists {
+		t.Fatal("the first turn should have left the job in the app state")
+	}
+
+	f.handler.HandleMessage(releasedStop("j1"))
+
+	stop := waitForStop(t, f.outbox)
+	if stop.Outcome != models.TurnStopOutcomeNotRunning {
+		t.Errorf("turn_stopped = %+v", stop)
+	}
+	if _, exists := f.handler.appState.GetJobData("j1"); exists {
+		t.Error("a job switched to another agent is still in the app state")
+	}
+}
+
 func TestStopTurn_AnswersNotRunningWhenNothingRuns(t *testing.T) {
 	f := newStopFixture(t)
 	f.mustHandle(t, startMessage("0"))

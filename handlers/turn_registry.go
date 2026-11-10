@@ -14,10 +14,33 @@ type turnRegistry struct {
 	mu               sync.Mutex
 	turns            map[string]*runningTurn
 	seenStopRequests map[string]string // job id → requested_at already handled
+	released         map[string]bool   // jobs to forget once their running turn ends
 }
 
 func newTurnRegistry() *turnRegistry {
-	return &turnRegistry{turns: map[string]*runningTurn{}, seenStopRequests: map[string]string{}}
+	return &turnRegistry{
+		turns:            map[string]*runningTurn{},
+		seenStopRequests: map[string]string{},
+		released:         map[string]bool{},
+	}
+}
+
+// releaseAfterTurn marks a running job to be forgotten when its turn ends; false when no turn runs.
+func (r *turnRegistry) releaseAfterTurn(jobID string) (running bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, running = r.turns[jobID]; running {
+		r.released[jobID] = true
+	}
+	return running
+}
+
+func (r *turnRegistry) takeReleased(jobID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	released := r.released[jobID]
+	delete(r.released, jobID)
+	return released
 }
 
 func (r *turnRegistry) Begin(jobID string) *runningTurn {

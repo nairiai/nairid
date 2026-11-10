@@ -24,7 +24,38 @@ func (mh *MessageHandler) handleStopTurn(msg models.BaseMessage) error {
 		return fmt.Errorf("stop turn message has no job id")
 	}
 	mh.stopTurn(payload.JobID, payload.RequestedBy, payload.RequestedAt)
+	if payload.Released {
+		mh.releaseJob(payload.JobID)
+	}
 	return nil
+}
+
+// The job is another agent's now: nothing of it stays here, and nothing is reported about it later.
+func (mh *MessageHandler) releaseJob(jobID string) {
+	if mh.turns.releaseAfterTurn(jobID) {
+		log.Info("🔁 Job %s went to another agent; forgetting it once its turn has stopped", jobID)
+		return
+	}
+	mh.forgetJob(jobID)
+}
+
+func (mh *MessageHandler) forgetJob(jobID string) {
+	if jobData, exists := mh.appState.GetJobData(jobID); exists && jobData.WorktreePath != "" {
+		if err := mh.gitUseCase.CleanupJobWorktree(jobData.WorktreePath, jobData.BranchName); err != nil {
+			log.Warn("⚠️ Failed to clean up the worktree of job %s: %v", jobID, err)
+		}
+	}
+	if err := mh.appState.RemoveQueuedMessagesForJob(jobID); err != nil {
+		log.Warn("⚠️ Failed to clean up queued messages for job %s: %v", jobID, err)
+	}
+	if err := mh.appState.RemoveJob(jobID); err != nil {
+		log.Error("❌ Failed to forget job %s: %v", jobID, err)
+		return
+	}
+	if mh.jobEvictor != nil {
+		mh.jobEvictor.EvictJob(jobID)
+	}
+	log.Info("🔁 Forgot job %s; it is another agent's now", jobID)
 }
 
 // A running turn is answered by runTurn once its handler returns; anything else at once.
@@ -188,6 +219,9 @@ func (mh *MessageHandler) runTurn(jobID, processedMessageID string, handle func(
 	turn := mh.turns.Begin(jobID)
 	err := handle(turn.ctx)
 	stopPressed := mh.turns.End(jobID, turn)
+	if mh.turns.takeReleased(jobID) {
+		defer mh.forgetJob(jobID)
+	}
 	if _, stopped := core.IsTurnStopped(err); stopped {
 		log.Info("🛑 Answering the stop of job %s: stopped", jobID)
 		mh.sendTurnStopped(jobID, processedMessageID, models.TurnStopOutcomeStopped)
