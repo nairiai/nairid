@@ -34,7 +34,8 @@ func newRepoCommandContext(ctx context.Context, extraEnv []string, name string, 
 		return cmd
 	}
 
-	env := UpdateHomeForUser(FilterEnvForAgent(os.Environ()), execUser)
+	// The GitHub token here can be a placeholder that only the secret proxy fills in.
+	env := InjectProxyEnv(UpdateHomeForUser(FilterEnvForAgent(os.Environ()), execUser))
 	env = append(env, managedGitEnv()...)
 	env = append(env, extraEnv...)
 	quoted := make([]string, 0, len(env))

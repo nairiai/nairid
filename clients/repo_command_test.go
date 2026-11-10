@@ -72,13 +72,13 @@ func TestNewRepoCommand_Managed(t *testing.T) {
 			t.Errorf("%s must not reach the command", blocked)
 		}
 	}
-	// git keeps its direct egress; only agent turns go through the proxy.
-	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
-		if env[key] == "http://proxy.invalid:3128" {
-			t.Errorf("%s should not be injected", key)
-		}
-	}
 	want := map[string]string{
+		"HTTP_PROXY":          "http://proxy.invalid:3128",
+		"HTTPS_PROXY":         "http://proxy.invalid:3128",
+		"http_proxy":          "http://proxy.invalid:3128",
+		"https_proxy":         "http://proxy.invalid:3128",
+		"NO_PROXY":            "localhost,127.0.0.1,::1",
+		"no_proxy":            "localhost,127.0.0.1,::1",
 		"HOME":                "/home/agentrunner",
 		"GH_TOKEN":            "fake-gh",
 		"GIT_TERMINAL_PROMPT": "0",
@@ -95,6 +95,38 @@ func TestNewRepoCommand_Managed(t *testing.T) {
 		if env[key] != value {
 			t.Errorf("%s = %q, want %q", key, env[key], value)
 		}
+	}
+}
+
+func TestNewRepoCommand_ManagedWithoutProxy(t *testing.T) {
+	t.Setenv("AGENT_EXEC_USER", "agentrunner")
+	t.Setenv("AGENT_HTTP_PROXY", "")
+	proxyKeys := []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"}
+	for _, key := range proxyKeys {
+		t.Setenv(key, "")
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stubGitIdentity(t, "", "")
+
+	env := runRepoCommandScript(t, newRepoCommand("env"))
+	for _, key := range proxyKeys {
+		if _, ok := env[key]; ok {
+			t.Errorf("%s should not be set without AGENT_HTTP_PROXY", key)
+		}
+	}
+}
+
+func TestNewRepoCommand_ManagedKeepsExplicitProxy(t *testing.T) {
+	t.Setenv("AGENT_EXEC_USER", "agentrunner")
+	t.Setenv("AGENT_HTTP_PROXY", "http://proxy.invalid:3128")
+	t.Setenv("HTTPS_PROXY", "http://corp.invalid:8080")
+	stubGitIdentity(t, "", "")
+
+	env := runRepoCommandScript(t, newRepoCommand("env"))
+	if env["HTTPS_PROXY"] != "http://corp.invalid:8080" {
+		t.Errorf("HTTPS_PROXY = %q, want the explicit one kept", env["HTTPS_PROXY"])
 	}
 }
 
