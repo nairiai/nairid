@@ -1,3 +1,9 @@
+## [v0.0.140] - 2026-11-10
+
+### Bugfixes
+
+- The daemon's own git and gh calls on managed agents go through the secret proxy ([#267](https://github.com/nairiai/nairid/pull/267))
+
 ## [v0.0.139] - 2026-11-08
 
 ### Bugfixes
