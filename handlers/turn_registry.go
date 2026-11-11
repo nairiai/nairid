@@ -35,6 +35,12 @@ func (r *turnRegistry) releaseAfterTurn(jobID string) (running bool) {
 	return running
 }
 
+func (r *turnRegistry) isReleased(jobID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.released[jobID]
+}
+
 func (r *turnRegistry) takeReleased(jobID string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()

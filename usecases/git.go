@@ -18,6 +18,9 @@ import (
 	"nairid/services"
 )
 
+// ErrJobReleased means the backend gave the job to another agent before its work was pushed.
+var ErrJobReleased = errors.New("the job went to another agent")
+
 type GitUseCase struct {
 	gitClient     *clients.GitClient
 	claudeService services.CLIAgent
@@ -362,7 +365,7 @@ func (g *GitUseCase) resetAndPullDefaultBranch() (string, error) {
 	return defaultBranch, nil
 }
 
-func (g *GitUseCase) AutoCommitChangesIfNeeded(threadLink, sessionID string) (*AutoCommitResult, error) {
+func (g *GitUseCase) AutoCommitChangesIfNeeded(threadLink, sessionID string, released func() bool) (*AutoCommitResult, error) {
 	log.Info("📋 Starting to auto-commit changes if needed")
 
 	// Check if we're in repo mode
@@ -436,6 +439,9 @@ func (g *GitUseCase) AutoCommitChangesIfNeeded(threadLink, sessionID string) (*A
 		return nil, fmt.Errorf("failed to get repository URL: %w", err)
 	}
 
+	if released() {
+		return nil, ErrJobReleased
+	}
 	// Push current branch to remote
 	if err := g.gitClient.PushBranch(currentBranch); err != nil {
 		log.Error("❌ Failed to push branch %s: %v", currentBranch, err)
@@ -443,6 +449,9 @@ func (g *GitUseCase) AutoCommitChangesIfNeeded(threadLink, sessionID string) (*A
 	}
 
 	// Handle PR creation/update
+	if released() {
+		return nil, ErrJobReleased
+	}
 	prResult, err := g.handlePRCreationOrUpdate(sessionID, currentBranch, threadLink)
 	if err != nil {
 		log.Error("❌ Failed to handle PR creation/update: %v", err)
@@ -1642,6 +1651,7 @@ func (g *GitUseCase) WorktreeExists(worktreePath string) bool {
 // AutoCommitChangesInWorktreeIfNeeded auto-commits changes in a specific worktree
 func (g *GitUseCase) AutoCommitChangesInWorktreeIfNeeded(
 	threadLink, sessionID, worktreePath string,
+	released func() bool,
 ) (*AutoCommitResult, error) {
 	log.Info("📋 Starting to auto-commit changes in worktree: %s", worktreePath)
 
@@ -1715,6 +1725,9 @@ func (g *GitUseCase) AutoCommitChangesInWorktreeIfNeeded(
 		return nil, fmt.Errorf("failed to get repository URL from worktree: %w", err)
 	}
 
+	if released() {
+		return nil, ErrJobReleased
+	}
 	// Push current branch from worktree
 	if err := g.gitClient.PushBranchFromWorktree(worktreePath, currentBranch); err != nil {
 		log.Error("❌ Failed to push branch from worktree: %v", err)
@@ -1722,6 +1735,9 @@ func (g *GitUseCase) AutoCommitChangesInWorktreeIfNeeded(
 	}
 
 	// Handle PR creation/update from worktree context
+	if released() {
+		return nil, ErrJobReleased
+	}
 	prResult, err := g.handlePRCreationOrUpdateInWorktree(sessionID, currentBranch, threadLink, worktreePath)
 	if err != nil {
 		log.Error("❌ Failed to handle PR creation/update in worktree: %v", err)

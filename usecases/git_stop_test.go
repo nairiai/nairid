@@ -1,6 +1,7 @@
 package usecases
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 
 	"nairid/clients"
 	"nairid/models"
+	"nairid/services"
 )
 
 // isolatedGit runs git with no user or system config, so signing or hooks on the
@@ -160,5 +162,25 @@ func TestCommitStoppedWork_DoesNothingOutsideRepoMode(t *testing.T) {
 	useCase := NewGitUseCase(nil, nil, appState)
 	if err := useCase.CommitStoppedWork(t.TempDir(), "agent-branch"); err != nil {
 		t.Fatalf("CommitStoppedWork outside repo mode: %v", err)
+	}
+}
+
+type commitMessageAgent struct{ services.CLIAgent }
+
+func (commitMessageAgent) ContinueConversationInDir(_, _, _ string) (*services.CLIAgentResult, error) {
+	return &services.CLIAgentResult{Output: "Add the half-done file"}, nil
+}
+
+func TestAutoCommitInWorktree_AJobGivenToAnotherAgentIsNotPushed(t *testing.T) {
+	r := newStoppedJobRepo(t)
+	r.useCase.claudeService = commitMessageAgent{}
+
+	_, err := r.useCase.AutoCommitChangesInWorktreeIfNeeded("", "session", r.worktree, func() bool { return true })
+
+	if !errors.Is(err, ErrJobReleased) {
+		t.Fatalf("want ErrJobReleased, got %v", err)
+	}
+	if head := r.remoteHead("agent-branch"); head != "" {
+		t.Fatalf("the branch reached the remote: %s", head)
 	}
 }
