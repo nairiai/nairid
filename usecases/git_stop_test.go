@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"nairid/clients"
@@ -182,5 +183,53 @@ func TestAutoCommitInWorktree_AJobGivenToAnotherAgentIsNotPushed(t *testing.T) {
 	}
 	if head := r.remoteHead("agent-branch"); head != "" {
 		t.Fatalf("the branch reached the remote: %s", head)
+	}
+}
+
+// fakeGH stands in for the GitHub CLI: the branch has no PR yet, and each PR it is asked to open is recorded.
+func fakeGH(t *testing.T) (openedPRs func() string) {
+	t.Helper()
+	bin := t.TempDir()
+	opened := filepath.Join(bin, "opened")
+	script := "#!/bin/sh\ncase \"$1 $2\" in\n" +
+		"\"pr list\") echo '[]' ;;\n" +
+		"\"pr create\") echo \"$@\" >> " + opened + "; echo https://github.com/acme/app/pull/42 ;;\n" +
+		"*) exit 1 ;;\nesac\n"
+	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return func() string {
+		content, _ := os.ReadFile(opened)
+		return string(content)
+	}
+}
+
+// switchedWhileWritingThePR is a CLI whose job goes to another agent while it writes the PR title.
+type switchedWhileWritingThePR struct {
+	services.CLIAgent
+	switched *atomic.Bool
+}
+
+func (a switchedWhileWritingThePR) ContinueConversationInDir(_, prompt, _ string) (*services.CLIAgentResult, error) {
+	if prompt == PRTitleGenerationPrompt("agent-branch") {
+		a.switched.Store(true)
+	}
+	return &services.CLIAgentResult{Output: "Add the half-done file"}, nil
+}
+
+func TestAutoCommitInWorktree_AJobGivenToAnotherAgentWhileItsPRIsWrittenGetsNoPR(t *testing.T) {
+	r := newStoppedJobRepo(t)
+	openedPRs := fakeGH(t)
+	switched := &atomic.Bool{}
+	r.useCase.claudeService = switchedWhileWritingThePR{switched: switched}
+
+	_, err := r.useCase.AutoCommitChangesInWorktreeIfNeeded("", "session", r.worktree, switched.Load)
+
+	if !errors.Is(err, ErrJobReleased) {
+		t.Fatalf("want ErrJobReleased, got %v", err)
+	}
+	if opened := openedPRs(); opened != "" {
+		t.Errorf("a PR was opened for a job given to another agent: %s", opened)
 	}
 }

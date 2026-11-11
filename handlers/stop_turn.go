@@ -116,7 +116,7 @@ func (mh *MessageHandler) dropQueuedMessages(jobID string) (droppedIDs []string)
 
 // The turn's CLI was cut short or never ran: the session it printed is kept for the next
 // message, and the partial work is committed (no Claude call, no PR) so the next turn starts
-// from a clean tree.
+// from a clean tree. A job given to another agent has no next turn here, so nothing is pushed.
 func (mh *MessageHandler) finishStoppedTurn(
 	jobData models.JobData,
 	result *services.CLIAgentResult,
@@ -142,7 +142,9 @@ func (mh *MessageHandler) finishStoppedTurn(
 	if err := mh.appState.UpdateJobData(jobData.JobID, jobData); err != nil {
 		return fmt.Errorf("failed to persist job state after stop: %w", err)
 	}
-	mh.saveUnfinishedWork(jobData, "Stopped, but saving the work so far failed")
+	if !mh.turns.isReleased(jobData.JobID) {
+		mh.saveUnfinishedWork(jobData, "Stopped, but saving the work so far failed")
+	}
 	return &core.ErrTurnStopped{}
 }
 

@@ -452,7 +452,7 @@ func (g *GitUseCase) AutoCommitChangesIfNeeded(threadLink, sessionID string, rel
 	if released() {
 		return nil, ErrJobReleased
 	}
-	prResult, err := g.handlePRCreationOrUpdate(sessionID, currentBranch, threadLink)
+	prResult, err := g.handlePRCreationOrUpdate(sessionID, currentBranch, threadLink, released)
 	if err != nil {
 		log.Error("❌ Failed to handle PR creation/update: %v", err)
 		return nil, fmt.Errorf("failed to handle PR creation/update: %w", err)
@@ -501,7 +501,10 @@ func (g *GitUseCase) generateCommitMessageWithClaude(sessionID, branchName strin
 	return strings.TrimSpace(result.Output), nil
 }
 
-func (g *GitUseCase) handlePRCreationOrUpdate(sessionID, branchName, threadLink string) (*AutoCommitResult, error) {
+func (g *GitUseCase) handlePRCreationOrUpdate(
+	sessionID, branchName, threadLink string,
+	released func() bool,
+) (*AutoCommitResult, error) {
 	log.Info("📋 Starting to handle PR creation or update for branch: %s", branchName)
 
 	// Check if a PR already exists for this branch
@@ -584,6 +587,9 @@ func (g *GitUseCase) handlePRCreationOrUpdate(sessionID, branchName, threadLink 
 		return nil, fmt.Errorf("failed to get default branch: %w", err)
 	}
 
+	if released() {
+		return nil, ErrJobReleased
+	}
 	// Create pull request
 	prURL, err := g.gitClient.CreatePullRequest(prTitle, prBody, defaultBranch)
 	if err != nil {
@@ -1738,7 +1744,7 @@ func (g *GitUseCase) AutoCommitChangesInWorktreeIfNeeded(
 	if released() {
 		return nil, ErrJobReleased
 	}
-	prResult, err := g.handlePRCreationOrUpdateInWorktree(sessionID, currentBranch, threadLink, worktreePath)
+	prResult, err := g.handlePRCreationOrUpdateInWorktree(sessionID, currentBranch, threadLink, worktreePath, released)
 	if err != nil {
 		log.Error("❌ Failed to handle PR creation/update in worktree: %v", err)
 		return nil, fmt.Errorf("failed to handle PR creation/update in worktree: %w", err)
@@ -1773,6 +1779,7 @@ func (g *GitUseCase) generateCommitMessageWithClaudeInWorktree(sessionID, branch
 
 func (g *GitUseCase) handlePRCreationOrUpdateInWorktree(
 	sessionID, branchName, threadLink, worktreePath string,
+	released func() bool,
 ) (*AutoCommitResult, error) {
 	log.Info("📋 Starting to handle PR creation or update for branch: %s (worktree: %s)", branchName, worktreePath)
 
@@ -1850,6 +1857,9 @@ func (g *GitUseCase) handlePRCreationOrUpdateInWorktree(
 		return nil, fmt.Errorf("failed to get default branch: %w", err)
 	}
 
+	if released() {
+		return nil, ErrJobReleased
+	}
 	// Create pull request from worktree
 	prURL, err := g.gitClient.CreatePullRequestInWorktree(worktreePath, prTitle, prBody, defaultBranch)
 	if err != nil {

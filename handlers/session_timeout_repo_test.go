@@ -141,3 +141,41 @@ func TestATimedOutTurnInARepoIsResumedWithItsWork(t *testing.T) {
 		t.Errorf("the first turn's half-done.txt is gone from the worktree: %q, %v", content, err)
 	}
 }
+
+func TestReleasedStop_PushesNothingOfTheTurnItCutShort(t *testing.T) {
+	git := gitWithoutUserConfig(t)
+	remote, repo := t.TempDir(), t.TempDir()
+	git(remote, "init", "-q", "--bare", "-b", "main")
+	git(repo, "init", "-q", "-b", "main")
+	git(repo, "commit", "-q", "--allow-empty", "-m", "base")
+	git(repo, "remote", "add", "origin", remote)
+	git(repo, "push", "-q", "-u", "origin", "main")
+
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AGENT_EXEC_USER", "")
+	gitClient := clients.NewGitClient()
+	gitClient.SetRepoPathProvider(func() string { return repo })
+	handler, _ := handlerWithOutbox(t, &timingOutAgent{}, gitClient)
+	handler.appState.SetRepositoryContext(&models.RepositoryContext{IsRepoMode: true, RepoPath: repo})
+	worktree := filepath.Join(t.TempDir(), "job")
+	if err := gitClient.CreateWorktree(worktree, "agent-branch", "origin/main"); err != nil {
+		t.Fatalf("CreateWorktree: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktree, "half-done.txt"), []byte("partial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	turn := handler.turns.Begin("j1")
+	handler.turns.releaseAfterTurn("j1")
+	err := handler.finishStoppedTurn(models.JobData{
+		JobID: "j1", Mode: models.AgentModeExecute, WorktreePath: worktree, BranchName: "agent-branch", ClaudeSessionID: "session-1",
+	}, nil, nil)
+	handler.turns.End("j1", turn)
+
+	if _, ok := core.IsTurnStopped(err); !ok {
+		t.Fatalf("finishStoppedTurn returned %v, want the turn stopped", err)
+	}
+	if pushed := git(repo, "ls-remote", "--heads", "origin", "agent-branch"); pushed != "" {
+		t.Errorf("the half-done work of a job given to another agent was pushed: %s", pushed)
+	}
+}
