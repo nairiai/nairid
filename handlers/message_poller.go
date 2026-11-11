@@ -142,6 +142,8 @@ func (mp *MessagePoller) pollAndDispatch() {
 			// Queued or running here: it gets acked when its turn ends.
 			if processedMsgID != "" && mp.dispatcher.IsMessageInFlight(processedMsgID) {
 				log.Info("📡 MessagePoller: Message %s already queued or running, skipping", msg.ID)
+				// It may be the job's start, still preparing the job: a second start would replace it.
+				jobExists = true
 				continue
 			}
 

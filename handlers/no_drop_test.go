@@ -207,6 +207,36 @@ func TestPoller_AcksDoneSkipsInFlightPersistsNew(t *testing.T) {
 	}
 }
 
+// The backend started j1 here and "first" is still preparing the job when a poll offers it with
+// "second". "second" must stay a reply: as a start it would run after "first" and replace the job's
+// branch and session.
+func TestPoller_AStartStillRunningKeepsTheNextMessageAReply(t *testing.T) {
+	f := newStopFixture(t)
+	appState := f.handler.appState
+	pool := workerpool.New(1)
+	defer pool.Stop()
+	dispatcher := NewJobDispatcher(f.handler, pool, appState)
+	ch := make(chan models.BaseMessage, 10)
+	dispatcher.activeJobs["j1"] = ch
+	dispatcher.Dispatch(startMessage("first"))
+
+	offered := []clients.AgentJobMessage{pollMessage(t, "first"), pollMessage(t, "second")}
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(clients.AgentJobsResponse{Jobs: []clients.AgentJob{{ID: "j1", Mode: "ask", Messages: offered}}})
+	}))
+	defer backend.Close()
+	poller := NewMessagePoller(clients.NewAgentsApiClient("k", backend.URL, "agent"), dispatcher, f.handler, appState, time.Hour)
+	poller.pollAndDispatch()
+
+	if len(ch) != 2 {
+		t.Fatalf("job channel has %d messages, want first + second", len(ch))
+	}
+	<-ch
+	if second := <-ch; second.Type != models.MessageTypeUserMessage {
+		t.Errorf("the message after a start still running went out as %s", second.Type)
+	}
+}
+
 // Queued messages that carry their payload are replayed after a restart, even when the job
 // they start does not exist yet or the job they follow has completed.
 func TestRecoverJobs_ReplaysQueuedMessagesWithPayload(t *testing.T) {
