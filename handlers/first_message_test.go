@@ -618,13 +618,15 @@ func TestASecondStartForAJobWithASessionContinuesIt(t *testing.T) {
 
 	second := firstMessagePayload()
 	second.Message, second.ProcessedMessageID = followUpText, "cmsg_2"
+	second.PreviousMessages = []models.PreviousMessage{{Message: "test1: I fixed it in PR #42"}}
 	live.handler.HandleMessage(models.BaseMessage{ID: "msg_2", Type: models.MessageTypeStartConversation, Payload: second})
 
 	starts, continues := live.agent.runs()
 	if len(starts) != 1 || len(continues) != 1 {
 		t.Fatalf("got %d starts and %d continues, want the second start to continue the job", len(starts), len(continues))
 	}
-	if continues[0].sessionID != "session-1" || !strings.Contains(continues[0].prompt, followUpText) {
+	if continues[0].sessionID != "session-1" || !strings.Contains(continues[0].prompt, followUpText) ||
+		!strings.Contains(continues[0].prompt, "I fixed it in PR #42") {
 		t.Errorf("the second message ran as %+v", continues[0])
 	}
 	job, _ := live.state.GetJobData("j1")

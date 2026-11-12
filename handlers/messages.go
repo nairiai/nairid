@@ -246,6 +246,7 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 				ProcessedMessageID: payload.ProcessedMessageID,
 				MessageLink:        payload.MessageLink,
 				Attachments:        payload.Attachments,
+				PreviousMessages:   payload.PreviousMessages,
 				SenderMetadata:     payload.SenderMetadata,
 				SessionTimeoutMs:   payload.SessionTimeoutMs,
 			},
@@ -731,17 +732,13 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 		// Don't fail - message will be deduplicated during recovery
 	}
 
-	// Process attachments and build final prompt
+	// A reply carries previous messages only when it is a start for a job this agent already has, such as a
+	// task switched back to it: the thread then holds turns its session never saw.
 	attachmentSessionID := fmt.Sprintf("job_%s", payload.JobID)
-
-	// Extract attachment IDs from MessageAttachment array
-	var attachmentIDs []string
-	for _, att := range payload.Attachments {
-		attachmentIDs = append(attachmentIDs, att.AttachmentID)
-	}
-
-	attachmentPaths, attachmentText, err := mh.processAttachmentsForPrompt(
-		attachmentIDs,
+	finalPrompt, attachmentPaths, err := mh.formatThreadContext(
+		payload.PreviousMessages,
+		payload.Message,
+		payload.Attachments,
 		attachmentSessionID,
 	)
 	if err != nil {
@@ -751,11 +748,6 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 
 	if len(attachmentPaths) > 0 {
 		log.Info("✅ Processed %d attachments: %v", len(attachmentPaths), attachmentPaths)
-	}
-
-	finalPrompt := payload.Message
-	if attachmentText != "" {
-		finalPrompt = payload.Message + "\n" + attachmentText
 	}
 	// Prepend sender metadata if available
 	finalPrompt = prependSenderMetadata(finalPrompt, payload.SenderMetadata)
