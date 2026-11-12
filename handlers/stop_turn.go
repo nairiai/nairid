@@ -23,20 +23,14 @@ func (mh *MessageHandler) handleStopTurn(msg models.BaseMessage) error {
 	if payload.JobID == "" {
 		return fmt.Errorf("stop turn message has no job id")
 	}
+	// A released job is another agent's now: nothing of it stays here. Its running turn is marked
+	// before it is cancelled, so it saves and pushes nothing and forgets the job when it ends.
+	forgetNow := payload.Released && !mh.turns.releaseAfterTurn(payload.JobID)
 	mh.stopTurn(payload.JobID, payload.RequestedBy, payload.RequestedAt)
-	if payload.Released {
-		mh.releaseJob(payload.JobID)
+	if forgetNow {
+		mh.forgetJob(payload.JobID)
 	}
 	return nil
-}
-
-// The job is another agent's now: nothing of it stays here, and nothing is reported about it later.
-func (mh *MessageHandler) releaseJob(jobID string) {
-	if mh.turns.releaseAfterTurn(jobID) {
-		log.Info("🔁 Job %s went to another agent; forgetting it once its turn has stopped", jobID)
-		return
-	}
-	mh.forgetJob(jobID)
 }
 
 func (mh *MessageHandler) forgetJob(jobID string) {
@@ -142,16 +136,14 @@ func (mh *MessageHandler) finishStoppedTurn(
 	if err := mh.appState.UpdateJobData(jobData.JobID, jobData); err != nil {
 		return fmt.Errorf("failed to persist job state after stop: %w", err)
 	}
-	if !mh.turns.isReleased(jobData.JobID) {
-		mh.saveUnfinishedWork(jobData, "Stopped, but saving the work so far failed")
-	}
+	mh.saveUnfinishedWork(jobData, "Stopped, but saving the work so far failed")
 	return &core.ErrTurnStopped{}
 }
 
-// saveUnfinishedWork keeps what a turn cut short left behind as a WIP commit on the job's branch.
-// failurePrefix leads the notice posted when that fails.
+// saveUnfinishedWork keeps what a turn cut short left behind as a WIP commit on the job's branch,
+// unless the job went to another agent. failurePrefix leads the notice posted when that fails.
 func (mh *MessageHandler) saveUnfinishedWork(jobData models.JobData, failurePrefix string) {
-	if jobData.Mode == models.AgentModeAsk {
+	if jobData.Mode == models.AgentModeAsk || mh.turns.isReleased(jobData.JobID) {
 		return
 	}
 	err := mh.gitUseCase.CommitStoppedWork(jobData.WorktreePath, jobData.BranchName)

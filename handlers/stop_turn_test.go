@@ -280,6 +280,31 @@ func TestReleasedStop_ForgetsTheJobOnceItsTurnHasStopped(t *testing.T) {
 	}
 }
 
+// A CLI that exits just as the stop lands sees the cancel at once; it must already know the job is gone.
+func TestReleasedStop_MarksTheTurnBeforeCancellingIt(t *testing.T) {
+	f := newStopFixture(t)
+	turn := f.handler.turns.Begin("j1")
+	cancels, releasedWhenCancelled := 0, false
+	f.handler.turns.mu.Lock()
+	cancel := turn.cancel
+	turn.cancel = func() {
+		if cancels++; cancels == 1 {
+			releasedWhenCancelled = f.handler.turns.released["j1"]
+		}
+		cancel()
+	}
+	f.handler.turns.mu.Unlock()
+
+	if err := f.handler.handleStopTurn(releasedStop("j1")); err != nil {
+		t.Fatal(err)
+	}
+	f.handler.turns.End("j1", turn)
+
+	if !releasedWhenCancelled {
+		t.Error("the turn was cancelled before it was marked released, so it could still push its work")
+	}
+}
+
 func TestReleasedStop_ForgetsAJobWithNoTurnRunning(t *testing.T) {
 	f := newStopFixture(t)
 	f.mustHandle(t, startMessage("0"))
