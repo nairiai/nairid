@@ -233,6 +233,25 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 		return fmt.Errorf("failed to unmarshal start conversation payload: %w", err)
 	}
 
+	// A start would replace the job's branch and session and lose its work, so a job that already has a
+	// session continues it. Recovery reruns such a job as a reply too.
+	if jobData, exists := mh.appState.GetJobData(payload.JobID); exists && jobData.ClaudeSessionID != "" {
+		log.Warn("⚠️ Job %s already has a session; handling start %s as a reply", payload.JobID, payload.ProcessedMessageID)
+		return mh.handleUserMessage(turnCtx, models.BaseMessage{
+			ID:   msg.ID,
+			Type: models.MessageTypeUserMessage,
+			Payload: models.UserMessagePayload{
+				JobID:              payload.JobID,
+				Message:            payload.Message,
+				ProcessedMessageID: payload.ProcessedMessageID,
+				MessageLink:        payload.MessageLink,
+				Attachments:        payload.Attachments,
+				SenderMetadata:     payload.SenderMetadata,
+				SessionTimeoutMs:   payload.SessionTimeoutMs,
+			},
+		})
+	}
+
 	// Send processing message notification that agent is starting to process
 	if err := mh.sendProcessingMessage(payload.ProcessedMessageID, payload.JobID); err != nil {
 		log.Info("❌ Failed to send processing message notification: %v", err)
