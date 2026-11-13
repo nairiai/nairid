@@ -1,3 +1,14 @@
+## [v0.0.141] - 2026-11-13
+
+### Bugfixes
+
+- Forget a job the backend switched to another agent ([#268](https://github.com/nairiai/nairid/pull/268))
+  - A turn stopped because of a switch pushes no work-in-progress commit and opens no PR
+  - A late copy of a message from a poll can no longer restart the forgotten job
+  - Single-repo mode resets tracked edits before checking out the default branch
+- A start for a job that already has a session continues it ([#273](https://github.com/nairiai/nairid/pull/273))
+  - If the job's worktree or branch is gone, it starts fresh instead
+
 ## [v0.0.140] - 2026-11-10
 
 ### Bugfixes
