@@ -328,13 +328,20 @@ func (g *GitUseCase) PrepareForNewConversation(conversationHint string) (string,
 func (g *GitUseCase) resetAndPullDefaultBranch() (string, error) {
 	log.Info("📋 Starting to reset and pull default branch")
 
-	// Step 1: Clean untracked files
+	// Step 1: Discard tracked edits, which can block the checkout. A turn cut short in the shared
+	// checkout leaves them there, and a new conversation starts from the default branch anyway.
+	if err := g.gitClient.ResetHard(); err != nil {
+		log.Error("❌ Failed to reset hard: %v", err)
+		return "", fmt.Errorf("failed to reset hard: %w", err)
+	}
+
+	// Step 2: Clean untracked files
 	if err := g.gitClient.CleanUntracked(); err != nil {
 		log.Error("❌ Failed to clean untracked files: %v", err)
 		return "", fmt.Errorf("failed to clean untracked files: %w", err)
 	}
 
-	// Step 2: Get default branch and checkout to it
+	// Step 3: Get default branch and checkout to it
 	defaultBranch, err := g.gitClient.GetDefaultBranch()
 	if err != nil {
 		log.Error("❌ Failed to get default branch: %v", err)
@@ -346,7 +353,7 @@ func (g *GitUseCase) resetAndPullDefaultBranch() (string, error) {
 		return "", fmt.Errorf("failed to checkout default branch %s: %w", defaultBranch, err)
 	}
 
-	// Step 3: Fetch latest from origin and hard-reset to origin/<default-branch>.
+	// Step 4: Fetch latest from origin and hard-reset to origin/<default-branch>.
 	// This replaces the previous pull --rebase approach which could fail when local
 	// and remote branches diverge (e.g. after force-pushes or failed rebases).
 	if err := g.gitClient.FetchOrigin(); err != nil {

@@ -233,3 +233,43 @@ func TestAutoCommitInWorktree_AJobGivenToAnotherAgentWhileItsPRIsWrittenGetsNoPR
 		t.Errorf("a PR was opened for a job given to another agent: %s", opened)
 	}
 }
+
+// A released stop in the shared checkout leaves it on the job's branch with tracked edits
+// uncommitted. They used to block the checkout of main, so every new conversation failed.
+func TestPrepareForNewConversation_StartsAfterATurnCutShortInTheSharedCheckout(t *testing.T) {
+	git := isolatedGit(t)
+	remote, repo := t.TempDir(), t.TempDir()
+	write := func(content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(repo, "notes.txt"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git(remote, "init", "-q", "--bare", "-b", "main")
+	git(repo, "init", "-q", "-b", "main")
+	write("base")
+	git(repo, "add", "notes.txt")
+	git(repo, "commit", "-q", "-m", "base")
+	git(repo, "remote", "add", "origin", remote)
+	git(repo, "push", "-q", "-u", "origin", "main")
+	git(repo, "checkout", "-q", "-b", "agent-branch")
+	write("first turn")
+	git(repo, "commit", "-q", "-am", "first turn")
+	write("half done")
+
+	gitClient := clients.NewGitClient()
+	gitClient.SetRepoPathProvider(func() string { return repo })
+	appState := models.NewAppState("agent", filepath.Join(t.TempDir(), "state.json"))
+	appState.SetRepositoryContext(&models.RepositoryContext{IsRepoMode: true, RepoPath: repo})
+	branch, err := NewGitUseCase(gitClient, nil, appState).PrepareForNewConversation("hint")
+	if err != nil {
+		t.Fatalf("PrepareForNewConversation: %v", err)
+	}
+
+	if current := git(repo, "branch", "--show-current"); current != branch {
+		t.Errorf("current branch = %q, want the new conversation's %q", current, branch)
+	}
+	if status := git(repo, "status", "--porcelain"); status != "" {
+		t.Errorf("the new conversation starts on a dirty checkout: %q", status)
+	}
+}
