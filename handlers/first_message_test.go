@@ -607,6 +607,98 @@ func TestAReplyToAFirstTurnStoppedBeforeASessionRunsWithTheFirstMessage(t *testi
 	}
 }
 
+// A second start for a job, which a backend bug can send, used to make a new branch and session and lose
+// the job's work. It continues the job's session instead, like a reply.
+func TestASecondStartForAJobWithASessionContinuesIt(t *testing.T) {
+	t.Setenv("NAIRI_CONFIG_DIR", t.TempDir())
+	live := bootAgentProcess(t, filepath.Join(t.TempDir(), "state.json"), newPollBackend(t).URL)
+	t.Cleanup(live.sender.Close)
+	live.handler.HandleMessage(firstMessage())
+	first, _ := live.state.GetJobData("j1")
+
+	second := firstMessagePayload()
+	second.Message, second.ProcessedMessageID = followUpText, "cmsg_2"
+	second.PreviousMessages = []models.PreviousMessage{{Message: "test1: I fixed it in PR #42"}}
+	live.handler.HandleMessage(models.BaseMessage{ID: "msg_2", Type: models.MessageTypeStartConversation, Payload: second})
+
+	starts, continues := live.agent.runs()
+	if len(starts) != 1 || len(continues) != 1 {
+		t.Fatalf("got %d starts and %d continues, want the second start to continue the job", len(starts), len(continues))
+	}
+	if continues[0].sessionID != "session-1" || !strings.Contains(continues[0].prompt, followUpText) ||
+		!strings.Contains(continues[0].prompt, "I fixed it in PR #42") {
+		t.Errorf("the second message ran as %+v", continues[0])
+	}
+	job, _ := live.state.GetJobData("j1")
+	if job.ClaudeSessionID != "session-1" || job.BranchName != first.BranchName || job.ProcessedMessageID != "cmsg_2" {
+		t.Errorf("job ended as %+v", job)
+	}
+}
+
+// A disk cleanup can remove the worktree or branch of a finished job. A later start for that job,
+// such as a task switched back, used to fail on every message; it starts fresh instead.
+func TestASecondStartForAJobWhoseWorkspaceIsGoneStartsFresh(t *testing.T) {
+	for _, tc := range []struct{ name, maxConcurrency string }{{"worktree", "2"}, {"branch", "1"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			git := gitWithoutUserConfig(t)
+			remote, repo := t.TempDir(), t.TempDir()
+			git(remote, "init", "-q", "--bare", "-b", "main")
+			git(repo, "init", "-q", "-b", "main")
+			if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			git(repo, "add", "README.md")
+			git(repo, "commit", "-q", "-m", "base")
+			git(repo, "remote", "add", "origin", remote)
+			git(repo, "push", "-q", "-u", "origin", "main")
+
+			ghDir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(ghDir, "gh"), []byte("#!/bin/sh\necho '[]'\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", ghDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("AGENT_EXEC_USER", "")
+			t.Setenv("MAX_CONCURRENCY", tc.maxConcurrency)
+			gitClient := clients.NewGitClient()
+			gitClient.SetRepoPathProvider(func() string { return repo })
+			agent := &recordingAgent{session: "session-1"}
+			handler, _ := handlerWithOutbox(t, agent, gitClient)
+			handler.appState.SetRepositoryContext(&models.RepositoryContext{IsRepoMode: true, RepoPath: repo})
+
+			if err := handler.handleStartConversation(context.Background(), firstMessage()); err != nil {
+				t.Fatalf("first start: %v", err)
+			}
+			first, _ := handler.appState.GetJobData("j1")
+			if first.WorktreePath != "" {
+				if err := os.RemoveAll(first.WorktreePath); err != nil {
+					t.Fatal(err)
+				}
+				git(repo, "worktree", "prune")
+			} else {
+				git(repo, "checkout", "-q", "main")
+				git(repo, "branch", "-q", "-D", first.BranchName)
+			}
+
+			second := firstMessagePayload()
+			second.Message, second.ProcessedMessageID = followUpText, "cmsg_2"
+			err := handler.handleStartConversation(context.Background(),
+				models.BaseMessage{ID: "msg_2", Type: models.MessageTypeStartConversation, Payload: second})
+			if err != nil {
+				t.Fatalf("second start: %v", err)
+			}
+			starts, continues := agent.runs()
+			if len(starts) != 2 || len(continues) != 0 {
+				t.Fatalf("got %d starts and %d continues, want the second start to start fresh", len(starts), len(continues))
+			}
+			job, _ := handler.appState.GetJobData("j1")
+			if job.BranchName == first.BranchName || job.ProcessedMessageID != "cmsg_2" {
+				t.Errorf("job ended as %+v", job)
+			}
+		})
+	}
+}
+
 func TestAReplyToAFirstMessageDroppedBeforeItRanRunsWithIt(t *testing.T) {
 	t.Setenv("NAIRI_CONFIG_DIR", t.TempDir())
 	live := bootAgentProcess(t, filepath.Join(t.TempDir(), "state.json"), newPollBackend(t).URL)

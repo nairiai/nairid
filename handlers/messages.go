@@ -234,6 +234,27 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 		return fmt.Errorf("failed to unmarshal start conversation payload: %w", err)
 	}
 
+	// A start would replace the job's branch and session and lose its work, so a job that already has a
+	// session continues it, as recovery does. A job whose worktree or branch is gone starts fresh.
+	if jobData, exists := mh.appState.GetJobData(payload.JobID); exists && jobData.ClaudeSessionID != "" &&
+		mh.jobWorkspaceExists(jobData) {
+		log.Warn("⚠️ Job %s already has a session; handling start %s as a reply", payload.JobID, payload.ProcessedMessageID)
+		return mh.handleUserMessage(turnCtx, models.BaseMessage{
+			ID:   msg.ID,
+			Type: models.MessageTypeUserMessage,
+			Payload: models.UserMessagePayload{
+				JobID:              payload.JobID,
+				Message:            payload.Message,
+				ProcessedMessageID: payload.ProcessedMessageID,
+				MessageLink:        payload.MessageLink,
+				Attachments:        payload.Attachments,
+				PreviousMessages:   payload.PreviousMessages,
+				SenderMetadata:     payload.SenderMetadata,
+				SessionTimeoutMs:   payload.SessionTimeoutMs,
+			},
+		})
+	}
+
 	// Send processing message notification that agent is starting to process
 	if err := mh.sendProcessingMessage(payload.ProcessedMessageID, payload.JobID); err != nil {
 		log.Info("❌ Failed to send processing message notification: %v", err)
@@ -548,6 +569,20 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 	return nil
 }
 
+// jobWorkspaceExists reports whether a reply could run in the job's worktree or branch. It checks what
+// recovery checks, so a job swept from disk is not continued.
+func (mh *MessageHandler) jobWorkspaceExists(job *models.JobData) bool {
+	if !mh.appState.GetRepositoryContext().IsRepoMode {
+		return true
+	}
+	if job.WorktreePath != "" {
+		return mh.gitUseCase.WorktreeExists(job.WorktreePath)
+	}
+	// When git cannot tell, the job is kept: a fresh start would overwrite it.
+	exists, err := mh.gitUseCase.BranchExists(job.BranchName)
+	return err != nil || exists
+}
+
 func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.BaseMessage) error {
 	log.Info("📋 Starting to handle user message")
 	var payload models.UserMessagePayload
@@ -718,17 +753,13 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 		// Don't fail - message will be deduplicated during recovery
 	}
 
-	// Process attachments and build final prompt
+	// A reply carries previous messages only when it is a start for a job this agent already has, such as a
+	// task switched back to it: the thread then holds turns its session never saw.
 	attachmentSessionID := fmt.Sprintf("job_%s", payload.JobID)
-
-	// Extract attachment IDs from MessageAttachment array
-	var attachmentIDs []string
-	for _, att := range payload.Attachments {
-		attachmentIDs = append(attachmentIDs, att.AttachmentID)
-	}
-
-	attachmentPaths, attachmentText, err := mh.processAttachmentsForPrompt(
-		attachmentIDs,
+	finalPrompt, attachmentPaths, err := mh.formatThreadContext(
+		payload.PreviousMessages,
+		payload.Message,
+		payload.Attachments,
 		attachmentSessionID,
 	)
 	if err != nil {
@@ -738,11 +769,6 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 
 	if len(attachmentPaths) > 0 {
 		log.Info("✅ Processed %d attachments: %v", len(attachmentPaths), attachmentPaths)
-	}
-
-	finalPrompt := payload.Message
-	if attachmentText != "" {
-		finalPrompt = payload.Message + "\n" + attachmentText
 	}
 	// Prepend sender metadata if available
 	finalPrompt = prependSenderMetadata(finalPrompt, payload.SenderMetadata)
