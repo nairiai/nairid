@@ -23,6 +23,9 @@ func (mh *MessageHandler) handleStopTurn(msg models.BaseMessage) error {
 	if payload.JobID == "" {
 		return fmt.Errorf("stop turn message has no job id")
 	}
+	if payload.Released {
+		mh.turns.markReleased(payload.JobID)
+	}
 	// A released job is another agent's now: nothing of it stays here. Its running turn is marked
 	// before it is cancelled, so it saves and pushes nothing and forgets the job when it ends.
 	forgetNow := payload.Released && !mh.turns.releaseAfterTurn(payload.JobID)

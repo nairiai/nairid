@@ -237,6 +237,52 @@ func TestPoller_AStartStillRunningKeepsTheNextMessageAReply(t *testing.T) {
 	}
 }
 
+// The task is switched to another agent while a poll is out. Its answer still lists "2", which the
+// released stop drained; run as a start it would push and open a PR for the other agent's job. A
+// poll sent after the switch is trusted, so a job given back to this agent still runs.
+func TestPoller_AJobReleasedWhileThePollWasOutStartsNothing(t *testing.T) {
+	f := newStopFixture(t)
+	f.mustHandle(t, startMessage("0"))
+	pool := workerpool.New(2)
+	defer pool.Stop()
+	dispatcher := NewJobDispatcher(f.handler, pool, f.handler.appState)
+	f.handler.SetJobEvictor(dispatcher)
+	f.agent.blockNext = true
+	dispatcher.Dispatch(replyMessage("1"))
+	<-f.agent.started
+	dispatcher.Dispatch(replyMessage("2"))
+
+	poll := func(offered clients.AgentJobMessage, beforeAnswering func()) {
+		backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/ack") {
+				return
+			}
+			beforeAnswering()
+			_ = json.NewEncoder(w).Encode(clients.AgentJobsResponse{Jobs: []clients.AgentJob{{
+				ID: "j1", Mode: "ask", Messages: []clients.AgentJobMessage{offered},
+			}}})
+		}))
+		defer backend.Close()
+		NewMessagePoller(clients.NewAgentsApiClient("k", backend.URL, "agent"), dispatcher, f.handler, f.handler.appState, time.Hour).pollAndDispatch()
+	}
+	starts := func() int {
+		f.agent.mu.Lock()
+		defer f.agent.mu.Unlock()
+		return len(f.agent.startSystemPrompts)
+	}
+
+	poll(pollMessage(t, "2"), func() {
+		f.handler.HandleMessage(releasedStop("j1"))
+		waitUntil(t, func() bool { _, exists := f.handler.appState.GetJobData("j1"); return !exists })
+	})
+	if dispatcher.IsMessageInFlight("cmsg_2") || f.handler.appState.IsMessageDone("cmsg_2") {
+		t.Fatal("a message the switch handed to another agent was run here as a new start")
+	}
+
+	poll(pollMessage(t, "3"), func() {})
+	waitUntil(t, func() bool { return starts() == 2 })
+}
+
 // Queued messages that carry their payload are replayed after a restart, even when the job
 // they start does not exist yet or the job they follow has completed.
 func TestRecoverJobs_ReplaysQueuedMessagesWithPayload(t *testing.T) {
