@@ -18,6 +18,9 @@ import (
 	"nairid/services"
 )
 
+// ErrJobReleased means the backend gave the job to another agent before its work was pushed.
+var ErrJobReleased = errors.New("the job went to another agent")
+
 type GitUseCase struct {
 	gitClient     *clients.GitClient
 	claudeService services.CLIAgent
@@ -325,13 +328,20 @@ func (g *GitUseCase) PrepareForNewConversation(conversationHint string) (string,
 func (g *GitUseCase) resetAndPullDefaultBranch() (string, error) {
 	log.Info("📋 Starting to reset and pull default branch")
 
-	// Step 1: Clean untracked files
+	// Step 1: Discard tracked edits, which can block the checkout. A turn cut short in the shared
+	// checkout leaves them there, and a new conversation starts from the default branch anyway.
+	if err := g.gitClient.ResetHard(); err != nil {
+		log.Error("❌ Failed to reset hard: %v", err)
+		return "", fmt.Errorf("failed to reset hard: %w", err)
+	}
+
+	// Step 2: Clean untracked files
 	if err := g.gitClient.CleanUntracked(); err != nil {
 		log.Error("❌ Failed to clean untracked files: %v", err)
 		return "", fmt.Errorf("failed to clean untracked files: %w", err)
 	}
 
-	// Step 2: Get default branch and checkout to it
+	// Step 3: Get default branch and checkout to it
 	defaultBranch, err := g.gitClient.GetDefaultBranch()
 	if err != nil {
 		log.Error("❌ Failed to get default branch: %v", err)
@@ -343,7 +353,7 @@ func (g *GitUseCase) resetAndPullDefaultBranch() (string, error) {
 		return "", fmt.Errorf("failed to checkout default branch %s: %w", defaultBranch, err)
 	}
 
-	// Step 3: Fetch latest from origin and hard-reset to origin/<default-branch>.
+	// Step 4: Fetch latest from origin and hard-reset to origin/<default-branch>.
 	// This replaces the previous pull --rebase approach which could fail when local
 	// and remote branches diverge (e.g. after force-pushes or failed rebases).
 	if err := g.gitClient.FetchOrigin(); err != nil {
@@ -362,7 +372,7 @@ func (g *GitUseCase) resetAndPullDefaultBranch() (string, error) {
 	return defaultBranch, nil
 }
 
-func (g *GitUseCase) AutoCommitChangesIfNeeded(threadLink, sessionID string) (*AutoCommitResult, error) {
+func (g *GitUseCase) AutoCommitChangesIfNeeded(threadLink, sessionID string, released func() bool) (*AutoCommitResult, error) {
 	log.Info("📋 Starting to auto-commit changes if needed")
 
 	// Check if we're in repo mode
@@ -436,6 +446,9 @@ func (g *GitUseCase) AutoCommitChangesIfNeeded(threadLink, sessionID string) (*A
 		return nil, fmt.Errorf("failed to get repository URL: %w", err)
 	}
 
+	if released() {
+		return nil, ErrJobReleased
+	}
 	// Push current branch to remote
 	if err := g.gitClient.PushBranch(currentBranch); err != nil {
 		log.Error("❌ Failed to push branch %s: %v", currentBranch, err)
@@ -443,7 +456,10 @@ func (g *GitUseCase) AutoCommitChangesIfNeeded(threadLink, sessionID string) (*A
 	}
 
 	// Handle PR creation/update
-	prResult, err := g.handlePRCreationOrUpdate(sessionID, currentBranch, threadLink)
+	if released() {
+		return nil, ErrJobReleased
+	}
+	prResult, err := g.handlePRCreationOrUpdate(sessionID, currentBranch, threadLink, released)
 	if err != nil {
 		log.Error("❌ Failed to handle PR creation/update: %v", err)
 		return nil, fmt.Errorf("failed to handle PR creation/update: %w", err)
@@ -492,7 +508,10 @@ func (g *GitUseCase) generateCommitMessageWithClaude(sessionID, branchName strin
 	return strings.TrimSpace(result.Output), nil
 }
 
-func (g *GitUseCase) handlePRCreationOrUpdate(sessionID, branchName, threadLink string) (*AutoCommitResult, error) {
+func (g *GitUseCase) handlePRCreationOrUpdate(
+	sessionID, branchName, threadLink string,
+	released func() bool,
+) (*AutoCommitResult, error) {
 	log.Info("📋 Starting to handle PR creation or update for branch: %s", branchName)
 
 	// Check if a PR already exists for this branch
@@ -575,6 +594,9 @@ func (g *GitUseCase) handlePRCreationOrUpdate(sessionID, branchName, threadLink 
 		return nil, fmt.Errorf("failed to get default branch: %w", err)
 	}
 
+	if released() {
+		return nil, ErrJobReleased
+	}
 	// Create pull request
 	prURL, err := g.gitClient.CreatePullRequest(prTitle, prBody, defaultBranch)
 	if err != nil {
@@ -1642,6 +1664,7 @@ func (g *GitUseCase) WorktreeExists(worktreePath string) bool {
 // AutoCommitChangesInWorktreeIfNeeded auto-commits changes in a specific worktree
 func (g *GitUseCase) AutoCommitChangesInWorktreeIfNeeded(
 	threadLink, sessionID, worktreePath string,
+	released func() bool,
 ) (*AutoCommitResult, error) {
 	log.Info("📋 Starting to auto-commit changes in worktree: %s", worktreePath)
 
@@ -1715,6 +1738,9 @@ func (g *GitUseCase) AutoCommitChangesInWorktreeIfNeeded(
 		return nil, fmt.Errorf("failed to get repository URL from worktree: %w", err)
 	}
 
+	if released() {
+		return nil, ErrJobReleased
+	}
 	// Push current branch from worktree
 	if err := g.gitClient.PushBranchFromWorktree(worktreePath, currentBranch); err != nil {
 		log.Error("❌ Failed to push branch from worktree: %v", err)
@@ -1722,7 +1748,10 @@ func (g *GitUseCase) AutoCommitChangesInWorktreeIfNeeded(
 	}
 
 	// Handle PR creation/update from worktree context
-	prResult, err := g.handlePRCreationOrUpdateInWorktree(sessionID, currentBranch, threadLink, worktreePath)
+	if released() {
+		return nil, ErrJobReleased
+	}
+	prResult, err := g.handlePRCreationOrUpdateInWorktree(sessionID, currentBranch, threadLink, worktreePath, released)
 	if err != nil {
 		log.Error("❌ Failed to handle PR creation/update in worktree: %v", err)
 		return nil, fmt.Errorf("failed to handle PR creation/update in worktree: %w", err)
@@ -1757,6 +1786,7 @@ func (g *GitUseCase) generateCommitMessageWithClaudeInWorktree(sessionID, branch
 
 func (g *GitUseCase) handlePRCreationOrUpdateInWorktree(
 	sessionID, branchName, threadLink, worktreePath string,
+	released func() bool,
 ) (*AutoCommitResult, error) {
 	log.Info("📋 Starting to handle PR creation or update for branch: %s (worktree: %s)", branchName, worktreePath)
 
@@ -1834,6 +1864,9 @@ func (g *GitUseCase) handlePRCreationOrUpdateInWorktree(
 		return nil, fmt.Errorf("failed to get default branch: %w", err)
 	}
 
+	if released() {
+		return nil, ErrJobReleased
+	}
 	// Create pull request from worktree
 	prURL, err := g.gitClient.CreatePullRequestInWorktree(worktreePath, prTitle, prBody, defaultBranch)
 	if err != nil {

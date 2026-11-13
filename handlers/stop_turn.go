@@ -23,8 +23,36 @@ func (mh *MessageHandler) handleStopTurn(msg models.BaseMessage) error {
 	if payload.JobID == "" {
 		return fmt.Errorf("stop turn message has no job id")
 	}
+	if payload.Released {
+		mh.turns.markReleased(payload.JobID)
+	}
+	// A released job is another agent's now: nothing of it stays here. Its running turn is marked
+	// before it is cancelled, so it saves and pushes nothing and forgets the job when it ends.
+	forgetNow := payload.Released && !mh.turns.releaseAfterTurn(payload.JobID)
 	mh.stopTurn(payload.JobID, payload.RequestedBy, payload.RequestedAt)
+	if forgetNow {
+		mh.forgetJob(payload.JobID)
+	}
 	return nil
+}
+
+func (mh *MessageHandler) forgetJob(jobID string) {
+	if jobData, exists := mh.appState.GetJobData(jobID); exists && jobData.WorktreePath != "" {
+		if err := mh.gitUseCase.CleanupJobWorktree(jobData.WorktreePath, jobData.BranchName); err != nil {
+			log.Warn("⚠️ Failed to clean up the worktree of job %s: %v", jobID, err)
+		}
+	}
+	if err := mh.appState.RemoveQueuedMessagesForJob(jobID); err != nil {
+		log.Warn("⚠️ Failed to clean up queued messages for job %s: %v", jobID, err)
+	}
+	if err := mh.appState.RemoveJob(jobID); err != nil {
+		log.Error("❌ Failed to forget job %s: %v", jobID, err)
+		return
+	}
+	if mh.jobEvictor != nil {
+		mh.jobEvictor.EvictJob(jobID)
+	}
+	log.Info("🔁 Forgot job %s; it is another agent's now", jobID)
 }
 
 // A running turn is answered by runTurn once its handler returns; anything else at once.
@@ -85,7 +113,7 @@ func (mh *MessageHandler) dropQueuedMessages(jobID string) (droppedIDs []string)
 
 // The turn's CLI was cut short or never ran: the session it printed is kept for the next
 // message, and the partial work is committed (no Claude call, no PR) so the next turn starts
-// from a clean tree.
+// from a clean tree. A job given to another agent has no next turn here, so nothing is pushed.
 func (mh *MessageHandler) finishStoppedTurn(
 	jobData models.JobData,
 	result *services.CLIAgentResult,
@@ -115,10 +143,10 @@ func (mh *MessageHandler) finishStoppedTurn(
 	return &core.ErrTurnStopped{}
 }
 
-// saveUnfinishedWork keeps what a turn cut short left behind as a WIP commit on the job's branch.
-// failurePrefix leads the notice posted when that fails.
+// saveUnfinishedWork keeps what a turn cut short left behind as a WIP commit on the job's branch,
+// unless the job went to another agent. failurePrefix leads the notice posted when that fails.
 func (mh *MessageHandler) saveUnfinishedWork(jobData models.JobData, failurePrefix string) {
-	if jobData.Mode == models.AgentModeAsk {
+	if jobData.Mode == models.AgentModeAsk || mh.turns.isReleased(jobData.JobID) {
 		return
 	}
 	err := mh.gitUseCase.CommitStoppedWork(jobData.WorktreePath, jobData.BranchName)
@@ -188,6 +216,9 @@ func (mh *MessageHandler) runTurn(jobID, processedMessageID string, handle func(
 	turn := mh.turns.Begin(jobID)
 	err := handle(turn.ctx)
 	stopPressed := mh.turns.End(jobID, turn)
+	if mh.turns.takeReleased(jobID) {
+		defer mh.forgetJob(jobID)
+	}
 	if _, stopped := core.IsTurnStopped(err); stopped {
 		log.Info("🛑 Answering the stop of job %s: stopped", jobID)
 		mh.sendTurnStopped(jobID, processedMessageID, models.TurnStopOutcomeStopped)

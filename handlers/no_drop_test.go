@@ -207,6 +207,82 @@ func TestPoller_AcksDoneSkipsInFlightPersistsNew(t *testing.T) {
 	}
 }
 
+// The backend started j1 here and "first" is still preparing the job when a poll offers it with
+// "second". "second" must stay a reply: as a start it would run after "first" and replace the job's
+// branch and session.
+func TestPoller_AStartStillRunningKeepsTheNextMessageAReply(t *testing.T) {
+	f := newStopFixture(t)
+	appState := f.handler.appState
+	pool := workerpool.New(1)
+	defer pool.Stop()
+	dispatcher := NewJobDispatcher(f.handler, pool, appState)
+	ch := make(chan models.BaseMessage, 10)
+	dispatcher.activeJobs["j1"] = ch
+	dispatcher.Dispatch(startMessage("first"))
+
+	offered := []clients.AgentJobMessage{pollMessage(t, "first"), pollMessage(t, "second")}
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(clients.AgentJobsResponse{Jobs: []clients.AgentJob{{ID: "j1", Mode: "ask", Messages: offered}}})
+	}))
+	defer backend.Close()
+	poller := NewMessagePoller(clients.NewAgentsApiClient("k", backend.URL, "agent"), dispatcher, f.handler, appState, time.Hour)
+	poller.pollAndDispatch()
+
+	if len(ch) != 2 {
+		t.Fatalf("job channel has %d messages, want first + second", len(ch))
+	}
+	<-ch
+	if second := <-ch; second.Type != models.MessageTypeUserMessage {
+		t.Errorf("the message after a start still running went out as %s", second.Type)
+	}
+}
+
+// The task is switched to another agent while a poll is out. Its answer still lists "2", which the
+// released stop drained; run as a start it would push and open a PR for the other agent's job. A
+// poll sent after the switch is trusted, so a job given back to this agent still runs.
+func TestPoller_AJobReleasedWhileThePollWasOutStartsNothing(t *testing.T) {
+	f := newStopFixture(t)
+	f.mustHandle(t, startMessage("0"))
+	pool := workerpool.New(2)
+	defer pool.Stop()
+	dispatcher := NewJobDispatcher(f.handler, pool, f.handler.appState)
+	f.handler.SetJobEvictor(dispatcher)
+	f.agent.blockNext = true
+	dispatcher.Dispatch(replyMessage("1"))
+	<-f.agent.started
+	dispatcher.Dispatch(replyMessage("2"))
+
+	poll := func(offered clients.AgentJobMessage, beforeAnswering func()) {
+		backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/ack") {
+				return
+			}
+			beforeAnswering()
+			_ = json.NewEncoder(w).Encode(clients.AgentJobsResponse{Jobs: []clients.AgentJob{{
+				ID: "j1", Mode: "ask", Messages: []clients.AgentJobMessage{offered},
+			}}})
+		}))
+		defer backend.Close()
+		NewMessagePoller(clients.NewAgentsApiClient("k", backend.URL, "agent"), dispatcher, f.handler, f.handler.appState, time.Hour).pollAndDispatch()
+	}
+	starts := func() int {
+		f.agent.mu.Lock()
+		defer f.agent.mu.Unlock()
+		return len(f.agent.startSystemPrompts)
+	}
+
+	poll(pollMessage(t, "2"), func() {
+		f.handler.HandleMessage(releasedStop("j1"))
+		waitUntil(t, func() bool { _, exists := f.handler.appState.GetJobData("j1"); return !exists })
+	})
+	if dispatcher.IsMessageInFlight("cmsg_2") || f.handler.appState.IsMessageDone("cmsg_2") {
+		t.Fatal("a message the switch handed to another agent was run here as a new start")
+	}
+
+	poll(pollMessage(t, "3"), func() {})
+	waitUntil(t, func() bool { return starts() == 2 })
+}
+
 // Queued messages that carry their payload are replayed after a restart, even when the job
 // they start does not exist yet or the job they follow has completed.
 func TestRecoverJobs_ReplaysQueuedMessagesWithPayload(t *testing.T) {

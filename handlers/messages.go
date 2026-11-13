@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -420,13 +421,18 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 
 	// Auto-commit changes if needed (skip in ask mode)
 	var commitResult *usecases.AutoCommitResult
+	released := func() bool { return mh.turns.isReleased(payload.JobID) }
 	if payload.Mode != models.AgentModeAsk {
 		var err error
 		if worktreePath != "" {
 			// Use worktree-aware auto-commit
-			commitResult, err = mh.gitUseCase.AutoCommitChangesInWorktreeIfNeeded(payload.MessageLink, claudeResult.SessionID, worktreePath)
+			commitResult, err = mh.gitUseCase.AutoCommitChangesInWorktreeIfNeeded(payload.MessageLink, claudeResult.SessionID, worktreePath, released)
 		} else {
-			commitResult, err = mh.gitUseCase.AutoCommitChangesIfNeeded(payload.MessageLink, claudeResult.SessionID)
+			commitResult, err = mh.gitUseCase.AutoCommitChangesIfNeeded(payload.MessageLink, claudeResult.SessionID, released)
+		}
+		if errors.Is(err, usecases.ErrJobReleased) {
+			log.Info("🔁 Job %s went to another agent before its work was pushed; nothing is pushed for it", payload.JobID)
+			return &core.ErrTurnStopped{}
 		}
 		if err != nil {
 			log.Info("❌ Auto-commit failed: %v", err)
@@ -809,13 +815,18 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 
 	// Auto-commit changes if needed (skip in ask mode)
 	var commitResult *usecases.AutoCommitResult
+	released := func() bool { return mh.turns.isReleased(payload.JobID) }
 	if jobData.Mode != models.AgentModeAsk {
 		var err error
 		if jobData.WorktreePath != "" {
 			// Use worktree-aware auto-commit
-			commitResult, err = mh.gitUseCase.AutoCommitChangesInWorktreeIfNeeded(payload.MessageLink, claudeResult.SessionID, jobData.WorktreePath)
+			commitResult, err = mh.gitUseCase.AutoCommitChangesInWorktreeIfNeeded(payload.MessageLink, claudeResult.SessionID, jobData.WorktreePath, released)
 		} else {
-			commitResult, err = mh.gitUseCase.AutoCommitChangesIfNeeded(payload.MessageLink, claudeResult.SessionID)
+			commitResult, err = mh.gitUseCase.AutoCommitChangesIfNeeded(payload.MessageLink, claudeResult.SessionID, released)
+		}
+		if errors.Is(err, usecases.ErrJobReleased) {
+			log.Info("🔁 Job %s went to another agent before its work was pushed; nothing is pushed for it", payload.JobID)
+			return &core.ErrTurnStopped{}
 		}
 		if err != nil {
 			log.Info("❌ Auto-commit failed: %v", err)

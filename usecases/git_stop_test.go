@@ -1,14 +1,17 @@
 package usecases
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"nairid/clients"
 	"nairid/models"
+	"nairid/services"
 )
 
 // isolatedGit runs git with no user or system config, so signing or hooks on the
@@ -160,5 +163,113 @@ func TestCommitStoppedWork_DoesNothingOutsideRepoMode(t *testing.T) {
 	useCase := NewGitUseCase(nil, nil, appState)
 	if err := useCase.CommitStoppedWork(t.TempDir(), "agent-branch"); err != nil {
 		t.Fatalf("CommitStoppedWork outside repo mode: %v", err)
+	}
+}
+
+type commitMessageAgent struct{ services.CLIAgent }
+
+func (commitMessageAgent) ContinueConversationInDir(_, _, _ string) (*services.CLIAgentResult, error) {
+	return &services.CLIAgentResult{Output: "Add the half-done file"}, nil
+}
+
+func TestAutoCommitInWorktree_AJobGivenToAnotherAgentIsNotPushed(t *testing.T) {
+	r := newStoppedJobRepo(t)
+	r.useCase.claudeService = commitMessageAgent{}
+
+	_, err := r.useCase.AutoCommitChangesInWorktreeIfNeeded("", "session", r.worktree, func() bool { return true })
+
+	if !errors.Is(err, ErrJobReleased) {
+		t.Fatalf("want ErrJobReleased, got %v", err)
+	}
+	if head := r.remoteHead("agent-branch"); head != "" {
+		t.Fatalf("the branch reached the remote: %s", head)
+	}
+}
+
+// fakeGH stands in for the GitHub CLI: the branch has no PR yet, and each PR it is asked to open is recorded.
+func fakeGH(t *testing.T) (openedPRs func() string) {
+	t.Helper()
+	bin := t.TempDir()
+	opened := filepath.Join(bin, "opened")
+	script := "#!/bin/sh\ncase \"$1 $2\" in\n" +
+		"\"pr list\") echo '[]' ;;\n" +
+		"\"pr create\") echo \"$@\" >> " + opened + "; echo https://github.com/acme/app/pull/42 ;;\n" +
+		"*) exit 1 ;;\nesac\n"
+	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return func() string {
+		content, _ := os.ReadFile(opened)
+		return string(content)
+	}
+}
+
+// switchedWhileWritingThePR is a CLI whose job goes to another agent while it writes the PR title.
+type switchedWhileWritingThePR struct {
+	services.CLIAgent
+	switched *atomic.Bool
+}
+
+func (a switchedWhileWritingThePR) ContinueConversationInDir(_, prompt, _ string) (*services.CLIAgentResult, error) {
+	if prompt == PRTitleGenerationPrompt("agent-branch") {
+		a.switched.Store(true)
+	}
+	return &services.CLIAgentResult{Output: "Add the half-done file"}, nil
+}
+
+func TestAutoCommitInWorktree_AJobGivenToAnotherAgentWhileItsPRIsWrittenGetsNoPR(t *testing.T) {
+	r := newStoppedJobRepo(t)
+	openedPRs := fakeGH(t)
+	switched := &atomic.Bool{}
+	r.useCase.claudeService = switchedWhileWritingThePR{switched: switched}
+
+	_, err := r.useCase.AutoCommitChangesInWorktreeIfNeeded("", "session", r.worktree, switched.Load)
+
+	if !errors.Is(err, ErrJobReleased) {
+		t.Fatalf("want ErrJobReleased, got %v", err)
+	}
+	if opened := openedPRs(); opened != "" {
+		t.Errorf("a PR was opened for a job given to another agent: %s", opened)
+	}
+}
+
+// A released stop in the shared checkout leaves it on the job's branch with tracked edits
+// uncommitted. They used to block the checkout of main, so every new conversation failed.
+func TestPrepareForNewConversation_StartsAfterATurnCutShortInTheSharedCheckout(t *testing.T) {
+	git := isolatedGit(t)
+	remote, repo := t.TempDir(), t.TempDir()
+	write := func(content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(repo, "notes.txt"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git(remote, "init", "-q", "--bare", "-b", "main")
+	git(repo, "init", "-q", "-b", "main")
+	write("base")
+	git(repo, "add", "notes.txt")
+	git(repo, "commit", "-q", "-m", "base")
+	git(repo, "remote", "add", "origin", remote)
+	git(repo, "push", "-q", "-u", "origin", "main")
+	git(repo, "checkout", "-q", "-b", "agent-branch")
+	write("first turn")
+	git(repo, "commit", "-q", "-am", "first turn")
+	write("half done")
+
+	gitClient := clients.NewGitClient()
+	gitClient.SetRepoPathProvider(func() string { return repo })
+	appState := models.NewAppState("agent", filepath.Join(t.TempDir(), "state.json"))
+	appState.SetRepositoryContext(&models.RepositoryContext{IsRepoMode: true, RepoPath: repo})
+	branch, err := NewGitUseCase(gitClient, nil, appState).PrepareForNewConversation("hint")
+	if err != nil {
+		t.Fatalf("PrepareForNewConversation: %v", err)
+	}
+
+	if current := git(repo, "branch", "--show-current"); current != branch {
+		t.Errorf("current branch = %q, want the new conversation's %q", current, branch)
+	}
+	if status := git(repo, "status", "--porcelain"); status != "" {
+		t.Errorf("the new conversation starts on a dirty checkout: %q", status)
 	}
 }

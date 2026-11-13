@@ -3,7 +3,11 @@ package handlers
 import (
 	"context"
 	"sync"
+	"time"
 )
+
+// releasedJobMemory outlives a job poll (60s client timeout) sent before a released stop landed.
+const releasedJobMemory = 10 * time.Minute
 
 type runningTurn struct {
 	ctx    context.Context
@@ -13,11 +17,63 @@ type runningTurn struct {
 type turnRegistry struct {
 	mu               sync.Mutex
 	turns            map[string]*runningTurn
-	seenStopRequests map[string]string // job id → requested_at already handled
+	seenStopRequests map[string]string    // job id → requested_at already handled
+	released         map[string]bool      // jobs to forget once their running turn ends
+	releasedAt       map[string]time.Time // job id → when its released stop landed, kept releasedJobMemory
 }
 
 func newTurnRegistry() *turnRegistry {
-	return &turnRegistry{turns: map[string]*runningTurn{}, seenStopRequests: map[string]string{}}
+	return &turnRegistry{
+		turns:            map[string]*runningTurn{},
+		seenStopRequests: map[string]string{},
+		released:         map[string]bool{},
+		releasedAt:       map[string]time.Time{},
+	}
+}
+
+// markReleased records when the backend gave the job to another agent.
+func (r *turnRegistry) markReleased(jobID string) {
+	now := time.Now()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, at := range r.releasedAt {
+		if now.Sub(at) > releasedJobMemory {
+			delete(r.releasedAt, id)
+		}
+	}
+	r.releasedAt[jobID] = now
+}
+
+// releasedSince: a job poll sent at sentAt or earlier may list the job as it was before the switch.
+func (r *turnRegistry) releasedSince(jobID string, sentAt time.Time) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	at, released := r.releasedAt[jobID]
+	return released && !at.Before(sentAt)
+}
+
+// releaseAfterTurn marks a running job to be forgotten when its turn ends; false when no turn runs.
+func (r *turnRegistry) releaseAfterTurn(jobID string) (running bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, running = r.turns[jobID]; running {
+		r.released[jobID] = true
+	}
+	return running
+}
+
+func (r *turnRegistry) isReleased(jobID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.released[jobID]
+}
+
+func (r *turnRegistry) takeReleased(jobID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	released := r.released[jobID]
+	delete(r.released, jobID)
+	return released
 }
 
 func (r *turnRegistry) Begin(jobID string) *runningTurn {
