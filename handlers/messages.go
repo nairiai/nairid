@@ -234,8 +234,9 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 	}
 
 	// A start would replace the job's branch and session and lose its work, so a job that already has a
-	// session continues it. Recovery reruns such a job as a reply too.
-	if jobData, exists := mh.appState.GetJobData(payload.JobID); exists && jobData.ClaudeSessionID != "" {
+	// session continues it, as recovery does. A job whose worktree or branch is gone starts fresh.
+	if jobData, exists := mh.appState.GetJobData(payload.JobID); exists && jobData.ClaudeSessionID != "" &&
+		mh.jobWorkspaceExists(jobData) {
 		log.Warn("⚠️ Job %s already has a session; handling start %s as a reply", payload.JobID, payload.ProcessedMessageID)
 		return mh.handleUserMessage(turnCtx, models.BaseMessage{
 			ID:   msg.ID,
@@ -560,6 +561,20 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 
 	log.Info("📋 Completed successfully - handled start conversation message")
 	return nil
+}
+
+// jobWorkspaceExists reports whether a reply could run in the job's worktree or branch. It checks what
+// recovery checks, so a job swept from disk is not continued.
+func (mh *MessageHandler) jobWorkspaceExists(job *models.JobData) bool {
+	if !mh.appState.GetRepositoryContext().IsRepoMode {
+		return true
+	}
+	if job.WorktreePath != "" {
+		return mh.gitUseCase.WorktreeExists(job.WorktreePath)
+	}
+	// When git cannot tell, the job is kept: a fresh start would overwrite it.
+	exists, err := mh.gitUseCase.BranchExists(job.BranchName)
+	return err != nil || exists
 }
 
 func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.BaseMessage) error {
