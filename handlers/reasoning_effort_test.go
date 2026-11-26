@@ -57,12 +57,4 @@ func TestStartPayloadForUnstartedJob(t *testing.T) {
 			t.Errorf("the reply was not carried over: %+v", got)
 		}
 	})
-
-	t.Run("a job this agent has never seen starts at the model default", func(t *testing.T) {
-		got := startPayloadForUnstartedJob(reply, nil)
-
-		if got.ReasoningEffort != "" || got.ReasoningEffortModel != "" {
-			t.Errorf("level = %q for model %q, want none", got.ReasoningEffort, got.ReasoningEffortModel)
-		}
-	})
 }

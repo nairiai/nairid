@@ -1,6 +1,8 @@
 package models
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -25,6 +27,7 @@ func TestJobDataIsReadBackWithEveryField(t *testing.T) {
 		ReasoningEffort:    "xhigh",
 		EffortModel:        "claude-opus-4-8",
 		SessionTimeoutMs:   7200000,
+		StartPayload:       json.RawMessage(`{"job_id":"j1"}`),
 		UpdatedAt:          time.Date(2026, 10, 2, 10, 0, 0, 0, time.UTC),
 	}
 	fields := reflect.ValueOf(want)
@@ -129,5 +132,213 @@ func TestRestore_WritesTheWholeSnapshotOnce(t *testing.T) {
 	got := writes[0]
 	if len(got.Jobs) != 2 || len(got.QueuedMessages) != 1 || len(got.DoneMessages) != 1 || len(got.Outbox) != 1 {
 		t.Errorf("written state is missing parts: %d jobs, %d queued, %d done, %d unsent", len(got.Jobs), len(got.QueuedMessages), len(got.DoneMessages), len(got.Outbox))
+	}
+}
+
+func TestCleanupHold_FollowsTheSetAsideFile(t *testing.T) {
+	// Glob characters in the path must not hide the file.
+	dir := filepath.Join(t.TempDir(), "in[stance]*")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(dir, "state.json")
+	bad := []byte("not json")
+	if err := os.WriteFile(statePath, bad, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	state := NewAppState("agent", statePath)
+	if hold := state.CleanupHold(); hold != "" {
+		t.Fatalf("held before anything was set aside: %s", hold)
+	}
+
+	asidePath, err := SetAsideUnreadableState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kept, err := os.ReadFile(asidePath); err != nil || string(kept) != string(bad) {
+		t.Fatalf("set-aside file = %q, %v", kept, err)
+	}
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Fatalf("state file still in place: %v", err)
+	}
+	if state.CleanupHold() == "" {
+		t.Fatal("not held after the file was set aside")
+	}
+
+	// A valid state written later doesn't lift it, whichever process reads it.
+	if err := state.UpdateJobData("j1", JobData{JobID: "j1"}); err != nil {
+		t.Fatal(err)
+	}
+	if NewAppState("agent", statePath).CleanupHold() == "" {
+		t.Fatal("not held after a restart")
+	}
+
+	if err := os.Remove(asidePath); err != nil {
+		t.Fatal(err)
+	}
+	if hold := state.CleanupHold(); hold != "" {
+		t.Fatalf("still held after the file was removed: %s", hold)
+	}
+}
+
+func TestCleanupHold_NeedsEverySetAsideFileRemoved(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	var asidePaths []string
+	for range 2 {
+		if err := os.WriteFile(statePath, []byte("not json"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		asidePath, err := SetAsideUnreadableState(statePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		asidePaths = append(asidePaths, asidePath)
+	}
+	if asidePaths[0] == asidePaths[1] {
+		t.Fatal("second set-aside overwrote the first")
+	}
+	if err := os.Remove(asidePaths[0]); err != nil {
+		t.Fatal(err)
+	}
+	if NewAppState("agent", statePath).CleanupHold() == "" {
+		t.Fatal("not held with one set-aside file left")
+	}
+}
+
+func TestCleanupHold_FailsClosedWhenTheDirectoryCantBeListed(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	if NewAppState("agent", filepath.Join(dir, "state.json")).CleanupHold() == "" {
+		t.Fatal("not held when the directory can't be listed")
+	}
+}
+
+func TestCleanupHold_IgnoresOtherFiles(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"state.json", "state.json.tmp", "other.json.unreadable-1"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("{}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if hold := NewAppState("agent", filepath.Join(dir, "state.json")).CleanupHold(); hold != "" {
+		t.Fatalf("held by an unrelated file: %s", hold)
+	}
+	missing := filepath.Join(dir, "no-such-dir", "state.json")
+	if hold := NewAppState("agent", missing).CleanupHold(); hold != "" {
+		t.Fatalf("held by a missing directory: %s", hold)
+	}
+}
+
+// One write is what makes a crash leave either all of a finished turn or none of it.
+func TestCompleteTurnIsOneWrite(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	appState := NewAppState("agent", statePath)
+	if err := appState.AddQueuedMessage(QueuedMessage{ProcessedMessageID: "cmsg_1", JobID: "j1", QueuedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	writes := 0
+	restore := SetAfterPersistForTest(func(path string) {
+		if path == statePath {
+			writes++
+		}
+	})
+	defer restore()
+
+	err := appState.CompleteTurn(
+		JobData{JobID: "j1", ProcessedMessageID: "cmsg_1", Status: JobStatusCompleted, ClaudeSessionID: "session-1"},
+		&OutboxMessage{ID: "out_1", Event: "cc_message", Data: json.RawMessage(`{}`), QueuedAt: time.Now()},
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if writes != 1 {
+		t.Errorf("finishing a turn took %d writes, want 1", writes)
+	}
+
+	loaded, err := LoadState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job := loaded.Jobs["j1"]; job == nil || job.Status != JobStatusCompleted || job.ClaudeSessionID != "session-1" {
+		t.Errorf("job read back as %+v", job)
+	}
+	if loaded.Outbox["out_1"] == nil {
+		t.Error("reply was not stored")
+	}
+	if _, done := loaded.DoneMessages["cmsg_1"]; !done {
+		t.Error("message was not marked done")
+	}
+	if loaded.QueuedMessages["cmsg_1"] != nil {
+		t.Error("message is still queued")
+	}
+}
+
+// Memory must match the disk after a failed write: the next write stores all of memory.
+func TestCompleteTurnThatFailsToWriteChangesNothing(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	appState := NewAppState("agent", filepath.Join(stateDir, "state.json"))
+	running := JobData{JobID: "j1", ProcessedMessageID: "cmsg_1", Status: JobStatusInProgress, StartPayload: json.RawMessage(`{}`)}
+	if err := appState.UpdateJobData("j1", running); err != nil {
+		t.Fatal(err)
+	}
+	if err := appState.AddQueuedMessage(QueuedMessage{ProcessedMessageID: "cmsg_1", JobID: "j1", QueuedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(stateDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stateDir, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reply := func(id string) *OutboxMessage {
+		return &OutboxMessage{ID: id, Event: "cc_message", Data: json.RawMessage(`{}`), QueuedAt: time.Now()}
+	}
+
+	finished := JobData{JobID: "j1", ProcessedMessageID: "cmsg_1", Status: JobStatusCompleted, ClaudeSessionID: "session-1"}
+	if err := appState.CompleteTurn(finished, reply("out_1"), time.Now()); err == nil {
+		t.Fatal("the write should have failed")
+	}
+	job, exists := appState.GetJobData("j1")
+	if !exists || job.Status != JobStatusInProgress || job.ClaudeSessionID != "" || len(job.StartPayload) == 0 {
+		t.Errorf("job is %+v", job)
+	}
+	if len(appState.GetAllOutboxMessages()) != 0 {
+		t.Error("the reply stayed in the outbox")
+	}
+	if appState.IsMessageDone("cmsg_1") {
+		t.Error("the message stayed done")
+	}
+	if queued := appState.GetAllQueuedMessages(); len(queued) != 1 {
+		t.Errorf("queued messages are %+v", queued)
+	}
+
+	// A job with no row before the turn has none after it.
+	newJob := JobData{JobID: "j2", ProcessedMessageID: "cmsg_2", Status: JobStatusCompleted}
+	if err := appState.CompleteTurn(newJob, reply("out_2"), time.Now()); err == nil {
+		t.Fatal("the write should have failed")
+	}
+	if _, exists := appState.GetJobData("j2"); exists {
+		t.Error("the job stayed")
+	}
+}
+
+func TestCompleteTurnWithNoOutboxEntryStillFinishesTheTurn(t *testing.T) {
+	appState := NewAppState("agent", filepath.Join(t.TempDir(), "state.json"))
+	err := appState.CompleteTurn(JobData{JobID: "j1", ProcessedMessageID: "cmsg_1", Status: JobStatusCompleted}, nil, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !appState.IsMessageDone("cmsg_1") {
+		t.Error("message was not marked done")
+	}
+	if len(appState.GetAllOutboxMessages()) != 0 {
+		t.Error("nothing should be in the outbox")
 	}
 }

@@ -1,4 +1,4 @@
-## [v0.0.134] - 2026-11-05
+## [v0.0.142] - 2026-11-26
 
 ### Features
 
@@ -9,6 +9,69 @@
   - A finished or failed job no longer keeps its last message on disk, and its inbound attachments are removed when the idle check closes it
   - A reply whose session the CLI no longer has ("No conversation found") starts the job over in the same mode and effort instead of failing
   - Codex no longer writes every prompt to `~/.codex/history.jsonl`
+
+## [v0.0.141] - 2026-11-13
+
+### Bugfixes
+
+- Forget a job the backend switched to another agent ([#268](https://github.com/nairiai/nairid/pull/268))
+  - A turn stopped because of a switch pushes no work-in-progress commit and opens no PR
+  - A late copy of a message from a poll can no longer restart the forgotten job
+  - Single-repo mode resets tracked edits before checking out the default branch
+- A start for a job that already has a session continues it ([#273](https://github.com/nairiai/nairid/pull/273))
+  - If the job's worktree or branch is gone, it starts fresh instead
+
+## [v0.0.140] - 2026-11-10
+
+### Bugfixes
+
+- The daemon's own git and gh calls on managed agents go through the secret proxy ([#267](https://github.com/nairiai/nairid/pull/267))
+
+## [v0.0.139] - 2026-11-08
+
+### Bugfixes
+
+- Keep the websocket upgrade from stalling on a finishing poll ([#266](https://github.com/nairiai/nairid/pull/266))
+- Cap how far one skill file may expand when extracting ([#264](https://github.com/nairiai/nairid/pull/264))
+
+## [v0.0.138] - 2026-11-07
+
+### Bugfixes
+
+- Git and gh in the repo and job worktrees run as the agent user ([#263](https://github.com/nairiai/nairid/pull/263))
+  - Repo hooks and git config that the agent can edit no longer run with the daemon's privileges
+
+## [v0.0.137] - 2026-11-06
+
+### Bugfixes
+
+- Keep a conversation's first message across a restart ([#262](https://github.com/nairiai/nairid/pull/262))
+
+## [v0.0.136] - 2026-11-06
+
+### Bugfixes
+
+- Handle an unreadable state file ([#260](https://github.com/nairiai/nairid/pull/260))
+
+## [v0.0.135] - 2026-11-05
+
+### Bugfixes
+
+- Env values with special characters reach the agent CLI unchanged ([#258](https://github.com/nairiai/nairid/pull/258))
+  - In managed mode, a value with a space, `&`, `;`, `$` or a quote could stop the CLI from starting or reach it altered
+  - Env entries are now quoted the same way as args, so every value passes through byte for byte
+- Attachments in a thread no longer overwrite each other ([#259](https://github.com/nairiai/nairid/pull/259))
+  - Files were named by their position in the message, so two same-type attachments on different messages shared one path
+  - Each file is now named by its attachment ID; IDs that can't be a file name are refused before the fetch
+
+## [v0.0.134] - 2026-11-05
+
+### Bugfixes
+
+- The idle check no longer completes a job while a turn is running or a follow-up is waiting ([#254](https://github.com/nairiai/nairid/pull/254))
+  - A PR merged or closed during a turn used to complete the job mid-turn, so the backend dropped the reply and queued follow-ups were wiped
+  - The check now skips a job with an accepted message or a running turn and retries on the next sweep; a stuck job with nothing running still completes
+  - A failed turn no longer evicts its own job, so a buffered follow-up can't start a second processor on the same session and worktree
 
 ## [v0.0.133] - 2026-11-03
 

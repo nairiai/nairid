@@ -2,12 +2,17 @@ package models
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"time"
+
+	"nairid/core/log"
 )
 
 // RepositoryContext encapsulates information about the git repository being worked on
@@ -45,8 +50,11 @@ type JobData struct {
 	ReasoningEffort    string    `json:"reasoning_effort,omitempty"` // CLI effort level the backend sent when the conversation started; empty = model default
 	EffortModel        string    `json:"effort_model,omitempty"`     // --model id the level was checked against; it applies only while the agent runs that model
 	// Latest per-agent cap on one CLI run the backend sent; 0 means NAIRI_MAX_SESSION_MS or 1h.
-	SessionTimeoutMs int64     `json:"session_timeout_ms,omitempty"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	SessionTimeoutMs int64 `json:"session_timeout_ms,omitempty"`
+	// The first message as received, kept until the job has a session. The CLI only keeps the
+	// instructions once a session exists, so a restart or a reply before then has to start over from this.
+	StartPayload json.RawMessage `json:"start_payload,omitempty"`
+	UpdatedAt    time.Time       `json:"updated_at"`
 }
 
 // QueuedMessage represents a message that has been queued for processing but not yet started
@@ -208,8 +216,8 @@ func (a *AppState) GetJobData(jobID string) (*JobData, bool) {
 	if !exists {
 		return nil, false
 	}
-	// Return a copy to avoid race conditions. JobData holds only values, so
-	// copying the struct copies every field, including ones added later.
+	// Return a copy to avoid race conditions. Every field is a value except StartPayload,
+	// which is only ever replaced whole, so copying the struct is enough.
 	jobCopy := *data
 	return &jobCopy, true
 }
@@ -323,6 +331,46 @@ func (a *AppState) FinishMessage(processedMessageID string, at time.Time) error 
 	}
 
 	return nil
+}
+
+// CompleteTurn records a finished turn in one write: the job's final state, its reply waiting to
+// be sent, and the message as done. Written apart, a crash between them gives a second reply:
+// a job still in progress is run again, and a message not yet done is delivered again.
+func (a *AppState) CompleteTurn(data JobData, reply *OutboxMessage, at time.Time) error {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+	job, hadJob := a.jobs[data.JobID]
+	done, wasDone := a.doneMessages[data.ProcessedMessageID]
+	queued, wasQueued := a.queuedMessages[data.ProcessedMessageID]
+
+	a.jobs[data.JobID] = &data
+	if reply != nil {
+		a.outbox[reply.ID] = reply
+	}
+	a.doneMessages[data.ProcessedMessageID] = at
+	delete(a.queuedMessages, data.ProcessedMessageID)
+
+	err := a.persistStateLocked()
+	if err == nil {
+		return nil
+	}
+
+	// Every write holds all of memory, so a later one would record a finished turn whose reply never went out.
+	restoreEntry(a.jobs, data.JobID, job, hadJob)
+	restoreEntry(a.doneMessages, data.ProcessedMessageID, done, wasDone)
+	restoreEntry(a.queuedMessages, data.ProcessedMessageID, queued, wasQueued)
+	if reply != nil {
+		delete(a.outbox, reply.ID)
+	}
+	return fmt.Errorf("failed to persist state: %w", err)
+}
+
+func restoreEntry[V any](entries map[string]V, key string, value V, existed bool) {
+	if existed {
+		entries[key] = value
+		return
+	}
+	delete(entries, key)
 }
 
 // Restore loads a whole persisted snapshot and writes it back once.
@@ -449,15 +497,18 @@ func (a *AppState) persistStateLocked() error {
 		return fmt.Errorf("failed to create state directory: %w", err)
 	}
 
-	// Write to temporary file first
+	// Write to temporary file first, synced so a host crash can't leave an empty file behind the rename
 	tempPath := a.statePath + ".tmp"
-	if err := os.WriteFile(tempPath, data, 0644); err != nil {
+	if err := writeFileSynced(tempPath, data, 0644); err != nil {
 		return fmt.Errorf("failed to write temp state file: %w", err)
 	}
 
 	// Atomic rename
 	if err := os.Rename(tempPath, a.statePath); err != nil {
 		return fmt.Errorf("failed to rename state file: %w", err)
+	}
+	if err := syncDir(dir); err != nil {
+		log.Warn("⚠️ Failed to sync state directory %s: %v", dir, err)
 	}
 	if afterPersist != nil {
 		afterPersist(a.statePath)
@@ -468,6 +519,77 @@ func (a *AppState) persistStateLocked() error {
 
 // afterPersist lets tests look at every state file written, each a point a crash could leave behind.
 var afterPersist func(statePath string)
+
+// SetAfterPersistForTest sets the hook for tests in other packages and returns a function that clears it.
+func SetAfterPersistForTest(hook func(statePath string)) (restore func()) {
+	afterPersist = hook
+	return func() { afterPersist = nil }
+}
+
+func writeFileSynced(path string, data []byte, perm os.FileMode) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	_, err = file.Write(data)
+	if err == nil {
+		err = file.Sync()
+	}
+	return errors.Join(err, file.Close())
+}
+
+// syncDir makes a rename survive a host crash.
+func syncDir(dir string) error {
+	// Windows can't fsync a directory.
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	handle, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	return errors.Join(handle.Sync(), handle.Close())
+}
+
+// unreadableStateMarker sits between the state file's name and the time it was set aside.
+const unreadableStateMarker = ".unreadable-"
+
+// SetAsideUnreadableState renames a bad state file next to itself and returns the new path.
+// CleanupHold reads the renamed file, so nothing but an operator may remove it.
+func SetAsideUnreadableState(statePath string) (string, error) {
+	asidePath := statePath + unreadableStateMarker + time.Now().UTC().Format("20060102T150405.000000000Z")
+	if err := os.Rename(statePath, asidePath); err != nil {
+		return "", err
+	}
+	// Safe to only warn: a rename lost to a crash leaves the bad file, and the next boot sets it aside again.
+	if err := syncDir(filepath.Dir(statePath)); err != nil {
+		log.Warn("⚠️ Failed to sync state directory after setting aside %s: %v", asidePath, err)
+	}
+	return asidePath, nil
+}
+
+// CleanupHold checks for set-aside unreadable state files before cleanup can delete forgotten work.
+// Reading disk each time preserves the hold across restarts and lets an operator clear it.
+func (a *AppState) CleanupHold() string {
+	dir := filepath.Dir(a.statePath)
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return ""
+	}
+	if err != nil {
+		return fmt.Sprintf("can't check %s for a set-aside state file: %v", dir, err)
+	}
+	prefix := filepath.Base(a.statePath) + unreadableStateMarker
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), prefix) {
+			return fmt.Sprintf(
+				"the state file was unreadable and was set aside as %s. To clear this, save what you need from the worktrees, then remove every %s* file in %s. Cleanup then deletes everything the state doesn't track",
+				entry.Name(), prefix, dir,
+			)
+		}
+	}
+	return ""
+}
 
 // LoadState loads persisted state from disk
 // Returns LoadedState containing the loaded data and a boolean indicating success, or an error

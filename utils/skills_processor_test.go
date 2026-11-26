@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -374,6 +375,78 @@ func TestExtractZipToDirectory_PreservesExecutePermission(t *testing.T) {
 	}
 	if scriptInfo.Mode().Perm()&0111 == 0 {
 		t.Errorf("scripts/deploy.sh should be executable, got mode %o", scriptInfo.Mode().Perm())
+	}
+}
+
+// createSkillZipWithZeroEntry writes SKILL.md plus one entry of zeros, so the zip stays small
+func createSkillZipWithZeroEntry(t *testing.T, zipPath, name string, size int) {
+	t.Helper()
+	zipFile, err := os.Create(zipPath)
+	if err != nil {
+		t.Fatalf("Failed to create zip: %v", err)
+	}
+	defer func() { _ = zipFile.Close() }()
+
+	w := zip.NewWriter(zipFile)
+	f, err := w.Create("SKILL.md")
+	if err != nil {
+		t.Fatalf("Failed to create SKILL.md: %v", err)
+	}
+	if _, err := f.Write([]byte("# My Skill")); err != nil {
+		t.Fatalf("Failed to write SKILL.md: %v", err)
+	}
+	f, err = w.Create(name)
+	if err != nil {
+		t.Fatalf("Failed to create %s: %v", name, err)
+	}
+	chunk := make([]byte, 1<<20)
+	for left := size; left > 0; left -= len(chunk) {
+		if _, err := f.Write(chunk[:min(left, len(chunk))]); err != nil {
+			t.Fatalf("Failed to write %s: %v", name, err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Failed to close zip: %v", err)
+	}
+}
+
+func TestReadZipEntry_AtLimitPassesAndOneByteOverRejected(t *testing.T) {
+	limit := int64(1 << 20)
+
+	content, err := readZipEntry(bytes.NewReader(make([]byte, limit)), limit)
+	if err != nil {
+		t.Fatalf("Expected entry at the limit to pass, got %v", err)
+	}
+	if int64(len(content)) != limit {
+		t.Errorf("Expected %d bytes, got %d", limit, len(content))
+	}
+
+	_, err = readZipEntry(bytes.NewReader(make([]byte, limit+1)), limit)
+	if err == nil || !contains(err.Error(), "more than 1 MB") {
+		t.Errorf("Expected an error containing %q, got %v", "more than 1 MB", err)
+	}
+}
+
+func TestExtractZipToDirectory_EntryOverCapRejectedWithBoundedMemory(t *testing.T) {
+	tmpDir := t.TempDir()
+	zipPath := filepath.Join(tmpDir, "test.zip")
+	extractDir := filepath.Join(tmpDir, "extract")
+	createSkillZipWithZeroEntry(t, zipPath, "assets/data.bin", 1<<30)
+
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	err := ExtractZipToDirectory(zipPath, extractDir)
+	runtime.ReadMemStats(&after)
+
+	if err == nil || !contains(err.Error(), "more than 64 MB") {
+		t.Fatalf("Expected an error containing %q, got %v", "more than 64 MB", err)
+	}
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 512<<20 {
+		t.Errorf("Expected extraction to stop near the cap, but it allocated %d bytes", allocated)
+	}
+	if _, err := os.Stat(filepath.Join(extractDir, "assets", "data.bin")); !os.IsNotExist(err) {
+		t.Errorf("assets/data.bin should not be written, stat err = %v", err)
 	}
 }
 

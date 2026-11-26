@@ -180,6 +180,8 @@ type StopTurnPayload struct {
 	JobID       string `json:"job_id"`
 	RequestedBy string `json:"requested_by,omitempty"`
 	RequestedAt string `json:"requested_at,omitempty"`
+	// Released: the backend gave the job to another agent, so this one forgets it after the stop.
+	Released bool `json:"released,omitempty"`
 }
 
 const (

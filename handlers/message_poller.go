@@ -93,6 +93,7 @@ func (mp *MessagePoller) currentInterval() time.Duration {
 func (mp *MessagePoller) pollAndDispatch() {
 	log.Info("📡 MessagePoller: Polling for unacked messages...")
 
+	sentAt := time.Now()
 	resp, err := mp.apiClient.FetchAgentJobs()
 	if err != nil {
 		mp.consecutiveFailures++
@@ -112,6 +113,9 @@ func (mp *MessagePoller) pollAndDispatch() {
 	log.Info("📡 MessagePoller: Fetched %d jobs, %d unacked messages", len(resp.Jobs), totalMessages)
 
 	for _, job := range resp.Jobs {
+		if mp.releasedSince(job.ID, sentAt) {
+			continue
+		}
 		_, jobExists := mp.appState.GetJobData(job.ID)
 		log.Info("📡 MessagePoller: Processing job %s (exists_locally=%v, messages=%d)", job.ID, jobExists, len(job.Messages))
 
@@ -142,7 +146,14 @@ func (mp *MessagePoller) pollAndDispatch() {
 			// Queued or running here: it gets acked when its turn ends.
 			if processedMsgID != "" && mp.dispatcher.IsMessageInFlight(processedMsgID) {
 				log.Info("📡 MessagePoller: Message %s already queued or running, skipping", msg.ID)
+				// It may be the job's start, still preparing the job: a second start would replace it.
+				jobExists = true
 				continue
+			}
+
+			// The released stop can also land while this job's messages are being dispatched.
+			if mp.releasedSince(job.ID, sentAt) {
+				break
 			}
 
 			var baseMsg models.BaseMessage
@@ -205,6 +216,17 @@ func (mp *MessagePoller) pollAndDispatch() {
 			// processing, the message stays unacked and will be re-polled.
 		}
 	}
+}
+
+// A job the backend gave to another agent after this poll was sent is listed as it was before the
+// switch: its waiting messages were ended and handed over, and run here as a start they would push
+// and open a PR. A later poll sees the switch, so a job given back to this agent still runs.
+func (mp *MessagePoller) releasedSince(jobID string, sentAt time.Time) bool {
+	if !mp.messageHandler.turns.releasedSince(jobID, sentAt) {
+		return false
+	}
+	log.Info("📡 MessagePoller: Job %s went to another agent after this poll was sent, skipping it", jobID)
+	return true
 }
 
 // extractProcessedMessageID extracts ProcessedMessageID from a poller message.

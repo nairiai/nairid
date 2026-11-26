@@ -318,7 +318,7 @@ func (p *WorktreePool) prepareFillCycle() (string, error) {
 	}
 
 	// Ensure base directory exists
-	if err := os.MkdirAll(p.basePath, 0755); err != nil {
+	if err := clients.EnsureWorktreeBaseDir(p.basePath); err != nil {
 		return "", fmt.Errorf("failed to create base directory: %w", err)
 	}
 

@@ -31,6 +31,7 @@ import (
 	"nairid/core/env"
 	"nairid/core/log"
 	"nairid/core/retention"
+	"nairid/core/socketio"
 	"nairid/handlers"
 	"nairid/models"
 	"nairid/services"
@@ -949,6 +950,10 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 		if err != nil {
 			return nil, fmt.Errorf("failed to get worktree base path: %w", err)
 		}
+		// Older versions made it 0755, and the cleanup below removes worktrees as the agent user.
+		if err := clients.EnsureWorktreeBaseDir(worktreeBasePath); err != nil {
+			log.Warn("⚠️ Failed to prepare worktree base directory: %v", err)
+		}
 
 		worktreePool = usecases.NewWorktreePool(
 			gitUseCase.GetGitClient(),
@@ -967,7 +972,7 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 		// Clean up stale job worktrees with broken git references
 		// This can happen when containers are recreated - old job worktrees remain
 		// but their git links point to non-existent directories
-		if err := worktreePool.CleanupStaleJobWorktrees(); err != nil {
+		if err := gitUseCase.CleanupStaleJobWorktrees(); err != nil {
 			log.Warn("⚠️ Failed to clean up stale job worktrees: %v", err)
 		}
 
@@ -1381,7 +1386,7 @@ func (cr *CmdRunner) startSocketIOClient(ctx context.Context, serverURLStr, apiK
 
 	// Set up Socket.IO client options
 	opts := socket.DefaultOptions()
-	opts.SetTransports(types.NewSet(socket.Polling, socket.WebSocket))
+	opts.SetTransports(types.NewSet(socketio.Polling, socket.WebSocket))
 
 	// Disable automatic reconnection - handle reconnection externally with backoff
 	opts.SetReconnection(false)

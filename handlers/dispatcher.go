@@ -24,12 +24,17 @@ type JobDispatcher struct {
 	activeJobs map[string]chan models.BaseMessage
 	// Messages dispatched in this process whose turn has not finished. Kept in memory only:
 	// after a restart they are not done, so recovery or the poller runs them again.
-	inFlight    map[string]time.Time
-	lastCleanup time.Time
-	mutex       sync.Mutex
-	handler     *MessageHandler
-	workerPool  *workerpool.WorkerPool
-	appState    *models.AppState
+	inFlight map[string]time.Time
+	// Per job, messages accepted into a channel and not finished. Taken at the send and held until
+	// the turn is over, so it has no gap while a message moves from the channel to its turn.
+	acceptedMessages map[string]int
+	// Jobs the idle check is completing: Dispatch leaves their messages for the next poll.
+	completingJobs map[string]struct{}
+	lastCleanup    time.Time
+	mutex          sync.Mutex
+	handler        *MessageHandler
+	workerPool     *workerpool.WorkerPool
+	appState       *models.AppState
 }
 
 // NewJobDispatcher creates a new JobDispatcher instance.
@@ -39,12 +44,14 @@ func NewJobDispatcher(
 	appState *models.AppState,
 ) *JobDispatcher {
 	return &JobDispatcher{
-		activeJobs:  make(map[string]chan models.BaseMessage),
-		inFlight:    make(map[string]time.Time),
-		lastCleanup: time.Now(),
-		handler:     handler,
-		workerPool:  workerPool,
-		appState:    appState,
+		activeJobs:       make(map[string]chan models.BaseMessage),
+		inFlight:         make(map[string]time.Time),
+		acceptedMessages: make(map[string]int),
+		completingJobs:   make(map[string]struct{}),
+		lastCleanup:      time.Now(),
+		handler:          handler,
+		workerPool:       workerPool,
+		appState:         appState,
 	}
 }
 
@@ -81,6 +88,13 @@ func (d *JobDispatcher) Dispatch(msg models.BaseMessage) {
 	// The send is non-blocking and happens under the lock, so a finishing worker cannot close
 	// the channel in between.
 	d.mutex.Lock()
+	if _, completing := d.completingJobs[jobID]; completing {
+		// Not acked, so the poller offers it again if the backend still wants it run.
+		delete(d.inFlight, processedMsgID)
+		d.mutex.Unlock()
+		log.Info("⏳ Job %s is being completed, message %s left for the next poll", jobID, processedMsgID)
+		return
+	}
 	ch, exists := d.activeJobs[jobID]
 	if !exists {
 		ch = make(chan models.BaseMessage, 100)
@@ -89,6 +103,7 @@ func (d *JobDispatcher) Dispatch(msg models.BaseMessage) {
 	}
 	select {
 	case ch <- msg:
+		d.acceptedMessages[jobID]++
 		log.Info("📥 Queued message to job %s channel", jobID)
 	default:
 		// Not acked, so the poller offers it again once the job has room.
@@ -113,7 +128,7 @@ func (d *JobDispatcher) processJobMessages(jobID string, ch chan models.BaseMess
 	for msg := range ch {
 		log.Info("🔧 Processing message for job %s", jobID)
 		d.handler.HandleMessage(msg)
-		d.ForgetMessage(d.extractProcessedMessageID(msg))
+		d.finishMessage(jobID, msg)
 
 		// Check if job was removed from AppState
 		jobData, exists := d.appState.GetJobData(jobID)
@@ -136,8 +151,41 @@ func (d *JobDispatcher) processJobMessages(jobID string, ch chan models.BaseMess
 
 func (d *JobDispatcher) cleanup(jobID string, ch chan models.BaseMessage) {
 	d.mutex.Lock()
-	defer d.mutex.Unlock()
 	d.closeLocked(jobID, ch)
+	d.mutex.Unlock()
+	// A processor leaving a removed job strands its channel. Those messages go back to the poller,
+	// and must not hold up a later completion of the job.
+	d.drain(jobID, ch)
+}
+
+// finishMessage ends what Dispatch started: a later delivery of the message can run, and the
+// message no longer holds up its job's completion.
+func (d *JobDispatcher) finishMessage(jobID string, msg models.BaseMessage) {
+	processedMsgID := d.extractProcessedMessageID(msg)
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	delete(d.inFlight, processedMsgID)
+	d.acceptedMessages[jobID]--
+	if d.acceptedMessages[jobID] <= 0 {
+		delete(d.acceptedMessages, jobID)
+	}
+}
+
+// drain takes everything waiting in ch and finishes it.
+func (d *JobDispatcher) drain(jobID string, ch chan models.BaseMessage) []models.BaseMessage {
+	var drained []models.BaseMessage
+	for {
+		select {
+		case msg, open := <-ch:
+			if !open {
+				return drained
+			}
+			d.finishMessage(jobID, msg)
+			drained = append(drained, msg)
+		default:
+			return drained
+		}
+	}
 }
 
 // closeIfEmpty checks and closes under the same lock Dispatch sends under, so a message
@@ -186,10 +234,9 @@ func (d *JobDispatcher) ForgetMessage(processedMsgID string) {
 	delete(d.inFlight, processedMsgID)
 }
 
-// EvictJob forcefully removes a job from the dispatcher, closing its channel
-// and causing the processor goroutine to exit. This should be called when a
-// job encounters an unrecoverable error (e.g., API error) to immediately free
-// up the worker slot instead of waiting for the next message.
+// EvictJob removes a job from the dispatcher, closing its channel so an idle processor exits and
+// frees its worker slot. Call it from outside the job's processor: a processor evicting its own job
+// keeps draining the closed channel while the next message starts a second processor.
 func (d *JobDispatcher) EvictJob(jobID string) {
 	log.Info("🚫 Evicting job %s from dispatcher", jobID)
 	d.mutex.Lock()
@@ -199,7 +246,29 @@ func (d *JobDispatcher) EvictJob(jobID string) {
 	}
 }
 
-// DropQueuedMessages empties the job's channel and returns what was waiting in it.
+// ClaimCompletion reserves a job only when no accepted message remains unfinished.
+// Until ReleaseCompletion, Dispatch leaves new messages for the next poll.
+func (d *JobDispatcher) ClaimCompletion(jobID string) bool {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	if d.acceptedMessages[jobID] > 0 {
+		return false
+	}
+	if _, claimed := d.completingJobs[jobID]; claimed {
+		return false
+	}
+	d.completingJobs[jobID] = struct{}{}
+	return true
+}
+
+func (d *JobDispatcher) ReleaseCompletion(jobID string) {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	delete(d.completingJobs, jobID)
+}
+
+// DropQueuedMessages empties the job's channel and returns what was waiting in it. The backend ended
+// those messages; a later delivery of the same id must be able to run.
 func (d *JobDispatcher) DropQueuedMessages(jobID string) []models.BaseMessage {
 	d.mutex.Lock()
 	ch, exists := d.activeJobs[jobID]
@@ -207,20 +276,7 @@ func (d *JobDispatcher) DropQueuedMessages(jobID string) []models.BaseMessage {
 	if !exists {
 		return nil
 	}
-	var dropped []models.BaseMessage
-	for {
-		select {
-		case msg, open := <-ch:
-			if !open {
-				return dropped
-			}
-			// The backend ended it; a later delivery of the same id must be able to run.
-			d.ForgetMessage(d.extractProcessedMessageID(msg))
-			dropped = append(dropped, msg)
-		default:
-			return dropped
-		}
-	}
+	return d.drain(jobID, ch)
 }
 
 // extractJobID extracts the job ID from a message based on its type

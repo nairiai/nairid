@@ -18,6 +18,9 @@ import (
 	"nairid/services"
 )
 
+// ErrJobReleased means the backend gave the job to another agent before its work was pushed.
+var ErrJobReleased = errors.New("the job went to another agent")
+
 type GitUseCase struct {
 	gitClient     *clients.GitClient
 	claudeService services.CLIAgent
@@ -274,6 +277,8 @@ func (g *GitUseCase) SwitchToJobBranch(branchName string) error {
 	return nil
 }
 
+const heldWorkStashMessage = "nairid: uncommitted changes kept while the state file was unreadable"
+
 func (g *GitUseCase) PrepareForNewConversation(conversationHint string) (string, error) {
 	log.Info("📋 Starting to prepare for new conversation")
 
@@ -292,6 +297,14 @@ func (g *GitUseCase) PrepareForNewConversation(conversationHint string) (string,
 	}
 
 	log.Info("🌿 Generated branch name: %s", branchName)
+
+	// A follow-up on a job the lost state forgot arrives here as a new conversation.
+	if g.appState.CleanupHold() != "" {
+		if err := g.gitClient.StashAllChanges(heldWorkStashMessage); err != nil {
+			log.Error("❌ Failed to stash uncommitted changes: %v", err)
+			return "", fmt.Errorf("failed to keep uncommitted changes: %w", err)
+		}
+	}
 
 	// Use the common branch switching logic to get to main and pull latest
 	if _, err := g.resetAndPullDefaultBranch(); err != nil {
@@ -315,13 +328,20 @@ func (g *GitUseCase) PrepareForNewConversation(conversationHint string) (string,
 func (g *GitUseCase) resetAndPullDefaultBranch() (string, error) {
 	log.Info("📋 Starting to reset and pull default branch")
 
-	// Step 1: Clean untracked files
+	// Step 1: Discard tracked edits, which can block the checkout. A turn cut short in the shared
+	// checkout leaves them there, and a new conversation starts from the default branch anyway.
+	if err := g.gitClient.ResetHard(); err != nil {
+		log.Error("❌ Failed to reset hard: %v", err)
+		return "", fmt.Errorf("failed to reset hard: %w", err)
+	}
+
+	// Step 2: Clean untracked files
 	if err := g.gitClient.CleanUntracked(); err != nil {
 		log.Error("❌ Failed to clean untracked files: %v", err)
 		return "", fmt.Errorf("failed to clean untracked files: %w", err)
 	}
 
-	// Step 2: Get default branch and checkout to it
+	// Step 3: Get default branch and checkout to it
 	defaultBranch, err := g.gitClient.GetDefaultBranch()
 	if err != nil {
 		log.Error("❌ Failed to get default branch: %v", err)
@@ -333,7 +353,7 @@ func (g *GitUseCase) resetAndPullDefaultBranch() (string, error) {
 		return "", fmt.Errorf("failed to checkout default branch %s: %w", defaultBranch, err)
 	}
 
-	// Step 3: Fetch latest from origin and hard-reset to origin/<default-branch>.
+	// Step 4: Fetch latest from origin and hard-reset to origin/<default-branch>.
 	// This replaces the previous pull --rebase approach which could fail when local
 	// and remote branches diverge (e.g. after force-pushes or failed rebases).
 	if err := g.gitClient.FetchOrigin(); err != nil {
@@ -352,7 +372,7 @@ func (g *GitUseCase) resetAndPullDefaultBranch() (string, error) {
 	return defaultBranch, nil
 }
 
-func (g *GitUseCase) AutoCommitChangesIfNeeded(threadLink, sessionID string) (*AutoCommitResult, error) {
+func (g *GitUseCase) AutoCommitChangesIfNeeded(threadLink, sessionID string, released func() bool) (*AutoCommitResult, error) {
 	log.Info("📋 Starting to auto-commit changes if needed")
 
 	// Check if we're in repo mode
@@ -426,6 +446,9 @@ func (g *GitUseCase) AutoCommitChangesIfNeeded(threadLink, sessionID string) (*A
 		return nil, fmt.Errorf("failed to get repository URL: %w", err)
 	}
 
+	if released() {
+		return nil, ErrJobReleased
+	}
 	// Push current branch to remote
 	if err := g.gitClient.PushBranch(currentBranch); err != nil {
 		log.Error("❌ Failed to push branch %s: %v", currentBranch, err)
@@ -433,7 +456,10 @@ func (g *GitUseCase) AutoCommitChangesIfNeeded(threadLink, sessionID string) (*A
 	}
 
 	// Handle PR creation/update
-	prResult, err := g.handlePRCreationOrUpdate(sessionID, currentBranch, threadLink)
+	if released() {
+		return nil, ErrJobReleased
+	}
+	prResult, err := g.handlePRCreationOrUpdate(sessionID, currentBranch, threadLink, released)
 	if err != nil {
 		log.Error("❌ Failed to handle PR creation/update: %v", err)
 		return nil, fmt.Errorf("failed to handle PR creation/update: %w", err)
@@ -482,7 +508,10 @@ func (g *GitUseCase) generateCommitMessageWithClaude(sessionID, branchName strin
 	return strings.TrimSpace(result.Output), nil
 }
 
-func (g *GitUseCase) handlePRCreationOrUpdate(sessionID, branchName, threadLink string) (*AutoCommitResult, error) {
+func (g *GitUseCase) handlePRCreationOrUpdate(
+	sessionID, branchName, threadLink string,
+	released func() bool,
+) (*AutoCommitResult, error) {
 	log.Info("📋 Starting to handle PR creation or update for branch: %s", branchName)
 
 	// Check if a PR already exists for this branch
@@ -565,6 +594,9 @@ func (g *GitUseCase) handlePRCreationOrUpdate(sessionID, branchName, threadLink 
 		return nil, fmt.Errorf("failed to get default branch: %w", err)
 	}
 
+	if released() {
+		return nil, ErrJobReleased
+	}
 	// Create pull request
 	prURL, err := g.gitClient.CreatePullRequest(prTitle, prBody, defaultBranch)
 	if err != nil {
@@ -860,6 +892,9 @@ func (g *GitUseCase) CleanupStaleBranches() error {
 	repoContext := g.appState.GetRepositoryContext()
 	if !repoContext.IsRepoMode {
 		log.Info("📦 No-repo mode: Skipping branch cleanup")
+		return nil
+	}
+	if g.cleanupHeld("stale branch cleanup") {
 		return nil
 	}
 
@@ -1252,7 +1287,15 @@ func (g *GitUseCase) PrepareForNewConversationWithWorktree(jobID, conversationHi
 	}
 
 	existingWorktreePath := filepath.Join(worktreeBasePath, jobID)
-	if g.gitClient.WorktreeExists(existingWorktreePath) {
+	// A follow-up on a job the lost state forgot arrives here as a new conversation.
+	hold := g.appState.CleanupHold()
+	if hold != "" {
+		if err := g.keepExistingWorktree(existingWorktreePath); err != nil {
+			log.Error("❌ Failed to keep existing worktree for jobID %s: %v", jobID, err)
+			return "", "", fmt.Errorf("failed to keep existing worktree: %w", err)
+		}
+	}
+	if hold == "" && g.gitClient.WorktreeExists(existingWorktreePath) {
 		log.Warn("⚠️ Worktree already exists for jobID %s at %s - cleaning up before creating new one", jobID, existingWorktreePath)
 
 		// Get the branch name from the existing worktree for cleanup
@@ -1321,7 +1364,7 @@ func (g *GitUseCase) PrepareForNewConversationWithWorktree(jobID, conversationHi
 
 	// Create base directory if it doesn't exist
 	// Note: worktreeBasePath was already retrieved earlier for existing worktree check
-	if err := os.MkdirAll(worktreeBasePath, 0755); err != nil {
+	if err := clients.EnsureWorktreeBaseDir(worktreeBasePath); err != nil {
 		log.Error("❌ Failed to create worktree base directory: %v", err)
 		return "", "", fmt.Errorf("failed to create worktree base directory: %w", err)
 	}
@@ -1487,6 +1530,44 @@ func (g *GitUseCase) CleanupJobWorktree(worktreePath, branchName string) error {
 	return nil
 }
 
+// keepExistingWorktree moves a worktree out of the way of a new one without losing what is in it.
+func (g *GitUseCase) keepExistingWorktree(worktreePath string) error {
+	if _, err := os.Lstat(worktreePath); os.IsNotExist(err) {
+		return nil
+	}
+	keptPath := fmt.Sprintf("%s.kept-%d", worktreePath, time.Now().UnixNano())
+	log.Error("🛑 Keeping the worktree of a job the lost state forgot: moving %s to %s", worktreePath, keptPath)
+	if g.gitClient.WorktreeExists(worktreePath) && g.gitClient.MoveWorktree(worktreePath, keptPath) == nil {
+		return nil
+	}
+	if err := os.Rename(worktreePath, keptPath); err != nil {
+		return err
+	}
+	// git refuses to add a worktree at a path it still has registered.
+	if err := g.gitClient.PruneWorktrees(); err != nil {
+		log.Warn("⚠️ Failed to prune worktrees after moving %s: %v", worktreePath, err)
+	}
+	return nil
+}
+
+// cleanupHeld reports whether a lost state file is holding back the named cleanup.
+func (g *GitUseCase) cleanupHeld(cleanupName string) bool {
+	hold := g.appState.CleanupHold()
+	if hold == "" {
+		return false
+	}
+	log.Error("🛑 Skipping %s: %s", cleanupName, hold)
+	return true
+}
+
+// CleanupStaleJobWorktrees removes job worktrees whose git links are broken. It needs the pool to be set.
+func (g *GitUseCase) CleanupStaleJobWorktrees() error {
+	if g.cleanupHeld("stale job worktree cleanup") {
+		return nil
+	}
+	return g.worktreePool.CleanupStaleJobWorktrees()
+}
+
 // CleanupOrphanedWorktrees removes worktrees that don't correspond to any tracked job
 func (g *GitUseCase) CleanupOrphanedWorktrees() error {
 	log.Info("📋 Starting to cleanup orphaned worktrees")
@@ -1495,6 +1576,9 @@ func (g *GitUseCase) CleanupOrphanedWorktrees() error {
 	repoContext := g.appState.GetRepositoryContext()
 	if !repoContext.IsRepoMode {
 		log.Info("📦 No-repo mode: Skipping orphaned worktree cleanup")
+		return nil
+	}
+	if g.cleanupHeld("orphaned worktree cleanup") {
 		return nil
 	}
 
@@ -1580,6 +1664,7 @@ func (g *GitUseCase) WorktreeExists(worktreePath string) bool {
 // AutoCommitChangesInWorktreeIfNeeded auto-commits changes in a specific worktree
 func (g *GitUseCase) AutoCommitChangesInWorktreeIfNeeded(
 	threadLink, sessionID, worktreePath string,
+	released func() bool,
 ) (*AutoCommitResult, error) {
 	log.Info("📋 Starting to auto-commit changes in worktree: %s", worktreePath)
 
@@ -1653,6 +1738,9 @@ func (g *GitUseCase) AutoCommitChangesInWorktreeIfNeeded(
 		return nil, fmt.Errorf("failed to get repository URL from worktree: %w", err)
 	}
 
+	if released() {
+		return nil, ErrJobReleased
+	}
 	// Push current branch from worktree
 	if err := g.gitClient.PushBranchFromWorktree(worktreePath, currentBranch); err != nil {
 		log.Error("❌ Failed to push branch from worktree: %v", err)
@@ -1660,7 +1748,10 @@ func (g *GitUseCase) AutoCommitChangesInWorktreeIfNeeded(
 	}
 
 	// Handle PR creation/update from worktree context
-	prResult, err := g.handlePRCreationOrUpdateInWorktree(sessionID, currentBranch, threadLink, worktreePath)
+	if released() {
+		return nil, ErrJobReleased
+	}
+	prResult, err := g.handlePRCreationOrUpdateInWorktree(sessionID, currentBranch, threadLink, worktreePath, released)
 	if err != nil {
 		log.Error("❌ Failed to handle PR creation/update in worktree: %v", err)
 		return nil, fmt.Errorf("failed to handle PR creation/update in worktree: %w", err)
@@ -1695,6 +1786,7 @@ func (g *GitUseCase) generateCommitMessageWithClaudeInWorktree(sessionID, branch
 
 func (g *GitUseCase) handlePRCreationOrUpdateInWorktree(
 	sessionID, branchName, threadLink, worktreePath string,
+	released func() bool,
 ) (*AutoCommitResult, error) {
 	log.Info("📋 Starting to handle PR creation or update for branch: %s (worktree: %s)", branchName, worktreePath)
 
@@ -1772,6 +1864,9 @@ func (g *GitUseCase) handlePRCreationOrUpdateInWorktree(
 		return nil, fmt.Errorf("failed to get default branch: %w", err)
 	}
 
+	if released() {
+		return nil, ErrJobReleased
+	}
 	// Create pull request from worktree
 	prURL, err := g.gitClient.CreatePullRequestInWorktree(worktreePath, prTitle, prBody, defaultBranch)
 	if err != nil {

@@ -141,9 +141,11 @@ func BuildAgentCommandWithContext(ctx context.Context, name string, args ...stri
 	filteredEnv = UpdateHomeForUser(filteredEnv, execUser)
 
 	shellCmd := buildShellCommand(name, args)
-	envArgs := make([]string, 0, len(filteredEnv)+1)
+	envArgs := make([]string, 0, len(filteredEnv)+2)
 	envArgs = append(envArgs, "env", "-i")
-	envArgs = append(envArgs, filteredEnv...)
+	for _, entry := range filteredEnv {
+		envArgs = append(envArgs, shellQuote(entry))
+	}
 	envCmd := strings.Join(envArgs, " ") + " " + shellCmd
 
 	bashScript := "umask 002 && exec " + envCmd
@@ -165,16 +167,18 @@ func BuildAgentCommandWithContextAndWorkDir(ctx context.Context, workDir, name s
 }
 
 // buildShellCommand safely constructs a shell command string with escaped arguments.
-// Single quotes are escaped using the '\" pattern.
 func buildShellCommand(name string, args []string) string {
 	parts := make([]string, 0, len(args)+1)
 	parts = append(parts, name)
 	for _, arg := range args {
-		// Escape single quotes in arguments
-		escaped := strings.ReplaceAll(arg, "'", "'\\''")
-		parts = append(parts, "'"+escaped+"'")
+		parts = append(parts, shellQuote(arg))
 	}
 	return strings.Join(parts, " ")
+}
+
+// shellQuote makes bash pass s through byte for byte.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
 // FilterEnvForAgent removes sensitive variables from environment.
