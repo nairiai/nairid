@@ -7,7 +7,7 @@
   - The attachment prune leaves an attachments folder alone when it, or the folder it sits in, is a symbolic link
   - The program log rotates at 10 MB (it rotated at 1 KB), and the daily routine trims it to the newest 20 files; switching the agent's CLI no longer strands the old CLI's session logs
   - Start and continue log lines carry the job id and message size, and the CLI command lines leave the prompt out; a failed CLI call still logs the CLI's output, which can include the agent's reply
-  - A finished or failed job no longer keeps its last message on disk, and its inbound attachments are removed when the idle check closes it. A job that failed or was stopped before its CLI session existed keeps its first message until the idle check removes it, so a reply can start it over
+  - A finished or failed job no longer keeps its last message on disk, and its inbound attachments are removed when the idle check closes it. A job that failed or was stopped before its CLI session existed keeps its first message until the next reply starts it over or the idle check removes it
   - On managed agents, Codex no longer writes every prompt to `~/.codex/history.jsonl`; a self-hosted owner's own Codex history setting is left alone
 
 ## [v0.0.141] - 2026-11-13
