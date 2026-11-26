@@ -358,10 +358,22 @@ func TestClaudeService_CleanupOldLogs(t *testing.T) {
 		t.Fatalf("Failed to set recent file time: %v", err)
 	}
 
+	// Another CLI's old session log is kept by this CLI's startup cleanup, as before retention
+	otherCLILog := filepath.Join(tmpDir, "codex-session-20240101-120000.log")
+	if err := os.WriteFile(otherCLILog, []byte("old log of another CLI"), 0644); err != nil {
+		t.Fatalf("Failed to create the other CLI's log: %v", err)
+	}
+	if err := os.Chtimes(otherCLILog, oldTime, oldTime); err != nil {
+		t.Fatalf("Failed to set the other CLI's log time: %v", err)
+	}
+
 	// Run cleanup for files older than 7 days
 	err = service.CleanupOldLogs(7)
 	if err != nil {
 		t.Fatalf("Unexpected error during cleanup: %v", err)
+	}
+	if _, err := os.Stat(otherCLILog); err != nil {
+		t.Errorf("Another CLI's old session log should still exist")
 	}
 
 	// Verify old file was removed

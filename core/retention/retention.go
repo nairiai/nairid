@@ -62,6 +62,9 @@ func PruneFiles(dir string, prefixes, suffixes []string, cutoff time.Time, skip 
 			continue
 		}
 		info, err := entry.Info()
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -70,7 +73,10 @@ func PruneFiles(dir string, prefixes, suffixes []string, cutoff time.Time, skip 
 			continue
 		}
 		if err := os.Remove(filepath.Join(dir, name)); err != nil {
-			errs = append(errs, err)
+			// Another nairid instance sharing this folder may have removed it first.
+			if !errors.Is(err, fs.ErrNotExist) {
+				errs = append(errs, err)
+			}
 			continue
 		}
 		removed++
