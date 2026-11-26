@@ -3,6 +3,7 @@ package utils
 import (
 	"errors"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -11,7 +12,8 @@ import (
 var codexRolloutDirs = []string{"sessions", "archived_sessions"}
 
 // PruneCodexRollouts removes the Codex session transcripts under codexHome last modified before
-// cutoff, except those of liveSessionIDs, whose jobs may still be resumed.
+// cutoff, except those of liveSessionIDs, whose jobs may still be resumed. It also removes the
+// prompt history Codex kept before history was switched off, once that file is older than cutoff.
 func PruneCodexRollouts(codexHome string, cutoff time.Time, liveSessionIDs []string) (int, error) {
 	removed := 0
 	var errs []error
@@ -42,6 +44,14 @@ func PruneCodexRollouts(codexHome string, cutoff time.Time, liveSessionIDs []str
 		})
 		if err != nil {
 			errs = append(errs, err)
+		}
+	}
+	history := filepath.Join(codexHome, "history.jsonl")
+	if info, err := os.Lstat(history); err == nil && info.Mode().IsRegular() && info.ModTime().Before(cutoff) {
+		if err := removeAllAsTargetUser(history); err != nil {
+			errs = append(errs, err)
+		} else {
+			removed++
 		}
 	}
 	return removed, errors.Join(errs...)

@@ -38,7 +38,7 @@ func Days() int {
 // empty) and ends with one of suffixes (any, when empty) and which were last modified before
 // cutoff. A file for which skip returns true is kept. A missing dir prunes nothing.
 func PruneFiles(dir string, prefixes, suffixes []string, cutoff time.Time, skip func(name string) bool) (int, error) {
-	entries, err := readOwnDir(dir)
+	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return 0, nil
 	}

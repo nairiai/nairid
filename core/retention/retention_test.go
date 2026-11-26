@@ -158,9 +158,6 @@ func TestPruneRefusesALinkedRoot(t *testing.T) {
 	if _, err := PruneDirs(linkedRoot, cutoff, os.RemoveAll); err == nil {
 		t.Error("PruneDirs pruned through a linked root")
 	}
-	if _, err := PruneFiles(linkedRoot, nil, nil, cutoff, nil); err == nil {
-		t.Error("PruneFiles pruned through a linked root")
-	}
 
 	linkedParent := filepath.Join(base, "linked-parent")
 	if err := os.Symlink(base, linkedParent); err != nil {

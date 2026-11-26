@@ -87,7 +87,7 @@ func TestSetJobPullRequestIDKeepsConcurrentStatusChange(t *testing.T) {
 func TestFailJobIfInProgressKeepsNoLastMessage(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "state.json")
 	state := NewAppState("agent", statePath)
-	first := json.RawMessage(`{"job_id":"j1"}`)
+	first := json.RawMessage(`{"job_id":"j1","message":"deploy staging"}`)
 	if err := state.UpdateJobData("j1", JobData{
 		JobID: "j1", LastMessage: "rotate the acme password", ProcessedMessageID: "cmsg_1",
 		Status: JobStatusInProgress, StartPayload: first,
@@ -109,6 +109,9 @@ func TestFailJobIfInProgressKeepsNoLastMessage(t *testing.T) {
 	}
 	if strings.Contains(string(onDisk), "rotate the acme password") {
 		t.Errorf("the state file still holds the last message:\n%s", onDisk)
+	}
+	if !strings.Contains(string(onDisk), "deploy staging") {
+		t.Errorf("the state file lost the first message a reply starts over from:\n%s", onDisk)
 	}
 }
 

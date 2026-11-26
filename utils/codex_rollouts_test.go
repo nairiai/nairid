@@ -56,3 +56,33 @@ func TestPruneCodexRollouts_MissingHome(t *testing.T) {
 		t.Errorf("got removed=%d err=%v, want 0 and nil", removed, err)
 	}
 }
+
+func TestPruneCodexRollouts_OldPromptHistory(t *testing.T) {
+	cutoff := time.Now().Add(-time.Hour)
+	for _, tc := range []struct {
+		name     string
+		modTime  time.Time
+		wantGone bool
+	}{
+		{"older than the cutoff", cutoff.Add(-time.Second), true},
+		{"newer than the cutoff", cutoff.Add(time.Second), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			codexHome := t.TempDir()
+			history := filepath.Join(codexHome, "history.jsonl")
+			if err := os.WriteFile(history, []byte(`{"text":"rotate the acme password"}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chtimes(history, tc.modTime, tc.modTime); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := PruneCodexRollouts(codexHome, cutoff, nil); err != nil {
+				t.Fatal(err)
+			}
+			_, err := os.Stat(history)
+			if gone := os.IsNotExist(err); gone != tc.wantGone {
+				t.Errorf("history.jsonl gone = %v, want %v", gone, tc.wantGone)
+			}
+		})
+	}
+}
