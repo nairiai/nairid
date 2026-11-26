@@ -254,7 +254,10 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 			},
 		})
 	}
+	return mh.startConversation(turnCtx, payload)
+}
 
+func (mh *MessageHandler) startConversation(turnCtx context.Context, payload models.StartConversationPayload) error {
 	// Send processing message notification that agent is starting to process
 	if err := mh.sendProcessingMessage(payload.ProcessedMessageID, payload.JobID); err != nil {
 		log.Info("❌ Failed to send processing message notification: %v", err)
@@ -609,7 +612,7 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 		// the agent starts a fresh Claude session instead of failing.
 		log.Info("⚠️ No Claude session ID for job %s, upgrading to start_conversation", payload.JobID)
 
-		return mh.startInsteadOfContinue(turnCtx, msg.ID, payload, jobData)
+		return mh.startInsteadOfContinue(turnCtx, payload, jobData)
 	}
 
 	sessionID := jobData.ClaudeSessionID
@@ -798,7 +801,7 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 	}
 	if err != nil && conversationLost(err) {
 		log.Warn("⚠️ %s has no conversation %s for job %s any more, starting the job over", mh.claudeService.AgentName(), sessionID, payload.JobID)
-		return mh.startInsteadOfContinue(turnCtx, msg.ID, payload, jobData)
+		return mh.startInsteadOfContinue(turnCtx, payload, jobData)
 	}
 	if err != nil {
 		// runTurn posts the returned error to the thread; posting it here too showed it twice.
@@ -955,19 +958,11 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 }
 
 // startInsteadOfContinue runs a reply as a conversation start, keeping the job's mode and effort.
-// job is nil when this agent has never seen the job.
+// It starts even when the job still has a session, since that session is what failed.
 func (mh *MessageHandler) startInsteadOfContinue(
-	turnCtx context.Context, msgID string, reply models.UserMessagePayload, job *models.JobData,
+	turnCtx context.Context, reply models.UserMessagePayload, job *models.JobData,
 ) error {
-	startPayloadBytes, err := json.Marshal(startPayloadForUnstartedJob(reply, job))
-	if err != nil {
-		return fmt.Errorf("failed to marshal start_conversation payload: %w", err)
-	}
-	return mh.handleStartConversation(turnCtx, models.BaseMessage{
-		ID:      msgID,
-		Type:    models.MessageTypeStartConversation,
-		Payload: json.RawMessage(startPayloadBytes),
-	})
+	return mh.startConversation(turnCtx, startPayloadForUnstartedJob(reply, job))
 }
 
 // conversationLost reports a resume the CLI refused because the session is gone from its disk,

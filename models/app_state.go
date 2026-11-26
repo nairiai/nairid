@@ -200,6 +200,7 @@ func (a *AppState) FailJobIfInProgress(jobID, processedMessageID string) (bool, 
 		return false, nil
 	}
 	data.Status = JobStatusFailed
+	data.LastMessage = ""
 	data.UpdatedAt = time.Now()
 
 	if err := a.persistStateLocked(); err != nil {

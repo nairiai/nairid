@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -79,6 +80,35 @@ func TestSetJobPullRequestIDKeepsConcurrentStatusChange(t *testing.T) {
 	}
 	if got.PullRequestID != "none" {
 		t.Errorf("PullRequestID = %q, want %q", got.PullRequestID, "none")
+	}
+}
+
+// A failed job keeps its first message only while it has no session, for a reply to start over from.
+func TestFailJobIfInProgressKeepsNoLastMessage(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	state := NewAppState("agent", statePath)
+	first := json.RawMessage(`{"job_id":"j1"}`)
+	if err := state.UpdateJobData("j1", JobData{
+		JobID: "j1", LastMessage: "rotate the acme password", ProcessedMessageID: "cmsg_1",
+		Status: JobStatusInProgress, StartPayload: first,
+	}); err != nil {
+		t.Fatalf("seed job: %v", err)
+	}
+
+	if failed, err := state.FailJobIfInProgress("j1", "cmsg_1"); err != nil || !failed {
+		t.Fatalf("FailJobIfInProgress: failed=%v err=%v", failed, err)
+	}
+
+	got, _ := state.GetJobData("j1")
+	if got.Status != JobStatusFailed || got.LastMessage != "" || string(got.StartPayload) != string(first) {
+		t.Errorf("job = %+v; want failed, no last message, first message kept", *got)
+	}
+	onDisk, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(onDisk), "rotate the acme password") {
+		t.Errorf("the state file still holds the last message:\n%s", onDisk)
 	}
 }
 
