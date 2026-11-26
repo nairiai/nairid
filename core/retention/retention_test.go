@@ -3,6 +3,7 @@ package retention
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -213,5 +214,30 @@ func TestPruneSharedDirs_MissingParent(t *testing.T) {
 	removed, err := PruneSharedDirs(filepath.Join(t.TempDir(), "none", "attachments"), time.Now(), os.RemoveAll)
 	if err != nil || removed != 0 {
 		t.Errorf("got removed=%d err=%v, want 0 and nil", removed, err)
+	}
+}
+
+func TestPruneSharedDirsRefusesALinkedParent(t *testing.T) {
+	base := t.TempDir()
+	victim := filepath.Join(base, "victim")
+	job := filepath.Join(victim, "attachments", "job_1")
+	if err := os.MkdirAll(job, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-60 * 24 * time.Hour)
+	if err := os.Chtimes(job, old, old); err != nil {
+		t.Fatal(err)
+	}
+	linkedParent := filepath.Join(base, "eksecd")
+	if err := os.Symlink(victim, linkedParent); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := PruneSharedDirs(filepath.Join(linkedParent, "attachments"), time.Now().Add(-30*24*time.Hour), os.RemoveAll)
+	if err == nil || !strings.Contains(err.Error(), "is a symbolic link") {
+		t.Errorf("err = %v, want a refusal naming the symbolic link", err)
+	}
+	if _, err := os.Stat(job); err != nil {
+		t.Errorf("%s was removed: %v", job, err)
 	}
 }
