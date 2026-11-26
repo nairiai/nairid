@@ -38,7 +38,7 @@ func Days() int {
 // empty) and ends with one of suffixes (any, when empty) and which were last modified before
 // cutoff. A file for which skip returns true is kept. A missing dir prunes nothing.
 func PruneFiles(dir string, prefixes, suffixes []string, cutoff time.Time, skip func(name string) bool) (int, error) {
-	entries, err := os.ReadDir(dir)
+	entries, err := readOwnDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return 0, nil
 	}
@@ -76,7 +76,7 @@ func PruneFiles(dir string, prefixes, suffixes []string, cutoff time.Time, skip 
 // modified before cutoff. An empty directory goes by its own modification time. A missing dir
 // prunes nothing.
 func PruneDirs(dir string, cutoff time.Time, remove func(path string) error) (int, error) {
-	entries, err := os.ReadDir(dir)
+	entries, err := readOwnDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return 0, nil
 	}
@@ -105,6 +105,21 @@ func PruneDirs(dir string, cutoff time.Time, remove func(path string) error) (in
 		removed++
 	}
 	return removed, errors.Join(errs...)
+}
+
+// readOwnDir lists dir, refusing it when dir or its parent is a symbolic link: whoever planted
+// the link, such as the agent user in a shared /tmp, would choose what gets pruned.
+func readOwnDir(dir string) ([]os.DirEntry, error) {
+	for _, path := range []string{dir, filepath.Dir(dir)} {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return nil, err
+		}
+		if info.Mode()&fs.ModeSymlink != 0 {
+			return nil, fmt.Errorf("refusing to prune %s: %s is a symbolic link", dir, path)
+		}
+	}
+	return os.ReadDir(dir)
 }
 
 func newestModTime(dir string) (time.Time, error) {

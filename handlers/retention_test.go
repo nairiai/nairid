@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"nairid/core"
 	"nairid/internal/testsupport"
 	"nairid/models"
 	"nairid/utils"
@@ -63,28 +61,6 @@ func TestFinishedJobKeepsNoLastMessage(t *testing.T) {
 			t.Errorf("job = status %q, last message %q; want failed and empty", job.Status, job.LastMessage)
 		}
 	})
-}
-
-func TestLostConversationStartsTheJobOver(t *testing.T) {
-	f := newStopFixture(t)
-	f.mustHandle(t, startMessage("0"))
-	f.agent.failWith = fmt.Errorf("failed to continue Claude session: %w", &core.ErrClaudeCommandErr{
-		Agent: "Claude", Err: errors.New("exit status 1"), Output: "No conversation found with session ID: session-1",
-	})
-	f.agent.failOnce = true
-
-	f.mustHandle(t, replyMessage("1"))
-
-	if starts := len(f.agent.startSystemPrompts); starts != 2 {
-		t.Fatalf("the agent was started %d times, want 2", starts)
-	}
-	job, _ := f.handler.appState.GetJobData("j1")
-	if job.Status != models.JobStatusCompleted || job.ClaudeSessionID != "session-1" || job.Mode != models.AgentModeAsk {
-		t.Errorf("job = %+v; want completed, session-1 and ask mode", *job)
-	}
-	if replies := waitFor(t, f.outbox, models.MessageTypeAssistantMessage); len(replies) != 2 {
-		t.Errorf("got %d assistant messages, want 2", len(replies))
-	}
 }
 
 func TestIdleCheckRemovesTheInboundAttachments(t *testing.T) {

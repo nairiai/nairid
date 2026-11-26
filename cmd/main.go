@@ -1658,18 +1658,13 @@ func (cr *CmdRunner) startPingRoutine(ctx context.Context, socketClient *socket.
 	}()
 }
 
+// codexHome is the managed agent user's Codex home. Self-hosted, Codex runs in the owner's own
+// home, whose transcripts are theirs to keep, so it is empty and nothing there is pruned.
 func codexHome(agentType, targetHomeDir string) string {
-	if agentType != "codex" {
+	if agentType != "codex" || targetHomeDir == "" {
 		return ""
 	}
-	home := targetHomeDir
-	if home == "" {
-		home, _ = os.UserHomeDir()
-	}
-	if home == "" {
-		return ""
-	}
-	return filepath.Join(home, ".codex")
+	return filepath.Join(targetHomeDir, ".codex")
 }
 
 func (cr *CmdRunner) startRetentionRoutine(ctx context.Context) {

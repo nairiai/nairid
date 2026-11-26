@@ -727,10 +727,41 @@ func TestCodexMCPProcessor_TurnsHistoryPersistenceOff(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if err := NewCodexMCPProcessor(testNairiMCP()).ProcessMCPConfigs(home); err != nil {
+		t.Fatal(err)
+	}
+
+	history := readCodexHistory(t, codexDir)
+	if history["persistence"] != "none" {
+		t.Errorf("history.persistence = %v, want none", history["persistence"])
+	}
+	if history["max_bytes"] != int64(1000) {
+		t.Errorf("the customer's history.max_bytes was lost: %v", history)
+	}
+}
+
+func TestCodexMCPProcessor_SelfHostedKeepsTheOwnersHistory(t *testing.T) {
+	home := writeRemoteMCPConfig(t)
+	codexDir := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(codexDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	existing := "[history]\npersistence = \"save-all\"\n"
+	if err := os.WriteFile(filepath.Join(codexDir, "config.toml"), []byte(existing), 0644); err != nil {
+		t.Fatal(err)
+	}
+
 	if err := NewCodexMCPProcessor(testNairiMCP()).ProcessMCPConfigs(""); err != nil {
 		t.Fatal(err)
 	}
 
+	if history := readCodexHistory(t, codexDir); history["persistence"] != "save-all" {
+		t.Errorf("history.persistence = %v, want the owner's save-all", history["persistence"])
+	}
+}
+
+func readCodexHistory(t *testing.T, codexDir string) map[string]interface{} {
+	t.Helper()
 	content, err := os.ReadFile(filepath.Join(codexDir, "config.toml"))
 	if err != nil {
 		t.Fatal(err)
@@ -741,10 +772,5 @@ func TestCodexMCPProcessor_TurnsHistoryPersistenceOff(t *testing.T) {
 	if err := toml.Unmarshal(content, &config); err != nil {
 		t.Fatal(err)
 	}
-	if config.History["persistence"] != "none" {
-		t.Errorf("history.persistence = %v, want none", config.History["persistence"])
-	}
-	if config.History["max_bytes"] != int64(1000) {
-		t.Errorf("the customer's history.max_bytes was lost: %v", config.History)
-	}
+	return config.History
 }

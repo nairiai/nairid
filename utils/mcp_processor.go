@@ -567,7 +567,10 @@ func (p *CodexMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 	}
 
 	existingConfig["shell_environment_policy"] = codexShellEnvironmentPolicy()
-	withoutHistoryPersistence(existingConfig)
+	// Self-hosted, this is the owner's own Codex config, so their history setting stays theirs.
+	if targetHomeDir != "" {
+		withoutHistoryPersistence(existingConfig)
+	}
 	if p.stdioOnly {
 		delete(existingConfig, "mcp_servers")
 	}

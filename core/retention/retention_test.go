@@ -130,3 +130,49 @@ func TestPruneDirs_MissingDir(t *testing.T) {
 		t.Errorf("got removed=%d err=%v, want 0 and nil", removed, err)
 	}
 }
+
+func TestPruneRefusesALinkedRoot(t *testing.T) {
+	base := t.TempDir()
+	victim := filepath.Join(base, "victim")
+	old := time.Now().Add(-60 * 24 * time.Hour)
+	for _, path := range []string{filepath.Join(victim, ".ssh", "id_ed25519"), filepath.Join(victim, "eksecd-1.log")} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cutoff := time.Now().Add(-30 * 24 * time.Hour)
+
+	linkedRoot := filepath.Join(base, "eksecd", "attachments")
+	if err := os.MkdirAll(filepath.Dir(linkedRoot), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, linkedRoot); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PruneDirs(linkedRoot, cutoff, os.RemoveAll); err == nil {
+		t.Error("PruneDirs pruned through a linked root")
+	}
+	if _, err := PruneFiles(linkedRoot, nil, nil, cutoff, nil); err == nil {
+		t.Error("PruneFiles pruned through a linked root")
+	}
+
+	linkedParent := filepath.Join(base, "linked-parent")
+	if err := os.Symlink(base, linkedParent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PruneDirs(filepath.Join(linkedParent, "victim"), cutoff, os.RemoveAll); err == nil {
+		t.Error("PruneDirs pruned under a linked parent")
+	}
+
+	for _, path := range []string{filepath.Join(victim, ".ssh", "id_ed25519"), filepath.Join(victim, "eksecd-1.log")} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("%s was removed: %v", path, err)
+		}
+	}
+}
