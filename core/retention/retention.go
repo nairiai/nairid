@@ -7,8 +7,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"nairid/core/log"
@@ -16,18 +18,25 @@ import (
 
 const EnvVar = "NAIRI_LOG_RETENTION_DAYS"
 
+// validDays is the same rule the agent image's startup.sh applies: 1 to 99999, digits only.
+var validDays = regexp.MustCompile(`^[1-9][0-9]{0,4}$`)
+
+var warnedAbout sync.Map
+
 // Days is how many days logs and attachments are kept, from NAIRI_LOG_RETENTION_DAYS. Unset, or not
-// a whole number of at least 1, the cleanup is off and nothing is removed, as before it existed.
+// a whole number from 1 to 99999, the cleanup is off and nothing is removed, as before it existed.
 func Days() (days int, on bool) {
 	raw := os.Getenv(EnvVar)
 	if raw == "" {
 		return 0, false
 	}
-	days, err := strconv.Atoi(raw)
-	if err != nil || days < 1 {
-		log.Warn("⚠️ %s=%q is not a whole number of days of at least 1, so the cleanup stays off", EnvVar, raw)
+	if !validDays.MatchString(raw) {
+		if _, warned := warnedAbout.LoadOrStore(raw, true); !warned {
+			log.Warn("⚠️ %s=%q is not a whole number of days from 1 to 99999, so the cleanup stays off", EnvVar, raw)
+		}
 		return 0, false
 	}
+	days, _ = strconv.Atoi(raw)
 	return days, true
 }
 
@@ -120,6 +129,9 @@ func PruneSharedDirs(dir string, cutoff time.Time, remove func(path string) erro
 	if info.Mode()&fs.ModeSymlink != 0 {
 		return 0, fmt.Errorf("refusing to prune %s: %s is a symbolic link", dir, parent)
 	}
+	if !info.IsDir() {
+		return 0, fmt.Errorf("refusing to prune %s: %s is not a plain folder", dir, parent)
+	}
 	if err := onlyWeCanChange(info); err != nil {
 		return 0, fmt.Errorf("refusing to prune %s: %s %w", dir, parent, err)
 	}
@@ -136,6 +148,9 @@ func readOwnDir(dir string) ([]os.DirEntry, error) {
 		}
 		if info.Mode()&fs.ModeSymlink != 0 {
 			return nil, fmt.Errorf("refusing to prune %s: %s is a symbolic link", dir, path)
+		}
+		if !info.IsDir() {
+			return nil, fmt.Errorf("refusing to prune %s: %s is not a plain folder", dir, path)
 		}
 	}
 	return os.ReadDir(dir)

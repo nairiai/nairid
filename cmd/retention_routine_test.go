@@ -77,7 +77,7 @@ func TestRetentionRoutine_OffKeepsEverythingButOldSessionLogs(t *testing.T) {
 	defer cancel()
 	cr.startRetentionRoutine(ctx)
 
-	if got := agent.recorded(); !reflect.DeepEqual(got, []int{sessionLogDaysWhenRetentionOff}) {
+	if got := agent.recorded(); !reflect.DeepEqual(got, []int{7}) {
 		t.Errorf("session log cleanup calls = %v, want only the 7-day one an agent always had", got)
 	}
 	for _, dir := range []string{outbound, inbound} {
@@ -94,7 +94,7 @@ func TestRetentionRoutine_OnStartsTheCleanupWithTheSetDays(t *testing.T) {
 		LogDir:     filepath.Join(os.Getenv("NAIRI_CONFIG_DIR"), "logs"),
 		FilePrefix: "eksecd",
 		MaxAge:     30 * 24 * time.Hour,
-		MaxFiles:   100,
+		MaxBytes:   1 << 30,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +134,7 @@ func TestRetentionRoutine_OnPrunesWithTheSetDays(t *testing.T) {
 		LogDir:     filepath.Join(configDir, "logs"),
 		FilePrefix: "eksecd",
 		MaxAge:     30 * 24 * time.Hour,
-		MaxFiles:   100,
+		MaxBytes:   1 << 30,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -152,5 +152,12 @@ func TestRetentionRoutine_OnPrunesWithTheSetDays(t *testing.T) {
 		if _, err := os.Stat(dir); !os.IsNotExist(err) {
 			t.Errorf("%s should be pruned once %s=30: %v", dir, retention.EnvVar, err)
 		}
+	}
+}
+
+func TestProgramLogConfig_KeepsAboutAGigabyteAndTheSetDays(t *testing.T) {
+	config := programLogConfig(t.TempDir(), 30)
+	if config.MaxBytes != 1<<30 || config.MaxAge != 30*24*time.Hour || config.MaxFileSize != 10*1024*1024 {
+		t.Errorf("program log config = %+v, want 1 GiB, 30 days and 10 MiB files", config)
 	}
 }

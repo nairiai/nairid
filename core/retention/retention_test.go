@@ -20,6 +20,12 @@ func TestDays(t *testing.T) {
 		{"0", 0, false},
 		{"-1", 0, false},
 		{"abc", 0, false},
+		{"030", 0, false},
+		{"+30", 0, false},
+		{" 30", 0, false},
+		{"99999", 99999, true},
+		{"100000", 0, false},
+		{"99999999999999999999999", 0, false},
 	}
 	for _, tt := range tests {
 		t.Run("value "+tt.value, func(t *testing.T) {
@@ -29,6 +35,17 @@ func TestDays(t *testing.T) {
 				t.Errorf("Days() = %d, %v, want %d, %v", got, on, tt.want, tt.wantOn)
 			}
 		})
+	}
+}
+
+func TestPruneDirsRefusesARootThatIsNotAFolder(t *testing.T) {
+	notAFolder := filepath.Join(t.TempDir(), "attachments")
+	if err := os.WriteFile(notAFolder, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := PruneDirs(notAFolder, time.Now(), os.RemoveAll)
+	if err == nil || removed != 0 || !strings.Contains(err.Error(), "not a plain folder") {
+		t.Errorf("got removed=%d err=%v, want a refusal naming it not a plain folder", removed, err)
 	}
 }
 

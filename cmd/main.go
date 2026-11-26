@@ -1600,17 +1600,8 @@ func (cr *CmdRunner) setupProgramLogging() (string, error) {
 		logsDir = filepath.Join(configDir, "logs")
 	}
 
-	// MaxAge and MaxFiles only apply when the retention routine runs Prune, which it does only
-	// when NAIRI_LOG_RETENTION_DAYS is set.
 	retentionDays, _ := retention.Days()
-	rotatingWriter, err := log.NewRotatingWriter(log.RotatingWriterConfig{
-		LogDir:      logsDir,
-		MaxFileSize: 10 * 1024 * 1024,
-		FilePrefix:  "eksecd",
-		Stdout:      os.Stdout,
-		MaxAge:      time.Duration(retentionDays) * 24 * time.Hour,
-		MaxFiles:    100,
-	})
+	rotatingWriter, err := log.NewRotatingWriter(programLogConfig(logsDir, retentionDays))
 	if err != nil {
 		return "", fmt.Errorf("failed to create rotating writer: %w", err)
 	}
@@ -1672,6 +1663,19 @@ func codexHome(agentType, targetHomeDir string) string {
 
 // sessionLogDaysWhenRetentionOff is how long CLI session logs were kept before the retention
 // routine existed; with NAIRI_LOG_RETENTION_DAYS unset that startup cleanup is all that runs.
+// programLogConfig is the daemon log's writer. MaxAge and MaxBytes only apply when the retention
+// routine runs Prune, which it does only when NAIRI_LOG_RETENTION_DAYS is set.
+func programLogConfig(logsDir string, retentionDays int) log.RotatingWriterConfig {
+	return log.RotatingWriterConfig{
+		LogDir:      logsDir,
+		MaxFileSize: 10 * 1024 * 1024,
+		FilePrefix:  "eksecd",
+		Stdout:      os.Stdout,
+		MaxAge:      time.Duration(retentionDays) * 24 * time.Hour,
+		MaxBytes:    1 << 30,
+	}
+}
+
 const sessionLogDaysWhenRetentionOff = 7
 
 func (cr *CmdRunner) startRetentionRoutine(ctx context.Context) {

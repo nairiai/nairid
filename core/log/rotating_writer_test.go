@@ -1,6 +1,7 @@
 package log
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -70,8 +71,8 @@ func TestPrune_ByAgeKeepsTheCurrentFileAndSessionLogs(t *testing.T) {
 	}
 }
 
-func TestPrune_ByCountKeepsTheNewestFiles(t *testing.T) {
-	rw, dir := newTestWriter(t, RotatingWriterConfig{MaxFiles: 3})
+func TestPrune_BySizeKeepsTheNewestFiles(t *testing.T) {
+	rw, dir := newTestWriter(t, RotatingWriterConfig{MaxBytes: 2})
 	now := time.Now()
 	var rotated []string
 	for _, stamp := range []string{"20260101-000000", "20260102-000000", "20260103-000000", "20260104-000000"} {
@@ -94,6 +95,18 @@ func TestPrune_ByCountKeepsTheNewestFiles(t *testing.T) {
 		if !fileExists(kept) {
 			t.Errorf("%s was removed", filepath.Base(kept))
 		}
+	}
+}
+
+func TestPrune_ManySmallYoungFilesUnderTheSizeLimitAreKept(t *testing.T) {
+	rw, dir := newTestWriter(t, RotatingWriterConfig{MaxAge: 30 * 24 * time.Hour, MaxBytes: 1 << 30})
+	for i := 0; i < 500; i++ {
+		writeRotated(t, dir, fmt.Sprintf("eksecd-20260101-%06d.log", i), time.Now().Add(-time.Hour))
+	}
+
+	removed, err := rw.Prune()
+	if err != nil || removed != 0 {
+		t.Errorf("got removed=%d err=%v, want the 500 young one-byte files kept", removed, err)
 	}
 }
 
