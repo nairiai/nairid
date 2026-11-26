@@ -13,6 +13,7 @@ import (
 	"nairid/core"
 	"nairid/core/env"
 	"nairid/core/log"
+	"nairid/core/retention"
 	"nairid/models"
 	"nairid/services"
 	"nairid/usecases"
@@ -1101,8 +1102,10 @@ func (mh *MessageHandler) checkJobIdleness(jobID string, jobData models.JobData)
 			return fmt.Errorf("failed to remove job from app state: %w", err)
 		}
 		log.Info("🗑️ Removed completed job %s from app state", jobID)
-		if err := utils.RemoveInboundAttachments(attachmentSessionIDForJob(jobID)); err != nil {
-			log.Warn("⚠️ Failed to remove the inbound attachments of job %s: %v", jobID, err)
+		if _, retentionOn := retention.Days(); retentionOn {
+			if err := utils.RemoveInboundAttachments(attachmentSessionIDForJob(jobID)); err != nil {
+				log.Warn("⚠️ Failed to remove the inbound attachments of job %s: %v", jobID, err)
+			}
 		}
 
 		// Evict the job from the dispatcher to close its message channel.

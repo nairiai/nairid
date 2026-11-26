@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"nairid/core/retention"
 	"nairid/internal/testsupport"
 	"nairid/models"
 	"nairid/utils"
@@ -63,7 +64,28 @@ func TestFinishedJobKeepsNoLastMessage(t *testing.T) {
 	})
 }
 
-func TestIdleCheckRemovesTheInboundAttachments(t *testing.T) {
+func TestIdleCheckRemovesTheInboundAttachmentsWhenRetentionIsOn(t *testing.T) {
+	t.Setenv(retention.EnvVar, "30")
+	jobDir := closeIdleJobWithAnAttachment(t)
+
+	if _, err := os.Stat(jobDir); !os.IsNotExist(err) {
+		t.Errorf("the inbound attachments dir of the finished job was kept (stat: %v)", err)
+	}
+}
+
+func TestIdleCheckKeepsTheInboundAttachmentsWhenRetentionIsOff(t *testing.T) {
+	t.Setenv(retention.EnvVar, "")
+	jobDir := closeIdleJobWithAnAttachment(t)
+
+	if _, err := os.Stat(jobDir); err != nil {
+		t.Errorf("the inbound attachments dir was removed while %s is unset: %v", retention.EnvVar, err)
+	}
+}
+
+// closeIdleJobWithAnAttachment closes an idle finished job that has an inbound attachment and
+// returns that job's attachment folder.
+func closeIdleJobWithAnAttachment(t *testing.T) string {
+	t.Helper()
 	f := newStopFixture(t)
 	inboundDir := utils.InboundAttachmentsDir
 	utils.InboundAttachmentsDir = t.TempDir()
@@ -80,13 +102,10 @@ func TestIdleCheckRemovesTheInboundAttachments(t *testing.T) {
 	if err := f.handler.checkJobIdleness("j1", job); err != nil {
 		t.Fatal(err)
 	}
-
-	if _, err := os.Stat(jobDir); !os.IsNotExist(err) {
-		t.Errorf("the inbound attachments dir of the finished job was kept (stat: %v)", err)
-	}
 	if _, exists := f.handler.appState.GetJobData("j1"); exists {
 		t.Error("the idle job was kept")
 	}
+	return jobDir
 }
 
 func mustMkdir(t *testing.T, dir string) string {

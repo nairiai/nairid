@@ -1677,7 +1677,7 @@ const sessionLogDaysWhenRetentionOff = 7
 func (cr *CmdRunner) startRetentionRoutine(ctx context.Context) {
 	days, on := retention.Days()
 	if !on {
-		log.Info("🧹 %s is not set, so nothing is pruned except session logs older than %d days", retention.EnvVar, sessionLogDaysWhenRetentionOff)
+		log.Info("🧹 %s is not set to a number of days, so nothing is pruned except session logs older than %d days", retention.EnvVar, sessionLogDaysWhenRetentionOff)
 		if err := cr.cliAgent.CleanupOldLogs(sessionLogDaysWhenRetentionOff); err != nil {
 			log.Warn("⚠️ Failed to prune the session logs: %v", err)
 		}

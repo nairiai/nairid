@@ -87,6 +87,45 @@ func TestRetentionRoutine_OffKeepsEverythingButOldSessionLogs(t *testing.T) {
 	}
 }
 
+func TestRetentionRoutine_OnStartsTheCleanupWithTheSetDays(t *testing.T) {
+	t.Setenv(retention.EnvVar, "30")
+	outbound, inbound := agedAttachmentDirs(t)
+	writer, err := log.NewRotatingWriter(log.RotatingWriterConfig{
+		LogDir:     filepath.Join(os.Getenv("NAIRI_CONFIG_DIR"), "logs"),
+		FilePrefix: "eksecd",
+		MaxAge:     30 * 24 * time.Hour,
+		MaxFiles:   100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = writer.Close() })
+	agent := &cleanupRecorder{}
+	cr := &CmdRunner{cliAgent: agent, rotatingWriter: writer}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cr.startRetentionRoutine(ctx)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		_, outErr := os.Stat(outbound)
+		_, inErr := os.Stat(inbound)
+		if len(agent.recorded()) > 0 && os.IsNotExist(outErr) && os.IsNotExist(inErr) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := agent.recorded(); !reflect.DeepEqual(got, []int{30}) {
+		t.Errorf("session log cleanup calls = %v, want [30] from the routine's first run", got)
+	}
+	for _, dir := range []string{outbound, inbound} {
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Errorf("%s should be pruned by the routine once %s=30: %v", dir, retention.EnvVar, err)
+		}
+	}
+}
+
 func TestRetentionRoutine_OnPrunesWithTheSetDays(t *testing.T) {
 	t.Setenv(retention.EnvVar, "30")
 	outbound, inbound := agedAttachmentDirs(t)
