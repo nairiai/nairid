@@ -13,7 +13,6 @@ import (
 	"nairid/core"
 	"nairid/core/env"
 	"nairid/core/log"
-	"nairid/core/retention"
 	"nairid/models"
 	"nairid/services"
 	"nairid/usecases"
@@ -354,7 +353,7 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 	}
 
 	// Process thread context (previous messages) and attachments
-	attachmentSessionID := attachmentSessionIDForJob(payload.JobID)
+	attachmentSessionID := fmt.Sprintf("job_%s", payload.JobID)
 
 	finalPrompt, attachmentPaths, err := mh.formatThreadContext(
 		payload.PreviousMessages,
@@ -754,7 +753,7 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 
 	// A reply carries previous messages only when it is a start for a job this agent already has, such as a
 	// task switched back to it: the thread then holds turns its session never saw.
-	attachmentSessionID := attachmentSessionIDForJob(payload.JobID)
+	attachmentSessionID := fmt.Sprintf("job_%s", payload.JobID)
 	finalPrompt, attachmentPaths, err := mh.formatThreadContext(
 		payload.PreviousMessages,
 		payload.Message,
@@ -961,10 +960,6 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 	return nil
 }
 
-func attachmentSessionIDForJob(jobID string) string {
-	return "job_" + jobID
-}
-
 func (mh *MessageHandler) handleCheckIdleJobs(msg models.BaseMessage) error {
 	log.Info("📋 Starting to handle check idle jobs message")
 	var payload models.CheckIdleJobsPayload
@@ -1102,11 +1097,6 @@ func (mh *MessageHandler) checkJobIdleness(jobID string, jobData models.JobData)
 			return fmt.Errorf("failed to remove job from app state: %w", err)
 		}
 		log.Info("🗑️ Removed completed job %s from app state", jobID)
-		if _, retentionOn := retention.Days(); retentionOn {
-			if err := utils.RemoveInboundAttachments(attachmentSessionIDForJob(jobID)); err != nil {
-				log.Warn("⚠️ Failed to remove the inbound attachments of job %s: %v", jobID, err)
-			}
-		}
 
 		// Evict the job from the dispatcher to close its message channel.
 		// Without this, processJobMessages() stays blocked on `for msg := range ch`

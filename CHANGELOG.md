@@ -2,14 +2,15 @@
 
 ### Features
 
-- nairid's own copies of conversation data on the agent host can be kept for `NAIRI_LOG_RETENTION_DAYS` days, and prompts stay out of the daemon log
-  - The cleanup is off unless `NAIRI_LOG_RETENTION_DAYS` is set to a whole number from 1 to 99999, so upgrading removes nothing: without it, nairid only removes the current CLI's session logs older than 7 days at startup, exactly as before
-  - Once it is set, a daily routine, run at startup too and in repo mode or not, removes every CLI's session logs, program logs and inbound and outbound attachments older than the retention window, and on managed agents the Codex session transcripts and the prompt history Codex kept before, also after the agent switched to another CLI; transcripts of jobs that can still be resumed are kept. Claude Code's own transcripts follow its `cleanupPeriodDays` setting; OpenCode's session database and Codex's own SQLite databases are not pruned
-  - The attachment prune leaves an attachments folder alone when it, or the folder it sits in, is a symbolic link or not a plain folder (a Windows junction), and leaves the inbound folder in `/tmp` alone when `/tmp/eksecd` belongs to another user or others can write to it, so the agent user cannot aim it at the daemon's own files; on Windows the inbound folder is not pruned, because who can write to it cannot be checked
-  - The program log rotates at 10 MB (it rotated at 1 KB), and the daily routine, when on, trims it to the newest 1 GB; with the cleanup on, switching the agent's CLI no longer strands the old CLI's session logs
-  - Start and continue log lines carry the job id and message size, and the CLI command lines leave the prompt out; a failed CLI call still logs the CLI's output for that turn (the agent's messages, the commands it ran and what they returned; Cursor's echo of the prompt is left out). CLI session logs keep each CLI's raw output, which for Cursor includes the prompt
-  - A finished or failed job no longer keeps its last message on disk, and with the cleanup on its inbound attachments are removed when the idle check closes it. A job that failed or was stopped before its CLI session existed keeps its first message until the next reply starts it over or the idle check removes it
-  - With the cleanup on, managed agents' Codex no longer writes every prompt to `~/.codex/history.jsonl`; a self-hosted owner's own Codex history setting is left alone
+- Prompts stay out of the daemon log
+  - Start and continue log lines carry the job id and message size, and the CLI command lines leave the prompt out
+  - A failed CLI call still logs the CLI's output for that turn (the agent's messages, the commands it ran and what they returned), without Cursor's echo of the prompt
+  - CLI session logs keep each CLI's raw output, which for Cursor includes the prompt
+- A finished or failed job no longer keeps its last message on disk. A job that failed or was stopped before its CLI session existed keeps its first message until the next reply starts it over or the idle check removes it
+
+### Bugfixes
+
+- The daemon log rotates at 10 MB as intended; it rotated at 1 KB, which left thousands of small files
 
 ## [v0.0.141] - 2026-11-13
 

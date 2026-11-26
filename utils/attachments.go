@@ -140,12 +140,10 @@ func isPlainText(content []byte) bool {
 	return float64(printableCount) >= threshold
 }
 
-var InboundAttachmentsDir = filepath.Join("/tmp", "eksecd", "attachments")
-
 // GetAttachmentsDir returns the directory path for storing attachments for a given session
 // and creates the directory if it doesn't exist
 func GetAttachmentsDir(sessionID string) (string, error) {
-	dir := filepath.Join(InboundAttachmentsDir, sessionID)
+	dir := filepath.Join("/tmp", "eksecd", "attachments", sessionID)
 
 	// Create directory if it doesn't exist
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -153,10 +151,6 @@ func GetAttachmentsDir(sessionID string) (string, error) {
 	}
 
 	return dir, nil
-}
-
-func RemoveInboundAttachments(sessionID string) error {
-	return os.RemoveAll(filepath.Join(InboundAttachmentsDir, sessionID))
 }
 
 // FetchAndStoreAttachment fetches an attachment from the API and stores it as a binary file

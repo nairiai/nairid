@@ -15,7 +15,6 @@ import (
 	toml "github.com/pelletier/go-toml/v2"
 
 	"nairid/clients"
-	"nairid/core/retention"
 )
 
 func testNairiMCP() *NairiMCP {
@@ -715,90 +714,4 @@ func TestClaudeMCPAllowRules_NoServers(t *testing.T) {
 	if len(got) != 0 {
 		t.Fatalf("expected no rules, got %v", got)
 	}
-}
-
-func TestCodexMCPProcessor_TurnsHistoryPersistenceOffWhenRetentionIsOn(t *testing.T) {
-	t.Setenv(retention.EnvVar, "30")
-	home := writeRemoteMCPConfig(t)
-	codexDir := filepath.Join(home, ".codex")
-	if err := os.MkdirAll(codexDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	existing := "[history]\nmax_bytes = 1000\n"
-	if err := os.WriteFile(filepath.Join(codexDir, "config.toml"), []byte(existing), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := NewCodexMCPProcessor(testNairiMCP()).ProcessMCPConfigs(home); err != nil {
-		t.Fatal(err)
-	}
-
-	history := readCodexHistory(t, codexDir)
-	if history["persistence"] != "none" {
-		t.Errorf("history.persistence = %v, want none", history["persistence"])
-	}
-	if history["max_bytes"] != int64(1000) {
-		t.Errorf("the customer's history.max_bytes was lost: %v", history)
-	}
-}
-
-func TestCodexMCPProcessor_LeavesHistoryAloneWhenRetentionIsOff(t *testing.T) {
-	t.Setenv(retention.EnvVar, "")
-	home := writeRemoteMCPConfig(t)
-	codexDir := filepath.Join(home, ".codex")
-	if err := os.MkdirAll(codexDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	existing := "[history]\nmax_bytes = 1000\n"
-	if err := os.WriteFile(filepath.Join(codexDir, "config.toml"), []byte(existing), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := NewCodexMCPProcessor(testNairiMCP()).ProcessMCPConfigs(home); err != nil {
-		t.Fatal(err)
-	}
-
-	history := readCodexHistory(t, codexDir)
-	if _, set := history["persistence"]; set {
-		t.Errorf("history.persistence = %v, want it left unset while retention is off", history["persistence"])
-	}
-	if history["max_bytes"] != int64(1000) {
-		t.Errorf("the customer's history.max_bytes was lost: %v", history)
-	}
-}
-
-func TestCodexMCPProcessor_SelfHostedKeepsTheOwnersHistory(t *testing.T) {
-	t.Setenv(retention.EnvVar, "30")
-	home := writeRemoteMCPConfig(t)
-	codexDir := filepath.Join(home, ".codex")
-	if err := os.MkdirAll(codexDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	existing := "[history]\npersistence = \"save-all\"\n"
-	if err := os.WriteFile(filepath.Join(codexDir, "config.toml"), []byte(existing), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := NewCodexMCPProcessor(testNairiMCP()).ProcessMCPConfigs(""); err != nil {
-		t.Fatal(err)
-	}
-
-	if history := readCodexHistory(t, codexDir); history["persistence"] != "save-all" {
-		t.Errorf("history.persistence = %v, want the owner's save-all", history["persistence"])
-	}
-}
-
-func readCodexHistory(t *testing.T, codexDir string) map[string]interface{} {
-	t.Helper()
-	content, err := os.ReadFile(filepath.Join(codexDir, "config.toml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var config struct {
-		History map[string]interface{} `toml:"history"`
-	}
-	if err := toml.Unmarshal(content, &config); err != nil {
-		t.Fatal(err)
-	}
-	return config.History
 }

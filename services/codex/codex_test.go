@@ -516,7 +516,6 @@ func TestCodexService_CleanupOldLogs(t *testing.T) {
 	oldLogFile := filepath.Join(tmpDir, "codex-session-20240101-120000.log")
 	recentLogFile := filepath.Join(tmpDir, "codex-session-20240110-120000.log")
 	nonCodexFile := filepath.Join(tmpDir, "other-file.log")
-	otherCLILog := filepath.Join(tmpDir, "claude-session-20240101-120000.log")
 
 	// Create test files
 	if err := os.WriteFile(oldLogFile, []byte("old log"), 0644); err != nil {
@@ -527,12 +526,6 @@ func TestCodexService_CleanupOldLogs(t *testing.T) {
 	}
 	if err := os.WriteFile(nonCodexFile, []byte("other file"), 0644); err != nil {
 		t.Fatalf("Failed to create non-codex file: %v", err)
-	}
-	if err := os.WriteFile(otherCLILog, []byte("old claude log"), 0644); err != nil {
-		t.Fatalf("Failed to create the other CLI's log: %v", err)
-	}
-	if err := os.Chtimes(otherCLILog, oldTime, oldTime); err != nil {
-		t.Fatalf("Failed to set the other CLI's log time: %v", err)
 	}
 
 	// Set file times
@@ -562,11 +555,6 @@ func TestCodexService_CleanupOldLogs(t *testing.T) {
 	// Verify non-codex file still exists
 	if _, err := os.Stat(nonCodexFile); err != nil {
 		t.Errorf("Non-codex file should still exist")
-	}
-
-	// The startup cleanup keeps other CLIs' logs, as it did before the retention routine existed
-	if _, err := os.Stat(otherCLILog); err != nil {
-		t.Errorf("Another CLI's old session log should still exist")
 	}
 }
 
