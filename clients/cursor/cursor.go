@@ -131,7 +131,8 @@ func withoutPromptEcho(output []byte) string {
 		var event struct {
 			Type string `json:"type"`
 		}
-		if json.Unmarshal([]byte(line), &event) == nil && event.Type == "user" {
+		// The text check also catches an event that shares its line with stray stderr output.
+		if strings.Contains(line, `"type":"user"`) || (json.Unmarshal([]byte(line), &event) == nil && event.Type == "user") {
 			continue
 		}
 		kept = append(kept, line)

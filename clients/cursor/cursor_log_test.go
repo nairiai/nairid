@@ -34,7 +34,7 @@ func TestStartNewSession_AFailedCallKeepsThePromptOutOfTheError(t *testing.T) {
 	dir := t.TempDir()
 	script := `#!/bin/sh
 for last; do :; done
-printf '{"type":"user","message":{"content":[{"type":"text","text":"%s"}]}}\n' "$last"
+printf 'warning: slow network{"type":"user","message":{"content":[{"type":"text","text":"%s"}]}}\n' "$last"
 printf '{"type":"assistant","message":"partial reply"}\n'
 exit 1
 `
