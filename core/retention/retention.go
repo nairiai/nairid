@@ -120,6 +120,9 @@ func PruneSharedDirs(dir string, cutoff time.Time, remove func(path string) erro
 	if err != nil {
 		return 0, err
 	}
+	if info.Mode()&fs.ModeSymlink != 0 {
+		return 0, fmt.Errorf("refusing to prune %s: %s is a symbolic link", dir, parent)
+	}
 	if err := onlyWeCanChange(info); err != nil {
 		return 0, fmt.Errorf("refusing to prune %s: %s %w", dir, parent, err)
 	}
