@@ -107,17 +107,27 @@ func PruneDirs(dir string, cutoff time.Time, remove func(path string) error) (in
 	return removed, errors.Join(errs...)
 }
 
-// readOwnDir lists dir, refusing it when dir or its parent is a symbolic link: whoever planted
-// the link, such as the agent user in a shared /tmp, would choose what gets pruned.
+// readOwnDir lists dir, refusing it when dir or its parent is a symbolic link, or when anyone
+// else may change the parent: whoever can swap dir for a link, such as the agent user who made
+// the folder first in a shared /tmp, would choose what gets removed.
 func readOwnDir(dir string) ([]os.DirEntry, error) {
-	for _, path := range []string{dir, filepath.Dir(dir)} {
-		info, err := os.Lstat(path)
-		if err != nil {
-			return nil, err
-		}
-		if info.Mode()&fs.ModeSymlink != 0 {
-			return nil, fmt.Errorf("refusing to prune %s: %s is a symbolic link", dir, path)
-		}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode()&fs.ModeSymlink != 0 {
+		return nil, fmt.Errorf("refusing to prune %s: it is a symbolic link", dir)
+	}
+	parent := filepath.Dir(dir)
+	parentInfo, err := os.Lstat(parent)
+	if err != nil {
+		return nil, err
+	}
+	if parentInfo.Mode()&fs.ModeSymlink != 0 {
+		return nil, fmt.Errorf("refusing to prune %s: %s is a symbolic link", dir, parent)
+	}
+	if err := onlyWeCanChange(parentInfo); err != nil {
+		return nil, fmt.Errorf("refusing to prune %s: %s %w", dir, parent, err)
 	}
 	return os.ReadDir(dir)
 }

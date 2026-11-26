@@ -173,3 +173,30 @@ func TestPruneRefusesALinkedRoot(t *testing.T) {
 		}
 	}
 }
+
+func TestPruneDirsRefusesAParentOthersCanChange(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "eksecd")
+	dir := filepath.Join(parent, "attachments")
+	old := time.Now().Add(-60 * 24 * time.Hour)
+	job := filepath.Join(dir, "job_1")
+	if err := os.MkdirAll(job, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(job, "a.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(filepath.Join(job, "a.txt"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(parent, 0o755) })
+
+	if _, err := PruneDirs(dir, time.Now().Add(-30*24*time.Hour), os.RemoveAll); err == nil {
+		t.Error("PruneDirs pruned a folder whose parent anyone can change")
+	}
+	if _, err := os.Stat(job); err != nil {
+		t.Errorf("%s was removed: %v", job, err)
+	}
+}
