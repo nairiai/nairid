@@ -107,27 +107,36 @@ func PruneDirs(dir string, cutoff time.Time, remove func(path string) error) (in
 	return removed, errors.Join(errs...)
 }
 
-// readOwnDir lists dir, refusing it when dir or its parent is a symbolic link, or when anyone
-// else may change the parent: whoever can swap dir for a link, such as the agent user who made
-// the folder first in a shared /tmp, would choose what gets removed.
-func readOwnDir(dir string) ([]os.DirEntry, error) {
-	info, err := os.Lstat(dir)
-	if err != nil {
-		return nil, err
-	}
-	if info.Mode()&fs.ModeSymlink != 0 {
-		return nil, fmt.Errorf("refusing to prune %s: it is a symbolic link", dir)
-	}
+// PruneSharedDirs is PruneDirs for a folder that sits in a directory others can write to, such as
+// /tmp: it also refuses dir unless the folder it sits in belongs to this process's user and no one
+// else may write to it, so no one else, such as the agent user who made the folder first, can swap
+// dir for a link between the check and the removal.
+func PruneSharedDirs(dir string, cutoff time.Time, remove func(path string) error) (int, error) {
 	parent := filepath.Dir(dir)
-	parentInfo, err := os.Lstat(parent)
+	info, err := os.Lstat(parent)
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, nil
+	}
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
-	if parentInfo.Mode()&fs.ModeSymlink != 0 {
-		return nil, fmt.Errorf("refusing to prune %s: %s is a symbolic link", dir, parent)
+	if err := onlyWeCanChange(info); err != nil {
+		return 0, fmt.Errorf("refusing to prune %s: %s %w", dir, parent, err)
 	}
-	if err := onlyWeCanChange(parentInfo); err != nil {
-		return nil, fmt.Errorf("refusing to prune %s: %s %w", dir, parent, err)
+	return PruneDirs(dir, cutoff, remove)
+}
+
+// readOwnDir lists dir, refusing it when dir or its parent is a symbolic link, whose owner would
+// choose what gets removed.
+func readOwnDir(dir string) ([]os.DirEntry, error) {
+	for _, path := range []string{dir, filepath.Dir(dir)} {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return nil, err
+		}
+		if info.Mode()&fs.ModeSymlink != 0 {
+			return nil, fmt.Errorf("refusing to prune %s: %s is a symbolic link", dir, path)
+		}
 	}
 	return os.ReadDir(dir)
 }

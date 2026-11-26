@@ -1707,7 +1707,7 @@ func (cr *CmdRunner) pruneOldData() {
 	}); err != nil {
 		log.Warn("⚠️ Failed to prune the legacy program logs (%d removed): %v", removed, err)
 	}
-	if removed, err := retention.PruneDirs(utils.InboundAttachmentsDir, cutoff, os.RemoveAll); err != nil {
+	if removed, err := retention.PruneSharedDirs(utils.InboundAttachmentsDir, cutoff, os.RemoveAll); err != nil {
 		log.Warn("⚠️ Failed to prune the inbound attachments (%d removed): %v", removed, err)
 	}
 	if removed, err := retention.PruneDirs(filepath.Join(configDir, "attachments"), cutoff, os.RemoveAll); err != nil {

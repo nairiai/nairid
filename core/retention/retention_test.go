@@ -174,7 +174,7 @@ func TestPruneRefusesALinkedRoot(t *testing.T) {
 	}
 }
 
-func TestPruneDirsRefusesAParentOthersCanChange(t *testing.T) {
+func TestPruneSharedDirsRefusesAParentOthersCanChange(t *testing.T) {
 	parent := filepath.Join(t.TempDir(), "eksecd")
 	dir := filepath.Join(parent, "attachments")
 	old := time.Now().Add(-60 * 24 * time.Hour)
@@ -185,18 +185,33 @@ func TestPruneDirsRefusesAParentOthersCanChange(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(job, "a.txt"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chtimes(filepath.Join(job, "a.txt"), old, old); err != nil {
-		t.Fatal(err)
+	for _, path := range []string{filepath.Join(job, "a.txt"), job} {
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := os.Chmod(parent, 0o777); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(parent, 0o755) })
 
-	if _, err := PruneDirs(dir, time.Now().Add(-30*24*time.Hour), os.RemoveAll); err == nil {
-		t.Error("PruneDirs pruned a folder whose parent anyone can change")
+	cutoff := time.Now().Add(-30 * 24 * time.Hour)
+	if _, err := PruneSharedDirs(dir, cutoff, os.RemoveAll); err == nil {
+		t.Error("PruneSharedDirs pruned a folder whose parent anyone can change")
 	}
 	if _, err := os.Stat(job); err != nil {
 		t.Errorf("%s was removed: %v", job, err)
+	}
+
+	// A folder in the daemon's own config dir, which a volume can make group-writable, still prunes.
+	if removed, err := PruneDirs(dir, cutoff, os.RemoveAll); err != nil || removed != 1 {
+		t.Errorf("PruneDirs: removed %d, err %v; want 1 and nil", removed, err)
+	}
+}
+
+func TestPruneSharedDirs_MissingParent(t *testing.T) {
+	removed, err := PruneSharedDirs(filepath.Join(t.TempDir(), "none", "attachments"), time.Now(), os.RemoveAll)
+	if err != nil || removed != 0 {
+		t.Errorf("got removed=%d err=%v, want 0 and nil", removed, err)
 	}
 }
