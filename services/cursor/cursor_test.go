@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestCursorService_CleanupOldLogs_PrunesEveryCLIsSessionLogs(t *testing.T) {
+func TestCursorService_CleanupOldLogs_PrunesOnlyItsOwnSessionLogs(t *testing.T) {
 	logDir := t.TempDir()
 	service := NewCursorService(nil, logDir, "")
 	old := time.Now().AddDate(0, 0, -10)
@@ -28,12 +28,10 @@ func TestCursorService_CleanupOldLogs_PrunesEveryCLIsSessionLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, gone := range []string{"cursor-session-old.log", "claude-session-old.log"} {
-		if _, err := os.Stat(filepath.Join(logDir, gone)); err == nil {
-			t.Errorf("%s was kept", gone)
-		}
+	if _, err := os.Stat(filepath.Join(logDir, "cursor-session-old.log")); err == nil {
+		t.Error("cursor-session-old.log was kept")
 	}
-	for _, kept := range []string{"cursor-session-new.log", "other.log"} {
+	for _, kept := range []string{"cursor-session-new.log", "claude-session-old.log", "other.log"} {
 		if _, err := os.Stat(filepath.Join(logDir, kept)); err != nil {
 			t.Errorf("%s was removed", kept)
 		}

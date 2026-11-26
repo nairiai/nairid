@@ -51,7 +51,7 @@ func (o *OpenCodeService) writeOpenCodeSessionLog(rawOutput string) (string, err
 }
 
 func (o *OpenCodeService) CleanupOldLogs(maxAgeDays int) error {
-	return services.PruneSessionLogs(o.logDir, maxAgeDays)
+	return services.PruneSessionLogs(o.logDir, []string{"opencode-session-"}, maxAgeDays)
 }
 
 func (o *OpenCodeService) StartNewConversation(prompt string) (*services.CLIAgentResult, error) {

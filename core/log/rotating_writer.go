@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -165,7 +166,9 @@ func (rw *RotatingWriter) Prune() (int, error) {
 			continue
 		}
 		if err := os.Remove(path); err != nil {
-			errs = append(errs, err)
+			if !errors.Is(err, fs.ErrNotExist) {
+				errs = append(errs, err)
+			}
 			continue
 		}
 		removed++

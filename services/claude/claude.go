@@ -62,7 +62,7 @@ func (c *ClaudeService) writeClaudeSessionLog(rawOutput string) (string, error) 
 }
 
 func (c *ClaudeService) CleanupOldLogs(maxAgeDays int) error {
-	return services.PruneSessionLogs(c.logDir, maxAgeDays)
+	return services.PruneSessionLogs(c.logDir, []string{"claude-session-"}, maxAgeDays)
 }
 
 // mergeOptions merges the service model with provided options

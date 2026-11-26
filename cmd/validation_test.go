@@ -119,13 +119,10 @@ func TestValidateModelForAgent(t *testing.T) {
 }
 
 func TestCodexHomeIsOnlyTheManagedAgentsHome(t *testing.T) {
-	if got := codexHome("codex", ""); got != "" {
+	if got := codexHome(""); got != "" {
 		t.Errorf("self-hosted codexHome = %q, want empty so the owner's transcripts are never pruned", got)
 	}
-	if got := codexHome("claude", "/home/agentrunner"); got != "" {
-		t.Errorf("claude codexHome = %q, want empty", got)
-	}
-	if got, want := codexHome("codex", "/home/agentrunner"), "/home/agentrunner/.codex"; got != want {
-		t.Errorf("managed codexHome = %q, want %q", got, want)
+	if got, want := codexHome("/home/agentrunner"), "/home/agentrunner/.codex"; got != want {
+		t.Errorf("managed codexHome = %q, want %q whatever CLI runs now", got, want)
 	}
 }

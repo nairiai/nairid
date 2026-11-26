@@ -890,7 +890,7 @@ func NewCmdRunner(agentType, permissionMode, model, repoPath string) (*CmdRunner
 		gitUseCase:        gitUseCase,
 		appState:          appState,
 		cliAgent:          cliAgent,
-		codexHome:         codexHome(agentType, targetHomeDir),
+		codexHome:         codexHome(targetHomeDir),
 		envManager:        envManager,
 		agentID:           agentID,
 		agentsApiClient:   agentsApiClient,
@@ -1652,17 +1652,16 @@ func (cr *CmdRunner) startPingRoutine(ctx context.Context, socketClient *socket.
 	}()
 }
 
-// codexHome is the managed agent user's Codex home. Self-hosted, Codex runs in the owner's own
+// codexHome is the managed agent user's Codex home, whatever CLI the agent runs now, so transcripts
+// from before a switch to another CLI are pruned too. Self-hosted, Codex runs in the owner's own
 // home, whose transcripts are theirs to keep, so it is empty and nothing there is pruned.
-func codexHome(agentType, targetHomeDir string) string {
-	if agentType != "codex" || targetHomeDir == "" {
+func codexHome(targetHomeDir string) string {
+	if targetHomeDir == "" {
 		return ""
 	}
 	return filepath.Join(targetHomeDir, ".codex")
 }
 
-// sessionLogDaysWhenRetentionOff is how long CLI session logs were kept before the retention
-// routine existed; with NAIRI_LOG_RETENTION_DAYS unset that startup cleanup is all that runs.
 // programLogConfig is the daemon log's writer. MaxAge and MaxBytes only apply when the retention
 // routine runs Prune, which it does only when NAIRI_LOG_RETENTION_DAYS is set.
 func programLogConfig(logsDir string, retentionDays int) log.RotatingWriterConfig {
@@ -1676,12 +1675,14 @@ func programLogConfig(logsDir string, retentionDays int) log.RotatingWriterConfi
 	}
 }
 
+// sessionLogDaysWhenRetentionOff is how long the current CLI's session logs were kept before the
+// retention routine existed; with NAIRI_LOG_RETENTION_DAYS unset that startup cleanup is all that runs.
 const sessionLogDaysWhenRetentionOff = 7
 
 func (cr *CmdRunner) startRetentionRoutine(ctx context.Context) {
 	days, on := retention.Days()
 	if !on {
-		log.Info("🧹 %s is not set to a number of days, so nothing is pruned except session logs older than %d days", retention.EnvVar, sessionLogDaysWhenRetentionOff)
+		log.Info("🧹 %s=%q is not a number of days from 1 to 99999, so nothing is pruned except this CLI's session logs older than %d days", retention.EnvVar, os.Getenv(retention.EnvVar), sessionLogDaysWhenRetentionOff)
 		if err := cr.cliAgent.CleanupOldLogs(sessionLogDaysWhenRetentionOff); err != nil {
 			log.Warn("⚠️ Failed to prune the session logs: %v", err)
 		}
@@ -1707,9 +1708,6 @@ func (cr *CmdRunner) startRetentionRoutine(ctx context.Context) {
 func (cr *CmdRunner) pruneOldData(days int) {
 	cutoff := time.Now().AddDate(0, 0, -days)
 	log.Info("🧹 Pruning data older than %d days", days)
-	if err := cr.cliAgent.CleanupOldLogs(days); err != nil {
-		log.Warn("⚠️ Failed to prune the session logs: %v", err)
-	}
 	if removed, err := cr.rotatingWriter.Prune(); err != nil {
 		log.Warn("⚠️ Failed to prune the program logs (%d removed): %v", removed, err)
 	}
@@ -1720,6 +1718,9 @@ func (cr *CmdRunner) pruneOldData(days int) {
 	}
 	currentLog := filepath.Base(cr.rotatingWriter.GetCurrentLogPath())
 	legacyLogsDir := filepath.Join(configDir, "logs")
+	if err := services.PruneSessionLogs(legacyLogsDir, services.AllSessionLogPrefixes, days); err != nil {
+		log.Warn("⚠️ Failed to prune the session logs: %v", err)
+	}
 	if removed, err := retention.PruneFiles(legacyLogsDir, []string{"eksecd-"}, []string{".log"}, cutoff, func(name string) bool {
 		return name == currentLog
 	}); err != nil {

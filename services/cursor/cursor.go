@@ -45,7 +45,7 @@ func (c *CursorService) writeCursorSessionLog(rawOutput string) (string, error) 
 }
 
 func (c *CursorService) CleanupOldLogs(maxAgeDays int) error {
-	return services.PruneSessionLogs(c.logDir, maxAgeDays)
+	return services.PruneSessionLogs(c.logDir, []string{"cursor-session-"}, maxAgeDays)
 }
 
 func (c *CursorService) StartNewConversation(prompt string) (*services.CLIAgentResult, error) {

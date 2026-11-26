@@ -67,6 +67,37 @@ func agedAttachmentDirs(t *testing.T) (outbound, inbound string) {
 	return outbound, inbound
 }
 
+// agedSessionLogs puts a 60-day-old session log of two CLIs in the config dir's logs folder.
+func agedSessionLogs(t *testing.T) []string {
+	t.Helper()
+	logsDir := filepath.Join(os.Getenv("NAIRI_CONFIG_DIR"), "logs")
+	if err := os.MkdirAll(logsDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().AddDate(0, 0, -60)
+	var paths []string
+	for _, name := range []string{"claude-session-old.log", "codex-session-old.log"} {
+		path := filepath.Join(logsDir, name)
+		if err := os.WriteFile(path, []byte("x"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, path)
+	}
+	return paths
+}
+
+func allGone(paths ...string) bool {
+	for _, path := range paths {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			return false
+		}
+	}
+	return true
+}
+
 func TestRetentionRoutine_OffKeepsEverythingButOldSessionLogs(t *testing.T) {
 	t.Setenv(retention.EnvVar, "")
 	outbound, inbound := agedAttachmentDirs(t)
@@ -100,6 +131,7 @@ func TestRetentionRoutine_OnStartsTheCleanupWithTheSetDays(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = writer.Close() })
+	sessionLogs := agedSessionLogs(t)
 	agent := &cleanupRecorder{}
 	cr := &CmdRunner{cliAgent: agent, rotatingWriter: writer}
 
@@ -108,16 +140,16 @@ func TestRetentionRoutine_OnStartsTheCleanupWithTheSetDays(t *testing.T) {
 	cr.startRetentionRoutine(ctx)
 
 	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		_, outErr := os.Stat(outbound)
-		_, inErr := os.Stat(inbound)
-		if len(agent.recorded()) > 0 && os.IsNotExist(outErr) && os.IsNotExist(inErr) {
-			break
-		}
+	for time.Now().Before(deadline) && !allGone(append(sessionLogs, outbound, inbound)...) {
 		time.Sleep(20 * time.Millisecond)
 	}
-	if got := agent.recorded(); !reflect.DeepEqual(got, []int{30}) {
-		t.Errorf("session log cleanup calls = %v, want [30] from the routine's first run", got)
+	if got := agent.recorded(); len(got) != 0 {
+		t.Errorf("the current CLI's own 7-day cleanup ran %v; with the switch on the routine prunes every CLI's logs instead", got)
+	}
+	for _, path := range sessionLogs {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("%s should be pruned by the routine once %s=30: %v", filepath.Base(path), retention.EnvVar, err)
+		}
 	}
 	for _, dir := range []string{outbound, inbound} {
 		if _, err := os.Stat(dir); !os.IsNotExist(err) {
@@ -140,13 +172,13 @@ func TestRetentionRoutine_OnPrunesWithTheSetDays(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = writer.Close() })
-	agent := &cleanupRecorder{}
-	cr := &CmdRunner{cliAgent: agent, rotatingWriter: writer}
+	sessionLogs := agedSessionLogs(t)
+	cr := &CmdRunner{cliAgent: &cleanupRecorder{}, rotatingWriter: writer}
 
 	cr.pruneOldData(30)
 
-	if got := agent.recorded(); !reflect.DeepEqual(got, []int{30}) {
-		t.Errorf("session log cleanup calls = %v, want [30]", got)
+	if !allGone(sessionLogs...) {
+		t.Error("a 60-day-old session log of some CLI was kept with the switch at 30 days")
 	}
 	for _, dir := range []string{outbound, inbound} {
 		if _, err := os.Stat(dir); !os.IsNotExist(err) {

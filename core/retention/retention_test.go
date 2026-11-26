@@ -1,11 +1,15 @@
 package retention
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"nairid/core/log"
 )
 
 func TestDays(t *testing.T) {
@@ -35,6 +39,33 @@ func TestDays(t *testing.T) {
 				t.Errorf("Days() = %d, %v, want %d, %v", got, on, tt.want, tt.wantOn)
 			}
 		})
+	}
+}
+
+func TestDaysWarnsOncePerBadValue(t *testing.T) {
+	var out bytes.Buffer
+	log.SetWriterWithLevel(&out, slog.LevelDebug)
+	t.Cleanup(func() { log.SetWriterWithLevel(os.Stdout, slog.Level(1000)) })
+	t.Setenv(EnvVar, "thirty-warn-once")
+
+	for i := 0; i < 3; i++ {
+		if _, on := Days(); on {
+			t.Fatal("a bad value turned the cleanup on")
+		}
+	}
+	if got := strings.Count(out.String(), "thirty-warn-once"); got != 1 {
+		t.Errorf("warned %d times about the same bad value, want 1:\n%s", got, out.String())
+	}
+}
+
+func TestPruneSharedDirsRefusesAParentThatIsNotAFolder(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "eksecd")
+	if err := os.WriteFile(parent, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := PruneSharedDirs(filepath.Join(parent, "attachments"), time.Now(), os.RemoveAll)
+	if err == nil || removed != 0 || !strings.Contains(err.Error(), "not a plain folder") {
+		t.Errorf("got removed=%d err=%v, want a refusal naming it not a plain folder", removed, err)
 	}
 }
 

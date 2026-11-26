@@ -21,7 +21,7 @@ func TestPruneSessionLogs_CoversEveryCLI(t *testing.T) {
 		}
 	}
 
-	if err := PruneSessionLogs(logDir, 30); err != nil {
+	if err := PruneSessionLogs(logDir, AllSessionLogPrefixes, 30); err != nil {
 		t.Fatal(err)
 	}
 
@@ -33,7 +33,7 @@ func TestPruneSessionLogs_CoversEveryCLI(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(logDir, "eksecd-20260101-000000.log")); err != nil {
 		t.Error("the program log was removed")
 	}
-	if err := PruneSessionLogs(logDir, 0); err == nil {
+	if err := PruneSessionLogs(logDir, AllSessionLogPrefixes, 0); err == nil {
 		t.Error("maxAgeDays=0 returned no error")
 	}
 }

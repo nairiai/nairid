@@ -98,6 +98,34 @@ func TestPrune_BySizeKeepsTheNewestFiles(t *testing.T) {
 	}
 }
 
+func TestPrune_OnceFullEveryOlderFileGoesEvenASmallOne(t *testing.T) {
+	rw, dir := newTestWriter(t, RotatingWriterConfig{MaxBytes: 3})
+	now := time.Now()
+	oldest := writeRotated(t, dir, "eksecd-20260101-000000.log", now)
+	small := writeRotated(t, dir, "eksecd-20260102-000000.log", now)
+	big := writeRotated(t, dir, "eksecd-20260103-000000.log", now)
+	if err := os.WriteFile(big, []byte("12345"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	newest := writeRotated(t, dir, "eksecd-20260104-000000.log", now)
+
+	removed, err := rw.Prune()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 3 {
+		t.Errorf("removed %d files, want 3", removed)
+	}
+	for _, gone := range []string{oldest, small, big} {
+		if fileExists(gone) {
+			t.Errorf("%s was kept although a newer file already filled the limit", filepath.Base(gone))
+		}
+	}
+	if !fileExists(newest) {
+		t.Error("the newest rotated file was removed")
+	}
+}
+
 func TestPrune_ManySmallYoungFilesUnderTheSizeLimitAreKept(t *testing.T) {
 	rw, dir := newTestWriter(t, RotatingWriterConfig{MaxAge: 30 * 24 * time.Hour, MaxBytes: 1 << 30})
 	for i := 0; i < 500; i++ {

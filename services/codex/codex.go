@@ -45,7 +45,7 @@ func (c *CodexService) writeCodexSessionLog(rawOutput string) (string, error) {
 }
 
 func (c *CodexService) CleanupOldLogs(maxAgeDays int) error {
-	return services.PruneSessionLogs(c.logDir, maxAgeDays)
+	return services.PruneSessionLogs(c.logDir, []string{"codex-session-"}, maxAgeDays)
 }
 
 func (c *CodexService) StartNewConversation(prompt string) (*services.CLIAgentResult, error) {
