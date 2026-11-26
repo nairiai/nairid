@@ -10,21 +10,23 @@ import (
 
 func TestDays(t *testing.T) {
 	tests := []struct {
-		value string
-		want  int
+		value  string
+		want   int
+		wantOn bool
 	}{
-		{"", 30},
-		{"30", 30},
-		{"7", 7},
-		{"0", 30},
-		{"-1", 30},
-		{"abc", 30},
+		{"", 0, false},
+		{"30", 30, true},
+		{"7", 7, true},
+		{"0", 0, false},
+		{"-1", 0, false},
+		{"abc", 0, false},
 	}
 	for _, tt := range tests {
 		t.Run("value "+tt.value, func(t *testing.T) {
 			t.Setenv(EnvVar, tt.value)
-			if got := Days(); got != tt.want {
-				t.Errorf("Days() = %d, want %d", got, tt.want)
+			got, on := Days()
+			if got != tt.want || on != tt.wantOn {
+				t.Errorf("Days() = %d, %v, want %d, %v", got, on, tt.want, tt.wantOn)
 			}
 		})
 	}

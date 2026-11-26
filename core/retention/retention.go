@@ -14,24 +14,21 @@ import (
 	"nairid/core/log"
 )
 
-const (
-	EnvVar      = "NAIRI_LOG_RETENTION_DAYS"
-	DefaultDays = 30
-)
+const EnvVar = "NAIRI_LOG_RETENTION_DAYS"
 
-// Days is how many days logs and attachments are kept: NAIRI_LOG_RETENTION_DAYS, or 30 when
-// it is unset or not a whole number of at least 1.
-func Days() int {
+// Days is how many days logs and attachments are kept, from NAIRI_LOG_RETENTION_DAYS. Unset, or not
+// a whole number of at least 1, the cleanup is off and nothing is removed, as before it existed.
+func Days() (days int, on bool) {
 	raw := os.Getenv(EnvVar)
 	if raw == "" {
-		return DefaultDays
+		return 0, false
 	}
 	days, err := strconv.Atoi(raw)
 	if err != nil || days < 1 {
-		log.Warn("⚠️ %s=%q is not a whole number of days of at least 1, keeping %d days", EnvVar, raw, DefaultDays)
-		return DefaultDays
+		log.Warn("⚠️ %s=%q is not a whole number of days of at least 1, so the cleanup stays off", EnvVar, raw)
+		return 0, false
 	}
-	return days
+	return days, true
 }
 
 // PruneFiles removes the files directly in dir whose name starts with one of prefixes (any, when

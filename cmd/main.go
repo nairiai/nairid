@@ -1600,13 +1600,16 @@ func (cr *CmdRunner) setupProgramLogging() (string, error) {
 		logsDir = filepath.Join(configDir, "logs")
 	}
 
+	// MaxAge and MaxFiles only apply when the retention routine runs Prune, which it does only
+	// when NAIRI_LOG_RETENTION_DAYS is set.
+	retentionDays, _ := retention.Days()
 	rotatingWriter, err := log.NewRotatingWriter(log.RotatingWriterConfig{
 		LogDir:      logsDir,
 		MaxFileSize: 10 * 1024 * 1024,
 		FilePrefix:  "eksecd",
 		Stdout:      os.Stdout,
-		MaxAge:      time.Duration(retention.Days()) * 24 * time.Hour,
-		MaxFiles:    20,
+		MaxAge:      time.Duration(retentionDays) * 24 * time.Hour,
+		MaxFiles:    100,
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to create rotating writer: %w", err)
@@ -1667,10 +1670,22 @@ func codexHome(agentType, targetHomeDir string) string {
 	return filepath.Join(targetHomeDir, ".codex")
 }
 
+// sessionLogDaysWhenRetentionOff is how long CLI session logs were kept before the retention
+// routine existed; with NAIRI_LOG_RETENTION_DAYS unset that startup cleanup is all that runs.
+const sessionLogDaysWhenRetentionOff = 7
+
 func (cr *CmdRunner) startRetentionRoutine(ctx context.Context) {
-	log.Info("🧹 Starting retention routine (every 24 hours, keeping %d days)", retention.Days())
+	days, on := retention.Days()
+	if !on {
+		log.Info("🧹 %s is not set, so nothing is pruned except session logs older than %d days", retention.EnvVar, sessionLogDaysWhenRetentionOff)
+		if err := cr.cliAgent.CleanupOldLogs(sessionLogDaysWhenRetentionOff); err != nil {
+			log.Warn("⚠️ Failed to prune the session logs: %v", err)
+		}
+		return
+	}
+	log.Info("🧹 Starting retention routine (every 24 hours, keeping %d days)", days)
 	go func() {
-		cr.pruneOldData()
+		cr.pruneOldData(days)
 		ticker := time.NewTicker(24 * time.Hour)
 		defer ticker.Stop()
 		for {
@@ -1679,14 +1694,13 @@ func (cr *CmdRunner) startRetentionRoutine(ctx context.Context) {
 				log.Info("🧹 Retention routine stopped")
 				return
 			case <-ticker.C:
-				cr.pruneOldData()
+				cr.pruneOldData(days)
 			}
 		}
 	}()
 }
 
-func (cr *CmdRunner) pruneOldData() {
-	days := retention.Days()
+func (cr *CmdRunner) pruneOldData(days int) {
 	cutoff := time.Now().AddDate(0, 0, -days)
 	log.Info("🧹 Pruning data older than %d days", days)
 	if err := cr.cliAgent.CleanupOldLogs(days); err != nil {

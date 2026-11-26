@@ -15,6 +15,7 @@ import (
 	toml "github.com/pelletier/go-toml/v2"
 
 	"nairid/clients"
+	"nairid/core/retention"
 )
 
 func testNairiMCP() *NairiMCP {
@@ -716,7 +717,8 @@ func TestClaudeMCPAllowRules_NoServers(t *testing.T) {
 	}
 }
 
-func TestCodexMCPProcessor_TurnsHistoryPersistenceOff(t *testing.T) {
+func TestCodexMCPProcessor_TurnsHistoryPersistenceOffWhenRetentionIsOn(t *testing.T) {
+	t.Setenv(retention.EnvVar, "30")
 	home := writeRemoteMCPConfig(t)
 	codexDir := filepath.Join(home, ".codex")
 	if err := os.MkdirAll(codexDir, 0755); err != nil {
@@ -740,7 +742,33 @@ func TestCodexMCPProcessor_TurnsHistoryPersistenceOff(t *testing.T) {
 	}
 }
 
+func TestCodexMCPProcessor_LeavesHistoryAloneWhenRetentionIsOff(t *testing.T) {
+	t.Setenv(retention.EnvVar, "")
+	home := writeRemoteMCPConfig(t)
+	codexDir := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(codexDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	existing := "[history]\nmax_bytes = 1000\n"
+	if err := os.WriteFile(filepath.Join(codexDir, "config.toml"), []byte(existing), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := NewCodexMCPProcessor(testNairiMCP()).ProcessMCPConfigs(home); err != nil {
+		t.Fatal(err)
+	}
+
+	history := readCodexHistory(t, codexDir)
+	if _, set := history["persistence"]; set {
+		t.Errorf("history.persistence = %v, want it left unset while retention is off", history["persistence"])
+	}
+	if history["max_bytes"] != int64(1000) {
+		t.Errorf("the customer's history.max_bytes was lost: %v", history)
+	}
+}
+
 func TestCodexMCPProcessor_SelfHostedKeepsTheOwnersHistory(t *testing.T) {
+	t.Setenv(retention.EnvVar, "30")
 	home := writeRemoteMCPConfig(t)
 	codexDir := filepath.Join(home, ".codex")
 	if err := os.MkdirAll(codexDir, 0755); err != nil {

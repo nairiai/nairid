@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"nairid/core/log"
+	"nairid/core/retention"
 
 	toml "github.com/pelletier/go-toml/v2"
 )
@@ -568,7 +569,7 @@ func (p *CodexMCPProcessor) ProcessMCPConfigs(targetHomeDir string) error {
 
 	existingConfig["shell_environment_policy"] = codexShellEnvironmentPolicy()
 	// Self-hosted, this is the owner's own Codex config, so their history setting stays theirs.
-	if targetHomeDir != "" {
+	if _, retentionOn := retention.Days(); retentionOn && targetHomeDir != "" {
 		withoutHistoryPersistence(existingConfig)
 	}
 	if p.stdioOnly {
