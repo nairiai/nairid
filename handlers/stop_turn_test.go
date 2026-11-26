@@ -35,7 +35,6 @@ type stoppableAgent struct {
 	startSystemPrompts []string
 	name               string
 	failWith           error
-	failOnce           bool
 }
 
 func (a *stoppableAgent) run(ctx context.Context, sessionID string) (*services.CLIAgentResult, error) {
@@ -43,9 +42,6 @@ func (a *stoppableAgent) run(ctx context.Context, sessionID string) (*services.C
 	block := a.blockNext
 	a.blockNext = false
 	failWith := a.failWith
-	if a.failOnce {
-		a.failWith, a.failOnce = nil, false
-	}
 	a.mu.Unlock()
 	if failWith != nil {
 		return nil, failWith
