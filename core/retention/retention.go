@@ -103,6 +103,10 @@ func PruneDirs(dir string, cutoff time.Time, remove func(path string) error) (in
 		}
 		path := filepath.Join(dir, entry.Name())
 		newest, err := newestModTime(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			// Another nairid instance sharing this folder may have removed it first.
+			continue
+		}
 		if err != nil {
 			errs = append(errs, err)
 			continue
