@@ -1,16 +1,16 @@
-## [v0.0.142] - 2026-11-26
+## [v0.0.142] - 2026-11-27
 
 ### Features
 
-- Prompts stay out of the daemon log
+- Prompts stay out of the daemon log ([#253](https://github.com/nairiai/nairid/pull/253))
   - Start and continue log lines carry the job id and message size, and the CLI command lines leave the prompt out
   - A failed CLI call still logs the CLI's output for that turn (the agent's messages, the commands it ran and what they returned), without Cursor's echo of the prompt
   - CLI session logs keep each CLI's raw output, which for Cursor includes the prompt
-- A finished or failed job no longer keeps its last message on disk. A job that failed or was stopped before its CLI session existed keeps its first message until the next reply starts it over or the idle check removes it
+- A finished or failed job no longer keeps its last message on disk ([#253](https://github.com/nairiai/nairid/pull/253)). A job that failed or was stopped before its CLI session existed keeps its first message until the next reply starts it over or the idle check removes it
 
 ### Bugfixes
 
-- The daemon log rotates at 10 MB as intended; it rotated at 1 KB, which left thousands of small files
+- The daemon log rotates at 10 MB as intended; it rotated at 1 KB, which left thousands of small files ([#253](https://github.com/nairiai/nairid/pull/253))
 
 ## [v0.0.141] - 2026-11-13
 
