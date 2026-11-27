@@ -133,6 +133,7 @@ func (mh *MessageHandler) finishStoppedTurn(
 		return &core.ErrTurnStopped{}
 	}
 
+	jobData.LastMessage = ""
 	jobData.StartPayload = nil
 	jobData.Status = models.JobStatusCompleted
 	jobData.UpdatedAt = time.Now()
@@ -178,6 +179,7 @@ func (mh *MessageHandler) keepJobWithoutSession(jobData models.JobData) error {
 	jobData.WorktreePath = ""
 	jobData.ClaudeSessionID = ""
 	jobData.PullRequestID = "none"
+	jobData.LastMessage = ""
 	jobData.Status = models.JobStatusCompleted
 	jobData.UpdatedAt = time.Now()
 	if err := mh.appState.UpdateJobData(jobData.JobID, jobData); err != nil {

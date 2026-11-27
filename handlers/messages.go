@@ -261,7 +261,7 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 		return fmt.Errorf("failed to send processing message notification: %w", err)
 	}
 
-	log.Info("🚀 Starting new conversation with message: %s", payload.Message)
+	log.Info("🚀 Starting new conversation for job %s (message %d chars)", payload.JobID, len(payload.Message))
 
 	// Prepare Git environment for new conversation - FAIL if this doesn't work
 	// Use worktrees if MAX_CONCURRENCY > 1 for concurrent job processing
@@ -417,7 +417,6 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 			WorktreePath:       worktreePath,
 			ClaudeSessionID:    sessionLeftByTimeout(err),
 			PullRequestID:      "",
-			LastMessage:        payload.Message,
 			ProcessedMessageID: payload.ProcessedMessageID,
 			MessageLink:        payload.MessageLink,
 			Status:             models.JobStatusFailed,
@@ -515,7 +514,6 @@ func (mh *MessageHandler) handleStartConversation(turnCtx context.Context, msg m
 		WorktreePath:       worktreePath, // Preserve worktree path for concurrent job mode
 		ClaudeSessionID:    claudeResult.SessionID,
 		PullRequestID:      prID,
-		LastMessage:        payload.Message,
 		ProcessedMessageID: payload.ProcessedMessageID,
 		MessageLink:        payload.MessageLink,
 		Status:             models.JobStatusCompleted,
@@ -604,7 +602,7 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 		return fmt.Errorf("failed to send processing message notification: %w", err)
 	}
 
-	log.Info("💬 Continuing conversation with message: %s", payload.Message)
+	log.Info("💬 Continuing conversation for job %s (message %d chars)", payload.JobID, len(payload.Message))
 
 	if jobData.ClaudeSessionID == "" {
 		// The first turn failed or was stopped before the CLI made a session. Start over so
@@ -819,7 +817,6 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 			WorktreePath:       jobData.WorktreePath,
 			ClaudeSessionID:    cmp.Or(sessionLeftByTimeout(err), jobData.ClaudeSessionID),
 			PullRequestID:      jobData.PullRequestID,
-			LastMessage:        payload.Message,
 			ProcessedMessageID: payload.ProcessedMessageID,
 			MessageLink:        payload.MessageLink,
 			Status:             models.JobStatusFailed,
@@ -918,7 +915,6 @@ func (mh *MessageHandler) handleUserMessage(turnCtx context.Context, msg models.
 		SessionTimeoutMs:   sessionTimeoutMs,
 		ClaudeSessionID:    claudeResult.SessionID,
 		PullRequestID:      prID,
-		LastMessage:        payload.Message,
 		ProcessedMessageID: payload.ProcessedMessageID,
 		MessageLink:        payload.MessageLink,
 		Status:             models.JobStatusCompleted,

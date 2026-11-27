@@ -2,6 +2,7 @@ package cursor
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"nairid/clients"
@@ -42,8 +43,7 @@ func (c *CursorClient) StartNewSession(ctx context.Context, prompt string, optio
 		args = append([]string{"--model", options.Model}, args...)
 	}
 
-	log.Info("Starting new Cursor session with prompt: %s", finalPrompt)
-	log.Info("Command arguments: %v", args)
+	log.Info("Cursor command: %s", clients.ArgsForLog(args, finalPrompt))
 
 	timeout := options.RunTimeout()
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -59,13 +59,13 @@ func (c *CursorClient) StartNewSession(ctx context.Context, prompt string, optio
 			return "", &core.ErrClaudeCommandErr{
 				Agent:  "Cursor",
 				Err:    &core.ErrSessionTimeout{Timeout: timeout, Err: err},
-				Output: string(output),
+				Output: withoutPromptEcho(output),
 			}
 		}
 		return "", &core.ErrClaudeCommandErr{
 			Agent:  "Cursor",
 			Err:    err,
-			Output: string(output),
+			Output: withoutPromptEcho(output),
 		}
 	}
 
@@ -90,8 +90,7 @@ func (c *CursorClient) ContinueSession(ctx context.Context, sessionID, prompt st
 		args = append([]string{"--model", options.Model}, args...)
 	}
 
-	log.Info("Executing Cursor command with sessionID: %s, prompt: %s", sessionID, prompt)
-	log.Info("Command arguments: %v", args)
+	log.Info("Cursor command: %s", clients.ArgsForLog(args, prompt))
 
 	timeout := options.RunTimeout()
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -107,13 +106,13 @@ func (c *CursorClient) ContinueSession(ctx context.Context, sessionID, prompt st
 			return "", &core.ErrClaudeCommandErr{
 				Agent:  "Cursor",
 				Err:    &core.ErrSessionTimeout{Timeout: timeout, Err: err},
-				Output: string(output),
+				Output: withoutPromptEcho(output),
 			}
 		}
 		return "", &core.ErrClaudeCommandErr{
 			Agent:  "Cursor",
 			Err:    err,
-			Output: string(output),
+			Output: withoutPromptEcho(output),
 		}
 	}
 
@@ -121,4 +120,22 @@ func (c *CursorClient) ContinueSession(ctx context.Context, sessionID, prompt st
 	log.Info("Cursor command completed successfully, outputLength: %d", len(result))
 	log.Info("📋 Completed successfully - continued Cursor session")
 	return result, nil
+}
+
+// withoutPromptEcho drops the stream-json events cursor-agent prints for the user's own message,
+// so an error that carries the CLI's output does not carry the prompt into the logs.
+func withoutPromptEcho(output []byte) string {
+	lines := strings.Split(string(output), "\n")
+	kept := lines[:0]
+	for _, line := range lines {
+		var event struct {
+			Type string `json:"type"`
+		}
+		// The text check also catches an event that shares its line with stray stderr output.
+		if strings.Contains(line, `"type":"user"`) || (json.Unmarshal([]byte(line), &event) == nil && event.Type == "user") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
 }

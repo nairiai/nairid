@@ -39,8 +39,7 @@ func (c *ClaudeClient) StartNewSession(ctx context.Context, prompt string, optio
 
 	args = appendOptionArgs(args, options)
 
-	log.Info("Starting new Claude session with prompt: %s", prompt)
-	log.Info("Command arguments: %v", args)
+	log.Info("Claude command: %s", clients.ArgsForLog(args, prompt))
 
 	timeout := options.RunTimeout()
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -96,8 +95,7 @@ func (c *ClaudeClient) ContinueSession(ctx context.Context, sessionID, prompt st
 
 	args = appendOptionArgs(args, options)
 
-	log.Info("Executing Claude command with sessionID: %s, prompt: %s", sessionID, prompt)
-	log.Info("Command arguments: %v", args)
+	log.Info("Claude command: %s", clients.ArgsForLog(args, prompt))
 
 	timeout := options.RunTimeout()
 	ctx, cancel := context.WithTimeout(ctx, timeout)

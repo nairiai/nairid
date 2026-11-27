@@ -1601,7 +1601,7 @@ func (cr *CmdRunner) setupProgramLogging() (string, error) {
 	// Set up rotating writer with 10MB file size limit
 	rotatingWriter, err := log.NewRotatingWriter(log.RotatingWriterConfig{
 		LogDir:      logsDir,
-		MaxFileSize: 1024, // 10MB
+		MaxFileSize: 10 * 1024 * 1024,
 		FilePrefix:  "eksecd",
 		Stdout:      os.Stdout,
 	})

@@ -159,7 +159,7 @@ nairid --agent opencode --claude-bypass-permissions --model anthropic/claude-3-5
 **Note**: OpenCode only supports `bypassPermissions` mode. The `--claude-bypass-permissions` flag is required.
 
 ### Logging
-nairid automatically creates log files in `~/.config/eksecd/logs/` with timestamp-based naming. Logs are written to both stdout and files for debugging.
+nairid writes its daemon log to `~/.config/eksecd/instances/<namespace>/logs/` (a new file every 10 MB) and each CLI's session logs to `~/.config/eksecd/logs/` (shared by every instance), with timestamp-based naming. Logs are written to both stdout and files for debugging. Start and continue lines name the job and the message size, and CLI command lines leave the prompt out; when a CLI call fails, the CLI's output for that turn (the agent's messages, the commands it ran and what they returned) still appears in the error line, without Cursor's echo of the prompt. The CLI session logs (`<cli>-session-*.log`) keep each CLI's raw output, which for Cursor includes the prompt. At startup nairid removes the current CLI's session logs older than 7 days; nothing else is removed.
 
 ## Development
 
